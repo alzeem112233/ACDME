@@ -555,7 +555,6 @@ const navItems = [
   { id: "reports", label: "التقارير المالية", icon: Wallet },
   { id: "accountProfile", label: "الملف الشخصي", icon: UserCircle },
   { id: "notifications", label: "التنبيهات", icon: Bell },
-  { id: "community", label: "مركز المجتمع", icon: MessageSquare },
 ];
 const setupNavIds = new Set(["coachSetup", "coaches", "settings", "ageGroups", "teams", "accountProfile"]);
 
