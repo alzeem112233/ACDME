@@ -70,6 +70,27 @@ const PERMISSION_TEAM_FOLLOW = "متابعة فريق محدد";
 const PERMISSION_READ_ONLY = "قراءة فقط";
 const MAX_ACADEMY_ACCOUNTS = 3;
 const LOCAL_ONLY_ACADEMY_KEYS = ["players", "attendance", "payments", "matches", "badges"];
+const footballPositionOptions = [
+  { value: "GK", label: "حارس مرمى" },
+  { value: "CB", label: "قلب دفاع" },
+  { value: "LCB", label: "قلب دفاع أيسر" },
+  { value: "RCB", label: "قلب دفاع أيمن" },
+  { value: "LB", label: "ظهير أيسر" },
+  { value: "RB", label: "ظهير أيمن" },
+  { value: "LWB", label: "جناح خلفي أيسر" },
+  { value: "RWB", label: "جناح خلفي أيمن" },
+  { value: "CDM", label: "محور دفاعي" },
+  { value: "CM", label: "وسط" },
+  { value: "LCM", label: "وسط أيسر" },
+  { value: "RCM", label: "وسط أيمن" },
+  { value: "CAM", label: "صانع لعب" },
+  { value: "LM", label: "وسط أيسر" },
+  { value: "RM", label: "وسط أيمن" },
+  { value: "LW", label: "جناح أيسر" },
+  { value: "RW", label: "جناح أيمن" },
+  { value: "CF", label: "مهاجم ثان" },
+  { value: "ST", label: "رأس حربة" },
+];
 const ageGroupPresets = [
   { key: "hope", name: "الأمل", years: "2014-now", from: 2014, to: new Date().getFullYear() },
   { key: "buds", name: "البراعم", years: "2012-2013", from: 2012, to: 2013 },
@@ -1651,6 +1672,21 @@ function App() {
     }));
   };
 
+  const updatePlayerDetails = (playerId, values = {}) => {
+    setData((prev) => ({
+      ...prev,
+      players: (prev.players || []).map((player) =>
+        player.id === playerId
+          ? {
+              ...player,
+              ...values,
+              ageText: values.birthDate ? exactAgeFromDate(values.birthDate) : player.ageText,
+            }
+          : player,
+      ),
+    }));
+  };
+
   const addPlayer = async (event) => {
     event.preventDefault();
     const submitAction = event.nativeEvent.submitter?.value || "save";
@@ -1670,6 +1706,9 @@ function App() {
       ageText: exactAgeFromDate(form.get("birthDate")),
       monthlyFee: Number(form.get("monthlyFee")),
       subscriptionType: form.get("subscriptionType"),
+      subscriptionPaidFull: false,
+      kitFee: Number(helpers.teamById[form.get("teamId")]?.kitFee || 0),
+      kitPaid: false,
       status: "نشط",
       xp: 0,
       level: 1,
@@ -1699,6 +1738,7 @@ function App() {
       name: form.get("name"),
       ageGroupId: form.get("ageGroupId"),
       coach: form.get("coach"),
+      kitFee: Number(form.get("kitFee") || 0),
       wins: 0,
       losses: 0,
       draws: 0,
@@ -1708,6 +1748,15 @@ function App() {
     setSelectedTeamId(team.id);
     setData((prev) => ({ ...prev, teams: [team, ...prev.teams] }));
     event.currentTarget.reset();
+  };
+
+  const updateTeamKitFee = (teamId, kitFee) => {
+    const fee = Number(kitFee || 0);
+    setData((prev) => ({
+      ...prev,
+      teams: (prev.teams || []).map((team) => (team.id === teamId ? { ...team, kitFee: fee } : team)),
+      players: (prev.players || []).map((player) => (player.teamId === teamId ? { ...player, kitFee: Number(player.kitFee || fee) } : player)),
+    }));
   };
 
   const recordAttendance = (playerId, status, date = today, note = "") => {
@@ -2351,6 +2400,8 @@ function App() {
     togglePlatformUserStatus,
     togglePlayerStatus,
     updatePlayerCard,
+    updatePlayerDetails,
+    updateTeamKitFee,
     session,
     isFirstLogin: Boolean(session?.isFirstLogin),
   };
@@ -4348,7 +4399,7 @@ function AgeGroups({ data, addAgeGroup, updateAgeGroup, removeAgeGroup, finishOn
   );
 }
 
-function Teams({ data, helpers, addTeam, setSelectedTeamId, setActiveView }) {
+function Teams({ data, helpers, addTeam, updateTeamKitFee, setSelectedTeamId, setActiveView }) {
   return (
     <section className="view-grid">
       <form className="panel form-panel" onSubmit={addTeam}>
@@ -4360,6 +4411,7 @@ function Teams({ data, helpers, addTeam, setSelectedTeamId, setActiveView }) {
           ))}
         </select>
         <input name="coach" placeholder="المدرب المسؤول" required />
+        <input name="kitFee" type="number" min="0" placeholder="قيمة الطقم الرياضي" />
         <button className="primary-button" type="submit">
           <Plus size={18} />
           إنشاء الفريق
@@ -4379,7 +4431,18 @@ function Teams({ data, helpers, addTeam, setSelectedTeamId, setActiveView }) {
                 <span>{teamPlayers.length} لاعب</span>
                 <span>{team.wins} فوز</span>
                 <span>{team.losses} خسارة</span>
+                <span>الطقم {currency(team.kitFee)}</span>
               </div>
+              <label className="team-kit-fee-field">
+                <span>قيمة الطقم</span>
+                <input
+                  type="number"
+                  min="0"
+                  defaultValue={team.kitFee || ""}
+                  onBlur={(event) => updateTeamKitFee(team.id, event.target.value)}
+                  placeholder="قيمة الطقم"
+                />
+              </label>
               <button className="ghost-button" onClick={() => { setSelectedTeamId(team.id); setActiveView("teamProfile"); }}>
                 فتح ملف الفريق
               </button>
@@ -4605,7 +4668,12 @@ function Players({ data, helpers, addPlayer, togglePlayerStatus, setSelectedPlay
           <div className="two-cols">
             <label>
               <span>المركز</span>
-              <input name="position" placeholder="اختر المركز" required />
+              <select name="position" required>
+                <option value="">اختر المركز</option>
+                {footballPositionOptions.map((position) => (
+                  <option key={position.value} value={position.value}>{position.value} - {position.label}</option>
+                ))}
+              </select>
             </label>
             <label>
               <span>رقم القميص</span>
@@ -4756,7 +4824,7 @@ function Players({ data, helpers, addPlayer, togglePlayerStatus, setSelectedPlay
   );
 }
 
-function PlayerProfile({ data, helpers, selectedPlayerId, setSelectedPlayerId, updatePlayerCard }) {
+function PlayerProfile({ data, helpers, selectedPlayerId, setSelectedPlayerId, updatePlayerCard, updatePlayerDetails }) {
   const player = helpers.playerById[selectedPlayerId] || data.players[0];
   const attendance = data.attendance.filter((row) => row.playerId === player?.id);
   const payments = data.payments.filter((row) => row.playerId === player?.id);
@@ -4787,6 +4855,7 @@ function PlayerProfile({ data, helpers, selectedPlayerId, setSelectedPlayerId, u
           <span>{player.guardianPhone}</span>
         </div>
       </div>
+      <PlayerDetailsEditor key={player.id} data={data} helpers={helpers} player={player} updatePlayerDetails={updatePlayerDetails} />
       <PlayerShowCard player={player} updatePlayerCard={updatePlayerCard} />
       <div className="metric-grid">
         <Metric title="العمر" value={playerAgeText} icon={UserRound} tone="blue" />
@@ -4820,6 +4889,119 @@ function PlayerProfile({ data, helpers, selectedPlayerId, setSelectedPlayerId, u
         />
       </section>
     </section>
+  );
+}
+
+function PlayerDetailsEditor({ data, helpers, player, updatePlayerDetails }) {
+  const [photoPreview, setPhotoPreview] = useState(player.photo || "");
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    setPhotoPreview(player.photo || "");
+    setMessage("");
+  }, [player.id, player.photo]);
+
+  const updatePhotoPreview = (event) => {
+    const file = event.target.files?.[0];
+    setPhotoPreview(file ? URL.createObjectURL(file) : player.photo || "");
+  };
+
+  const savePlayerDetails = async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const teamId = form.get("teamId");
+    const teamKitFee = helpers.teamById[teamId]?.kitFee;
+    const photo = await fileToDataUrl(imageFileFromForm(form, "playerProfilePhoto"));
+    updatePlayerDetails?.(player.id, {
+      name: form.get("name"),
+      photo: photo || player.photo || "",
+      birthDate: form.get("birthDate"),
+      position: form.get("position"),
+      jersey: form.get("jersey"),
+      guardianPhone: form.get("guardianPhone"),
+      teamId,
+      monthlyFee: Number(form.get("monthlyFee") || 0),
+      subscriptionType: form.get("subscriptionType"),
+      subscriptionPaidFull: form.get("subscriptionPaidFull") === "on",
+      kitFee: Number(form.get("kitFee") || teamKitFee || 0),
+      kitPaid: form.get("kitPaid") === "on",
+    });
+    setMessage("تم حفظ بيانات اللاعب.");
+  };
+
+  return (
+    <form className="panel player-details-editor" onSubmit={savePlayerDetails}>
+      <PanelHead title="تعديل بيانات اللاعب" text="يمكن تعديل كل بيانات اللاعب من هنا." icon={UserCircle} />
+      <div className="player-details-photo">
+        {photoPreview ? <img src={photoPreview} alt={player.name} decoding="async" /> : <UserCircle size={42} />}
+      </div>
+      <ImageSourceControls name="playerProfilePhoto" onChange={updatePhotoPreview} />
+      <div className="player-details-grid">
+        <label>
+          <span>اسم اللاعب</span>
+          <input name="name" defaultValue={player.name} required />
+        </label>
+        <label>
+          <span>تاريخ الميلاد</span>
+          <input name="birthDate" type="date" defaultValue={player.birthDate || ""} required />
+        </label>
+        <label>
+          <span>المركز</span>
+          <select name="position" defaultValue={player.position || ""} required>
+            <option value="">اختر المركز</option>
+            {footballPositionOptions.map((position) => (
+              <option key={position.value} value={position.value}>{position.value} - {position.label}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>رقم القميص</span>
+          <input name="jersey" defaultValue={player.jersey || ""} required />
+        </label>
+        <label>
+          <span>رقم ولي الأمر</span>
+          <input name="guardianPhone" inputMode="tel" defaultValue={player.guardianPhone || ""} required />
+        </label>
+        <label>
+          <span>الفريق</span>
+          <select name="teamId" defaultValue={player.teamId || ""} required>
+            {data.teams.map((team) => (
+              <option key={team.id} value={team.id}>{team.name}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>نوع الاشتراك</span>
+          <select name="subscriptionType" defaultValue={player.subscriptionType || "اشتراك شهري"}>
+            <option value="اشتراك شهري">اشتراك شهري</option>
+            <option value="مجاني">مجاني</option>
+          </select>
+        </label>
+        <label>
+          <span>قيمة الاشتراك</span>
+          <input name="monthlyFee" type="number" min="0" defaultValue={player.monthlyFee || 0} />
+        </label>
+        <label>
+          <span>قيمة الطقم الرياضي</span>
+          <input name="kitFee" type="number" min="0" defaultValue={player.kitFee || helpers.teamById[player.teamId]?.kitFee || 0} />
+        </label>
+      </div>
+      <div className="player-details-flags">
+        <label>
+          <input name="subscriptionPaidFull" type="checkbox" defaultChecked={Boolean(player.subscriptionPaidFull)} />
+          <span>اللاعب دفع الاشتراك كاملًا</span>
+        </label>
+        <label>
+          <input name="kitPaid" type="checkbox" defaultChecked={Boolean(player.kitPaid)} />
+          <span>تم دفع قيمة الطقم الرياضي</span>
+        </label>
+      </div>
+      <button className="yellow-button" type="submit">
+        <CheckCircle2 size={18} />
+        حفظ بيانات اللاعب
+      </button>
+      {message && <p className="setup-success">{message}</p>}
+    </form>
   );
 }
 
@@ -4870,7 +5052,12 @@ function PlayerShowCard({ player, updatePlayerCard }) {
           </label>
           <label>
             <span>المركز</span>
-            <input value={draft.position || ""} onChange={(event) => updateDraft("position", event.target.value)} maxLength="4" placeholder="RW" />
+            <select value={draft.position || ""} onChange={(event) => updateDraft("position", event.target.value)}>
+              <option value="">اختر المركز</option>
+              {footballPositionOptions.map((position) => (
+                <option key={position.value} value={position.value}>{position.value} - {position.label}</option>
+              ))}
+            </select>
           </label>
           <label>
             <span>الجنسية</span>
@@ -5022,6 +5209,11 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
       return;
     }
 
+    if (player.subscriptionPaidFull || Number(player.monthlyFee || 0) === 0) {
+      setActivePaymentPlayerId("");
+      return;
+    }
+
     setActivePaymentPlayerId(player.id);
     setPaymentDrafts((prev) => ({
       ...prev,
@@ -5144,7 +5336,8 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
           const team = helpers.teamById[player.teamId];
           const currentStatus = isScheduledTrainingDay ? attendanceRows[player.id]?.status || "" : "";
           const payment = isScheduledTrainingDay ? attendancePayments[player.id] : null;
-          const canReceivePayment = currentStatus === "حاضر" || currentStatus === "متأخر";
+          const subscriptionIsComplete = Boolean(player.subscriptionPaidFull) || Number(player.monthlyFee || 0) === 0;
+          const canReceivePayment = !subscriptionIsComplete && (currentStatus === "حاضر" || currentStatus === "متأخر");
           const isPaymentOpen = activePaymentPlayerId === player.id && canReceivePayment;
           const statusTone =
             currentStatus === "حاضر" ? "present" : currentStatus === "متأخر" ? "late" : currentStatus === "غائب" ? "absent" : "";
@@ -5228,8 +5421,17 @@ function Reports({ data, helpers, addPayment }) {
     const rowMonth = String(row.date || "").slice(0, 7);
     return filteredPlayerIds.has(row.playerId) && (isAllMonths || rowMonth === selectedMonth);
   });
-  const collected = filteredPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
   const expected = filteredPlayers.reduce((sum, player) => sum + Number(player.monthlyFee || 0), 0);
+  const rawCollected = filteredPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  const paidByPlayer = filteredPayments.reduce((map, payment) => {
+    map[payment.playerId] = (map[payment.playerId] || 0) + Number(payment.amount || 0);
+    return map;
+  }, {});
+  const fullSubscriptionCredit = filteredPlayers.reduce((sum, player) => {
+    if (!player.subscriptionPaidFull) return sum;
+    return sum + Math.max(Number(player.monthlyFee || 0) - Number(paidByPlayer[player.id] || 0), 0);
+  }, 0);
+  const collected = rawCollected + fullSubscriptionCredit;
   const remaining = Math.max(expected - collected, 0);
   const collectionRate = Math.min(100, Math.round((collected / Math.max(expected, 1)) * 100));
   const freePlayers = filteredPlayers.filter((player) => Number(player.monthlyFee || 0) === 0 || player.subscriptionType === "مجاني").length;
@@ -5237,19 +5439,30 @@ function Reports({ data, helpers, addPayment }) {
   const attendanceRate = Math.round(
     (filteredAttendance.filter((row) => row.status === "حاضر").length / Math.max(filteredAttendance.length, 1)) * 100,
   );
-  const paidByPlayer = filteredPayments.reduce((map, payment) => {
-    map[payment.playerId] = (map[payment.playerId] || 0) + Number(payment.amount || 0);
-    return map;
-  }, {});
   const playerFinanceRows = filteredPlayers
     .map((player) => {
-      const paid = paidByPlayer[player.id] || 0;
       const due = Number(player.monthlyFee || 0);
+      const paid = player.subscriptionPaidFull ? Math.max(due, paidByPlayer[player.id] || 0) : paidByPlayer[player.id] || 0;
       const playerRemaining = Math.max(due - paid, 0);
       const status = due === 0 ? "مجاني" : playerRemaining === 0 ? "مدفوع" : paid > 0 ? "جزئي" : "متأخر";
       return { ...player, paid, due, remaining: playerRemaining, status };
     })
     .sort((a, b) => b.remaining - a.remaining);
+  const kitRows = filteredPlayers.map((player) => {
+    const team = helpers.teamById[player.teamId];
+    const group = helpers.groupById[team?.ageGroupId];
+    const kitFee = Number(player.kitFee || team?.kitFee || 0);
+    return {
+      ...player,
+      teamName: team?.name || "بدون فريق",
+      groupName: group?.name || "-",
+      kitFee,
+      kitStatus: kitFee === 0 ? "لا توجد قيمة" : player.kitPaid ? "مدفوع" : "غير مدفوع",
+    };
+  });
+  const kitExpected = kitRows.reduce((sum, player) => sum + Number(player.kitFee || 0), 0);
+  const kitCollected = kitRows.filter((player) => player.kitPaid).reduce((sum, player) => sum + Number(player.kitFee || 0), 0);
+  const kitRemaining = Math.max(kitExpected - kitCollected, 0);
   const statusSummary = [
     { label: "مدفوع", value: playerFinanceRows.filter((row) => row.status === "مدفوع").length, color: "#157347" },
     { label: "جزئي", value: playerFinanceRows.filter((row) => row.status === "جزئي").length, color: "#bd8b04" },
@@ -5324,6 +5537,7 @@ function Reports({ data, helpers, addPayment }) {
     { id: "players", label: "كشف اللاعبين" },
     { id: "debts", label: "المتأخرات" },
     { id: "payments", label: "الدفعات" },
+    { id: "kits", label: "الطقم الرياضي" },
   ];
   const largestDebt = playerFinanceRows.find((player) => player.remaining > 0);
   const topRevenueGroup = groupRevenue.reduce((top, group) => (group.value > (top?.value || 0) ? group : top), null);
@@ -5493,6 +5707,32 @@ function Reports({ data, helpers, addPayment }) {
     }));
     showReportNotice(ok ? "تم فتح تقرير الحضور للطباعة PDF" : "تعذر فتح نافذة الطباعة");
   };
+  const printKitPdf = () => {
+    const rows = kitRows.map((player) => [
+      player.name,
+      player.teamName,
+      player.groupName,
+      currency(player.kitFee),
+      player.kitStatus,
+    ]);
+    const ok = printReportHtml(buildPrintReportHtml({
+      title: "تقرير الطقم الرياضي",
+      subtitle: `${reportPeriodLabel} - ${reportGroupLabel}`,
+      academyName: data.academy.name,
+      logo: data.academy.logo,
+      cards: [
+        { label: "إجمالي قيمة الأطقم", value: currency(kitExpected) },
+        { label: "المدفوع", value: currency(kitCollected) },
+        { label: "المتبقي", value: currency(kitRemaining) },
+        { label: "عدد اللاعبين", value: kitRows.length },
+      ],
+      sections: [
+        reportTable("كشف الطقم الرياضي", ["اللاعب", "الفريق", "الفئة", "قيمة الطقم", "الحالة"], rows, "لا توجد بيانات طقم لهذه الفترة."),
+      ],
+      note: "قيمة الطقم تحدد من إدارة الفريق ويمكن تعديلها داخل ملف اللاعب.",
+    }));
+    showReportNotice(ok ? "تم فتح تقرير الطقم للطباعة PDF" : "تعذر فتح نافذة الطباعة");
+  };
 
   return (
     <section className="finance-report-screen">
@@ -5582,6 +5822,10 @@ function Reports({ data, helpers, addPayment }) {
           <button className="attendance-pdf-button" type="button" onClick={printAttendancePdf}>
             <CalendarCheck size={16} />
             PDF حضور
+          </button>
+          <button type="button" onClick={printKitPdf}>
+            <Trophy size={16} />
+            PDF الطقم
           </button>
           <button type="button" onClick={copyFinancialSummary}>
             <ClipboardList size={16} />
@@ -5859,6 +6103,43 @@ function Reports({ data, helpers, addPayment }) {
                 <b>مجاني</b>
                 <small>{freePlayers} لاعب</small>
               </div>
+            </div>
+          </article>
+        </section>
+      )}
+
+      {activeReportTab === "kits" && (
+        <section className="finance-report-grid">
+          <article className="finance-chart-card wide">
+            <div className="finance-card-head">
+              <div>
+                <span>تقرير الطقم الرياضي</span>
+                <strong>{currency(kitCollected)} من {currency(kitExpected)}</strong>
+              </div>
+              <Trophy size={20} />
+            </div>
+            <div className="finance-ledger-money">
+              <span>المطلوب <b>{currency(kitExpected)}</b></span>
+              <span>المدفوع <b>{currency(kitCollected)}</b></span>
+              <span>المتبقي <b>{currency(kitRemaining)}</b></span>
+            </div>
+            <div className="finance-player-ledger">
+              {kitRows.length === 0 && <div className="finance-empty">لا توجد بيانات طقم رياضي.</div>}
+              {kitRows.map((player) => (
+                <article key={player.id}>
+                  <div className="finance-ledger-head">
+                    <div>
+                      <strong>{player.name}</strong>
+                      <span>{player.teamName} {player.groupName ? `- ${player.groupName}` : ""}</span>
+                    </div>
+                    <b className={`ledger-status status-${player.kitPaid ? "مدفوع" : "متأخر"}`}>{player.kitStatus}</b>
+                  </div>
+                  <div className="finance-ledger-money">
+                    <span>قيمة الطقم <b>{currency(player.kitFee)}</b></span>
+                    <span>الحالة <b>{player.kitStatus}</b></span>
+                  </div>
+                </article>
+              ))}
             </div>
           </article>
         </section>
