@@ -3312,6 +3312,160 @@ th {
   object-fit: cover;
 }
 
+.player-showcase-panel {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+}
+
+.player-showcase-panel > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.player-show-card {
+  width: min(360px, 100%);
+  min-height: 520px;
+  padding: 32px 28px 38px;
+  color: #5e522c;
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+  align-items: center;
+  justify-items: center;
+  position: relative;
+  overflow: hidden;
+  clip-path: polygon(8% 12%, 31% 12%, 37% 7%, 50% 10%, 63% 7%, 69% 12%, 92% 12%, 92% 88%, 80% 94%, 50% 99%, 20% 94%, 8% 88%);
+  background:
+    linear-gradient(128deg, transparent 44%, rgba(185, 144, 42, 0.24) 45%, transparent 46%),
+    linear-gradient(24deg, transparent 52%, rgba(185, 144, 42, 0.24) 53%, transparent 54%),
+    radial-gradient(circle at 74% 34%, rgba(216, 161, 31, 0.26), transparent 23%),
+    linear-gradient(135deg, #ffffff, #f4f1e8 42%, #ffffff 68%, #ece6d6);
+  border: 4px solid #b3902a;
+  box-shadow: 0 24px 48px rgba(16, 24, 40, 0.16), inset 0 0 0 3px rgba(255, 255, 255, 0.74);
+}
+
+.player-show-card::before,
+.player-show-card::after {
+  content: "";
+  position: absolute;
+  inset: 18px;
+  border: 2px solid rgba(112, 91, 30, 0.55);
+  clip-path: inherit;
+  pointer-events: none;
+}
+
+.player-show-card::after {
+  inset: 42% 10% 18% 10%;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.78) 42%, rgba(255, 255, 255, 0.92));
+  border: 0;
+  clip-path: none;
+}
+
+.player-show-card-top {
+  width: 100%;
+  display: grid;
+  justify-content: start;
+  gap: 4px;
+  position: relative;
+  z-index: 2;
+}
+
+.player-show-card-top label,
+.player-show-stats label {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+}
+
+.player-show-card-top span,
+.player-show-stats span {
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.player-show-card-top input,
+.player-show-stats input {
+  width: 54px;
+  border: 0;
+  background: transparent;
+  color: #5e522c;
+  text-align: center;
+  font-weight: 950;
+  outline: 0;
+}
+
+.player-show-card-top input {
+  font-size: 42px;
+}
+
+.player-show-card-top label + label input {
+  font-size: 24px;
+}
+
+.player-card-gem {
+  position: absolute;
+  inset-inline-end: 42px;
+  top: 118px;
+  width: 132px;
+  height: 180px;
+  background:
+    linear-gradient(132deg, transparent 0 35%, rgba(178, 137, 28, 0.72) 36% 39%, transparent 40%),
+    linear-gradient(42deg, transparent 0 46%, rgba(178, 137, 28, 0.58) 47% 50%, transparent 51%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.14), rgba(216, 161, 31, 0.34));
+  clip-path: polygon(48% 0, 100% 26%, 82% 100%, 20% 90%, 0 30%);
+  opacity: 0.85;
+  z-index: 1;
+}
+
+.player-show-photo {
+  width: 176px;
+  height: 214px;
+  margin-top: 16px;
+  border-radius: 34px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: rgba(94, 82, 44, 0.56);
+  position: relative;
+  z-index: 2;
+}
+
+.player-show-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+}
+
+.player-show-name {
+  width: 100%;
+  margin-top: 8px;
+  position: relative;
+  z-index: 3;
+  color: #5e522c;
+  text-align: center;
+  font-size: 32px;
+  line-height: 1.1;
+}
+
+.player-show-stats {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+  position: relative;
+  z-index: 3;
+}
+
+.player-show-stats input {
+  width: 42px;
+  font-size: 26px;
+}
+
 .score-row {
   display: grid;
   gap: 8px;

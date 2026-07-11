@@ -1634,6 +1634,23 @@ function App() {
     }));
   };
 
+  const updatePlayerCard = (playerId, field, value) => {
+    setData((prev) => ({
+      ...prev,
+      players: (prev.players || []).map((player) =>
+        player.id === playerId
+          ? {
+              ...player,
+              playerCard: {
+                ...(player.playerCard || {}),
+                [field]: value,
+              },
+            }
+          : player,
+      ),
+    }));
+  };
+
   const addPlayer = async (event) => {
     event.preventDefault();
     const submitAction = event.nativeEvent.submitter?.value || "save";
@@ -2333,6 +2350,7 @@ function App() {
     resetPlatformUserPassword,
     togglePlatformUserStatus,
     togglePlayerStatus,
+    updatePlayerCard,
     session,
     isFirstLogin: Boolean(session?.isFirstLogin),
   };
@@ -4738,7 +4756,7 @@ function Players({ data, helpers, addPlayer, togglePlayerStatus, setSelectedPlay
   );
 }
 
-function PlayerProfile({ data, helpers, selectedPlayerId, setSelectedPlayerId }) {
+function PlayerProfile({ data, helpers, selectedPlayerId, setSelectedPlayerId, updatePlayerCard }) {
   const player = helpers.playerById[selectedPlayerId] || data.players[0];
   const attendance = data.attendance.filter((row) => row.playerId === player?.id);
   const payments = data.payments.filter((row) => row.playerId === player?.id);
@@ -4769,6 +4787,7 @@ function PlayerProfile({ data, helpers, selectedPlayerId, setSelectedPlayerId })
           <span>{player.guardianPhone}</span>
         </div>
       </div>
+      <PlayerShowCard player={player} updatePlayerCard={updatePlayerCard} />
       <div className="metric-grid">
         <Metric title="العمر" value={playerAgeText} icon={UserRound} tone="blue" />
         <Metric title="التقييم العام" value={`${player.rating}%`} icon={Star} tone="green" />
@@ -4800,6 +4819,74 @@ function PlayerProfile({ data, helpers, selectedPlayerId, setSelectedPlayerId })
           ]}
         />
       </section>
+    </section>
+  );
+}
+
+function PlayerShowCard({ player, updatePlayerCard }) {
+  const card = player.playerCard || {};
+  const stats = [
+    ["pac", "PAC"],
+    ["sho", "SHO"],
+    ["pas", "PAS"],
+    ["dri", "DRI"],
+    ["def", "DEF"],
+    ["phy", "PHY"],
+  ];
+  const updateField = (field, value) => updatePlayerCard?.(player.id, field, value);
+
+  return (
+    <section className="player-showcase-panel">
+      <div className="player-show-card" aria-label="بطاقة اللاعب">
+        <div className="player-show-card-top">
+          <label>
+            <span>التقييم</span>
+            <input
+              value={card.rating || ""}
+              onChange={(event) => updateField("rating", event.target.value)}
+              inputMode="numeric"
+              maxLength="2"
+              placeholder="--"
+              aria-label="تقييم البطاقة"
+            />
+          </label>
+          <label>
+            <span>المركز</span>
+            <input
+              value={card.position || player.position || ""}
+              onChange={(event) => updateField("position", event.target.value)}
+              maxLength="4"
+              placeholder="--"
+              aria-label="مركز اللاعب في البطاقة"
+            />
+          </label>
+        </div>
+
+        <div className="player-card-gem" aria-hidden="true" />
+
+        <div className="player-show-photo">
+          {player.photo ? <img src={player.photo} alt={player.name} loading="lazy" decoding="async" /> : <UserCircle size={86} />}
+        </div>
+
+        <strong className="player-show-name">{player.name || "اسم اللاعب"}</strong>
+
+        <div className="player-show-stats">
+          {stats.map(([field, label]) => (
+            <label key={field}>
+              <span>{label}</span>
+              <input
+                value={card[field] || ""}
+                onChange={(event) => updateField(field, event.target.value)}
+                inputMode="numeric"
+                maxLength="2"
+                placeholder="--"
+                aria-label={label}
+              />
+            </label>
+          ))}
+        </div>
+      </div>
+      <p>اترك الخانات فارغة أو عبئها حسب تقييم المدرب.</p>
     </section>
   );
 }
