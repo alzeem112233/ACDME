@@ -329,6 +329,42 @@ function accountFromApprovedRequest(request) {
   };
 }
 
+function accountFromAcademyCloudUser(user, academyData, academyId) {
+  if (!user?.phone || !user?.passwordHash || user.status === "معطل") return null;
+
+  return {
+    id: user.id || `cloud-user-${academyId}-${normalizePhone(user.phone).replace(/\D/g, "")}`,
+    name: user.name,
+    phone: normalizePhone(user.phone),
+    role: user.role || ROLE_COACH,
+    academyId,
+    academyName: user.academyName || academyData.academy?.name || "الأكاديمية",
+    academyNameEn: user.academyNameEn || academyData.academy?.nameEn || "",
+    academyLogo: user.academyLogo || academyData.academy?.logo || "",
+    permissions: user.permissions || PERMISSION_ATTENDANCE_PLAYERS,
+    passwordHash: user.passwordHash,
+    status: user.status || "نشط",
+  };
+}
+
+function accountFromAcademyCloudCoach(coach, academyData, academyId) {
+  if (!coach?.phone || !coach?.passwordHash || coach.status === "معطل") return null;
+
+  return {
+    id: coach.id || `cloud-coach-${academyId}-${normalizePhone(coach.phone).replace(/\D/g, "")}`,
+    name: coach.name,
+    phone: normalizePhone(coach.phone),
+    role: coach.role || ROLE_COACH,
+    academyId,
+    academyName: academyData.academy?.name || "الأكاديمية",
+    academyNameEn: academyData.academy?.nameEn || "",
+    academyLogo: academyData.academy?.logo || "",
+    permissions: coach.permissions || PERMISSION_ATTENDANCE_PLAYERS,
+    passwordHash: coach.passwordHash,
+    status: coach.status || "نشط",
+  };
+}
+
 function generateTemporaryPassword() {
   const bytes = new Uint8Array(6);
   crypto.getRandomValues(bytes);
@@ -2808,6 +2844,29 @@ function LoginPassword({
     };
   };
 
+  const findCloudAcademyAccountByPhone = async (normalizedPhone) => {
+    const rows = await listRemoteAcademyData();
+    if (!Array.isArray(rows) || !rows.length) return null;
+
+    for (const row of rows) {
+      const academyId = row.academyId;
+      const academyData = normalizeAcademyData(row.data || {});
+      const usersMatch = (academyData.users || [])
+        .map((user) => accountFromAcademyCloudUser(user, academyData, academyId))
+        .find((account) => normalizePhone(account?.phone) === normalizedPhone);
+
+      if (usersMatch) return usersMatch;
+
+      const coachesMatch = (academyData.coaches || [])
+        .map((coach) => accountFromAcademyCloudCoach(coach, academyData, academyId))
+        .find((account) => normalizePhone(account?.phone) === normalizedPhone);
+
+      if (coachesMatch) return coachesMatch;
+    }
+
+    return null;
+  };
+
   const passwordMatches = async (account, enteredPassword) => {
     if (account.passwordHash) {
       return (await hashPassword(enteredPassword)) === account.passwordHash;
@@ -2837,8 +2896,12 @@ function LoginPassword({
       const liveUsers = await refreshPlatformUsers?.();
       const requestsForLogin = Array.isArray(liveRegistrationRequests) ? liveRegistrationRequests : registrationRequests;
       const usersForLogin = Array.isArray(liveUsers) ? liveUsers : users;
-      const account = findAccountByPhone(normalizedPhone, requestsForLogin, usersForLogin);
+      let account = findAccountByPhone(normalizedPhone, requestsForLogin, usersForLogin);
       const existingRequest = findRequestByPhone(normalizedPhone, requestsForLogin);
+
+      if (!account) {
+        account = await findCloudAcademyAccountByPhone(normalizedPhone);
+      }
 
       if (!account) {
         if (existingRequest?.status === STATUS_PENDING) {
@@ -2849,11 +2912,9 @@ function LoginPassword({
         if (existingRequest?.status === STATUS_REJECTED) {
           setMessage("تم رفض طلب هذا الرقم سابقًا. يمكنك إرسال طلب جديد ببيانات مكتملة.");
         } else {
-          setMessage("هذا الرقم غير مسجل. أنشئ حسابًا جديدًا ليظهر الطلب في داشبورد الموافقة.");
+          setMessage("هذا الرقم غير مسجل كحساب معتمد. إذا كنت مالك أكاديمية جديدة فاضغط إنشاء حساب لإرسال طلب الموافقة.");
         }
 
-        setRegistration((prev) => ({ ...prev, phone: normalizedPhone }));
-        setMode("register");
         return;
       }
 
@@ -2866,6 +2927,12 @@ function LoginPassword({
       if (!isCorrectPassword) {
         setMessage("كلمة السر غير صحيحة.");
         return;
+      }
+
+      if (account.passwordHash && account.academyId !== "platform") {
+        upsertPlatformAccount(account).catch(() => {
+          // The account was already valid for login; it can be indexed remotely on a later attempt.
+        });
       }
 
       onVerified({
@@ -2908,13 +2975,16 @@ function LoginPassword({
       const liveUsers = await refreshPlatformUsers?.();
       const requestsForRegistration = Array.isArray(liveRegistrationRequests) ? liveRegistrationRequests : registrationRequests;
       const usersForRegistration = Array.isArray(liveUsers) ? liveUsers : users;
-      const existingAccount = findAccountByPhone(normalizedPhone, requestsForRegistration, usersForRegistration);
+      const existingAccount =
+        findAccountByPhone(normalizedPhone, requestsForRegistration, usersForRegistration) ||
+        (await findCloudAcademyAccountByPhone(normalizedPhone));
       const existingRequest = findRequestByPhone(normalizedPhone, requestsForRegistration);
       const existingAcademyName = findAcademyByName(registration.academyName, requestsForRegistration, usersForRegistration);
 
       if (existingAccount) {
         setMessage("هذا الرقم مسجل مسبقًا. يمكنك تسجيل الدخول مباشرة.");
         setPhone(normalizedPhone);
+        setPassword("");
         setMode("login");
         return;
       }
@@ -2996,6 +3066,7 @@ function LoginPassword({
             className={mode === "login" ? "active" : ""}
             type="button"
             aria-pressed={mode === "login"}
+            disabled={isLoading}
             onClick={() => switchAuthMode("login")}
           >
             تسجيل الدخول
@@ -3004,6 +3075,7 @@ function LoginPassword({
             className={mode === "register" ? "active" : ""}
             type="button"
             aria-pressed={mode === "register"}
+            disabled={isLoading}
             onClick={() => switchAuthMode("register")}
           >
             إنشاء حساب
@@ -3011,7 +3083,7 @@ function LoginPassword({
         </div>
 
         {mode === "login" ? (
-          <form className="form-panel" onSubmit={submitLogin}>
+          <form className="form-panel" onSubmit={submitLogin} aria-busy={isLoading}>
             <FormTitle icon={LockKeyhole} title="تسجيل الدخول" />
             <input
               value={phone}
@@ -3026,6 +3098,7 @@ function LoginPassword({
               onChange={(event) => setPassword(event.target.value)}
               placeholder="كلمة السر"
               required
+              autoComplete="current-password"
             />
             <button className="primary-button" type="submit" disabled={isLoading}>
               <KeyRound size={18} />
@@ -3033,7 +3106,7 @@ function LoginPassword({
             </button>
           </form>
         ) : (
-          <form className="form-panel" onSubmit={submitRegistration}>
+          <form className="form-panel" onSubmit={submitRegistration} aria-busy={isLoading}>
             <FormTitle icon={Plus} title="إنشاء حساب أكاديمية" />
             <input
               value={registration.academyName}

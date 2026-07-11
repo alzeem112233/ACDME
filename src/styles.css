@@ -418,6 +418,8 @@ button {
   background: transparent;
   color: var(--muted);
   font-weight: 800;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
 }
 
 .auth-switch button.active {
@@ -426,12 +428,22 @@ button {
   box-shadow: 0 8px 20px rgba(16, 24, 40, 0.08);
 }
 
+.auth-switch button:not(.active):not(:disabled):hover {
+  background: rgba(255, 255, 255, 0.48);
+}
+
+.auth-switch button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
 .login-card .form-panel {
   position: static;
   box-shadow: none;
   border: 0;
   padding: 0;
   background: transparent;
+  animation: authPanelIn 0.18s ease;
 }
 
 .login-message {
@@ -442,6 +454,18 @@ button {
   border-radius: 14px;
   padding: 11px 12px;
   font-size: 14px;
+  line-height: 1.7;
+}
+
+@keyframes authPanelIn {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .login-modules {
