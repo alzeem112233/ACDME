@@ -445,7 +445,7 @@ button {
   color: var(--muted);
   font-weight: 800;
   cursor: pointer;
-  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+  transition: background 0.08s ease, color 0.08s ease, box-shadow 0.08s ease;
 }
 
 .auth-switch button.active {
@@ -458,18 +458,13 @@ button {
   background: rgba(255, 255, 255, 0.48);
 }
 
-.auth-switch button:disabled {
-  cursor: wait;
-  opacity: 0.62;
-}
-
 .login-card .form-panel {
   position: static;
   box-shadow: none;
   border: 0;
   padding: 0;
   background: transparent;
-  animation: authPanelIn 0.18s ease;
+  animation: authPanelIn 0.08s ease;
 }
 
 .login-message {
@@ -506,6 +501,12 @@ button {
 .backup-card,
 .sync-card {
   margin-top: 16px;
+}
+
+.backup-card-prominent {
+  margin-top: 0;
+  border-color: rgba(216, 161, 31, 0.38);
+  box-shadow: 0 18px 40px rgba(16, 24, 40, 0.12);
 }
 
 .sync-card {

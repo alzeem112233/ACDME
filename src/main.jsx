@@ -3361,6 +3361,11 @@ function LoginPassword({
   };
 
   const switchAuthMode = (nextMode) => {
+    if (nextMode === mode) return;
+
+    setMode(nextMode);
+    setMessage("");
+
     if (nextMode === "register" && phone && !registration.phone) {
       setRegistration((prev) => ({ ...prev, phone: normalizePhone(phone) }));
     }
@@ -3368,10 +3373,6 @@ function LoginPassword({
     if (nextMode === "login" && registration.phone && !phone) {
       setPhone(normalizePhone(registration.phone));
     }
-
-    setMode(nextMode);
-    setMessage("");
-    setIsLoading(false);
   };
 
   return (
@@ -3409,7 +3410,6 @@ function LoginPassword({
             className={mode === "login" ? "active" : ""}
             type="button"
             aria-pressed={mode === "login"}
-            disabled={isLoading}
             onClick={() => switchAuthMode("login")}
           >
             تسجيل الدخول
@@ -3418,7 +3418,6 @@ function LoginPassword({
             className={mode === "register" ? "active" : ""}
             type="button"
             aria-pressed={mode === "register"}
-            disabled={isLoading}
             onClick={() => switchAuthMode("register")}
           >
             إنشاء حساب
@@ -3433,7 +3432,6 @@ function LoginPassword({
               onChange={(event) => setPhone(event.target.value)}
               placeholder="رقم الهاتف"
               inputMode="tel"
-              autoFocus
               required
             />
             <PasswordField
@@ -3945,9 +3943,31 @@ function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBa
   return (
     <section className="setup-screen academy-setup-screen">
       <header className="setup-header dark">
-        <span>إعداد بيانات الأكاديمية</span>
+        <span>الإعدادات والنسخ الاحتياطي</span>
         <span aria-hidden="true">?</span>
       </header>
+
+      <section className="setup-card backup-card backup-card-prominent">
+        <section className="age-hero-card">
+          <span>نسخة احتياطية</span>
+          <h2>حفظ بيانات اللاعبين على الهاتف</h2>
+          <p>اللاعبون وصورهم والحضور والمدفوعات التفصيلية تبقى على هذا الجهاز. أنشئ نسخة احتياطية مضغوطة لاستعادتها لاحقًا.</p>
+        </section>
+
+        <div className="backup-actions">
+          <button className="yellow-button" type="button" onClick={handleBackupExport} disabled={isBackupBusy}>
+            <Download size={18} />
+            إنشاء نسخة احتياطية
+          </button>
+          <label className={isBackupBusy ? "backup-import-button disabled" : "backup-import-button"}>
+            <Upload size={18} />
+            استيراد نسخة احتياطية
+            <input type="file" accept=".gz,.json,application/gzip,application/json" onChange={handleBackupImport} disabled={isBackupBusy} />
+          </label>
+        </div>
+
+        {backupMessage && <p className={backupMessage.startsWith("تم") ? "setup-success" : "setup-error"}>{backupMessage}</p>}
+      </section>
 
       <form className="setup-card academy-card" onSubmit={handleAcademySubmit}>
         <div className="logo-uploader">
@@ -4023,27 +4043,6 @@ function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBa
         {syncMessage && <p className={syncMessage.startsWith("تم") ? "setup-success" : "setup-error"}>{syncMessage}</p>}
       </section>
 
-      <section className="setup-card backup-card">
-        <section className="age-hero-card">
-          <span>نسخة محلية</span>
-          <h2>حفظ بيانات اللاعبين على الهاتف</h2>
-          <p>اللاعبون وصورهم والحضور والمدفوعات التفصيلية تبقى على هذا الجهاز. أنشئ نسخة احتياطية مضغوطة لاستعادتها لاحقًا.</p>
-        </section>
-
-        <div className="backup-actions">
-          <button className="yellow-button" type="button" onClick={handleBackupExport} disabled={isBackupBusy}>
-            <Download size={18} />
-            إنشاء نسخة احتياطية
-          </button>
-          <label className={isBackupBusy ? "backup-import-button disabled" : "backup-import-button"}>
-            <Upload size={18} />
-            استيراد نسخة احتياطية
-            <input type="file" accept=".gz,.json,application/gzip,application/json" onChange={handleBackupImport} disabled={isBackupBusy} />
-          </label>
-        </div>
-
-        {backupMessage && <p className={backupMessage.startsWith("تم") ? "setup-success" : "setup-error"}>{backupMessage}</p>}
-      </section>
     </section>
   );
 }
