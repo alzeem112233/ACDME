@@ -571,6 +571,26 @@ function useLocalState(key, initialValue) {
   return [value, update];
 }
 
+function readAppLocalSnapshot() {
+  if (typeof localStorage === "undefined") return {};
+
+  return Object.fromEntries(
+    Object.keys(localStorage)
+      .filter((key) => key.startsWith("acdme-"))
+      .map((key) => [key, readLocalData(key, null)]),
+  );
+}
+
+function restoreAppLocalSnapshot(snapshot = {}) {
+  if (!snapshot || typeof snapshot !== "object") return;
+
+  Object.entries(snapshot).forEach(([key, value]) => {
+    if (key.startsWith("acdme-")) {
+      writeLocalData(key, value);
+    }
+  });
+}
+
 function currency(value) {
   return new Intl.NumberFormat("ar-YE").format(Number(value || 0)) + " ريال";
 }
@@ -2192,18 +2212,38 @@ function App() {
     }
 
     const academyData = normalizeAcademyData(academyDataById[currentAcademyId], session);
+    const allAcademies = {
+      ...academyDataById,
+      [currentAcademyId]: academyData,
+    };
     const backupPayload = {
       app: "QZ Academy",
-      version: 2,
+      version: 3,
+      backupType: "full-app",
       createdAt: new Date().toISOString(),
       academyId: currentAcademyId,
       academyName: academyData.academy.name || session?.academyName || "",
       data: academyData,
+      appState: {
+        activeView,
+        session,
+        onboardingState,
+        platformData,
+        academyDataById: allAcademies,
+      },
+      localStorage: {
+        ...readAppLocalSnapshot(),
+        "acdme-active-view-v1": activeView,
+        "acdme-session-v5": session,
+        "acdme-onboarding-v4": onboardingState,
+        "acdme-platform-data-v1": platformData,
+        "acdme-academy-data-by-id-v1": allAcademies,
+      },
     };
     const blob = await gzipText(JSON.stringify(backupPayload));
     const safeName = (backupPayload.academyName || "academy").replace(/[^\w\u0600-\u06FF-]+/g, "-");
     downloadBlob(blob, `${safeName}-${today}.acdme-backup.json.gz`);
-    return { ok: true, message: "تم إنشاء نسخة احتياطية مضغوطة على هذا الجهاز." };
+    return { ok: true, message: "تم إنشاء نسخة احتياطية كاملة ومضغوطة لكل بيانات التطبيق." };
   };
 
   const importLocalBackup = async (file) => {
@@ -2214,17 +2254,42 @@ function App() {
     try {
       const text = await readBackupText(file);
       const backup = JSON.parse(text);
-      const importedData = backup.data || backup.academyData;
+      const importedData =
+        backup.data ||
+        backup.academyData ||
+        backup.appState?.academyDataById?.[backup.academyId || currentAcademyId];
       if (!importedData || typeof importedData !== "object") {
         return { ok: false, message: "ملف النسخة الاحتياطية غير صالح." };
       }
 
       const restoredData = normalizeAcademyData(importedData, session);
+      const restoredAcademyId = backup.academyId || currentAcademyId;
+      const restoredAcademies = {
+        ...(backup.appState?.academyDataById || {}),
+        [restoredAcademyId]: restoredData,
+      };
+      const nextPlatformData = backup.appState?.platformData || platformData;
+      const nextOnboardingState = backup.appState?.onboardingState || onboardingState;
+      const nextSession = backup.appState?.session || session;
+      const nextActiveView = backup.appState?.activeView || activeView;
+
+      restoreAppLocalSnapshot(backup.localStorage);
+      writeLocalData("acdme-active-view-v1", nextActiveView);
+      writeLocalData("acdme-session-v5", nextSession);
+      writeLocalData("acdme-onboarding-v4", nextOnboardingState);
+      writeLocalData("acdme-platform-data-v1", nextPlatformData);
+      writeLocalData("acdme-academy-data-by-id-v1", restoredAcademies);
+
       setData(restoredData);
-      upsertRemoteAcademyData(currentAcademyId, toCloudAcademyData(restoredData, session)).catch(() => {
+      setAcademyDataById(restoredAcademies);
+      setPlatformData(nextPlatformData);
+      setOnboardingState(nextOnboardingState);
+      setSession(nextSession);
+      setActiveView(nextActiveView);
+      upsertRemoteAcademyData(restoredAcademyId, toCloudAcademyData(restoredData, nextSession)).catch(() => {
         // Local restore succeeds even if the public cloud summary is updated later.
       });
-      return { ok: true, message: "تم استيراد النسخة الاحتياطية واستعادة البيانات المحلية." };
+      return { ok: true, message: "تم استيراد النسخة الاحتياطية الكاملة واستعادة بيانات التطبيق." };
     } catch {
       return { ok: false, message: "تعذر قراءة النسخة الاحتياطية. تأكد من اختيار الملف الصحيح." };
     }
@@ -3963,8 +4028,8 @@ function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBa
       <section className="setup-card backup-card backup-card-prominent">
         <section className="age-hero-card">
           <span>نسخة احتياطية</span>
-          <h2>حفظ بيانات اللاعبين على الهاتف</h2>
-          <p>اللاعبون وصورهم والحضور والمدفوعات التفصيلية تبقى على هذا الجهاز. أنشئ نسخة احتياطية مضغوطة لاستعادتها لاحقًا.</p>
+          <h2>حفظ كل بيانات التطبيق</h2>
+          <p>تحفظ النسخة الأكاديمية، اللاعبين، الصور، الحضور، المدفوعات، الإعدادات، والحسابات المحلية في ملف مضغوط يمكن استيراده لاحقًا.</p>
         </section>
 
         <div className="backup-actions">

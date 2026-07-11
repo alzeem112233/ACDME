@@ -1,4 +1,4 @@
-const CACHE_NAME = "al-qaisar-dashboard-v13";
+const CACHE_NAME = "al-qaisar-dashboard-v14";
 const APP_SHELL = ["/", "/index.html", "/manifest.webmanifest", "/icons/app-icon.svg"];
 
 self.addEventListener("install", (event) => {
