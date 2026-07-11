@@ -1,5 +1,9 @@
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 
+function isOffline() {
+  return typeof navigator !== "undefined" && navigator.onLine === false;
+}
+
 const remoteStatusByArabic = {
   "قيد المراجعة": "pending",
   "مقبول": "approved",
@@ -83,7 +87,7 @@ function platformAccountPayload(account) {
 }
 
 export async function getRemoteAcademyData(academyId) {
-  if (!isSupabaseConfigured || !academyId) return null;
+  if (!isSupabaseConfigured || !academyId || isOffline()) return null;
 
   const { data, error } = await supabase
     .from("academy_cloud_data")
@@ -96,7 +100,7 @@ export async function getRemoteAcademyData(academyId) {
 }
 
 export async function listRemoteAcademyData() {
-  if (!isSupabaseConfigured) return [];
+  if (!isSupabaseConfigured || isOffline()) return [];
 
   const { data, error } = await supabase
     .from("academy_cloud_data")
@@ -108,7 +112,7 @@ export async function listRemoteAcademyData() {
 }
 
 export async function upsertRemoteAcademyData(academyId, academyData) {
-  if (!isSupabaseConfigured || !academyId) return null;
+  if (!isSupabaseConfigured || !academyId || isOffline()) return null;
 
   const { data, error } = await supabase
     .from("academy_cloud_data")
@@ -128,7 +132,7 @@ export async function upsertRemoteAcademyData(academyId, academyData) {
 }
 
 export async function listPlayers() {
-  if (!isSupabaseConfigured) return null;
+  if (!isSupabaseConfigured || isOffline()) return null;
 
   const { data, error } = await supabase
     .from("players")
@@ -140,7 +144,7 @@ export async function listPlayers() {
 }
 
 export async function createPlayer(player) {
-  if (!isSupabaseConfigured) return null;
+  if (!isSupabaseConfigured || isOffline()) return null;
 
   const { data, error } = await supabase.from("players").insert(player).select().single();
   if (error) throw error;
@@ -148,7 +152,7 @@ export async function createPlayer(player) {
 }
 
 export async function recordRemoteAttendance(attendance) {
-  if (!isSupabaseConfigured) return null;
+  if (!isSupabaseConfigured || isOffline()) return null;
 
   const { data, error } = await supabase
     .from("attendance")
@@ -161,7 +165,7 @@ export async function recordRemoteAttendance(attendance) {
 }
 
 export async function createPayment(payment) {
-  if (!isSupabaseConfigured) return null;
+  if (!isSupabaseConfigured || isOffline()) return null;
 
   const { data, error } = await supabase.from("payments").insert(payment).select().single();
   if (error) throw error;
@@ -169,7 +173,7 @@ export async function createPayment(payment) {
 }
 
 export async function listRegistrationRequests() {
-  if (!isSupabaseConfigured) return null;
+  if (!isSupabaseConfigured || isOffline()) return null;
 
   const { data, error } = await supabase
     .from("registration_requests")
@@ -181,7 +185,7 @@ export async function listRegistrationRequests() {
 }
 
 export async function listPlatformAccounts() {
-  if (!isSupabaseConfigured) return null;
+  if (!isSupabaseConfigured || isOffline()) return null;
 
   const { data, error } = await supabase
     .from("platform_accounts")
@@ -193,7 +197,7 @@ export async function listPlatformAccounts() {
 }
 
 export async function upsertPlatformAccount(account) {
-  if (!isSupabaseConfigured) return null;
+  if (!isSupabaseConfigured || isOffline()) return null;
 
   const { data, error } = await supabase
     .from("platform_accounts")
@@ -206,7 +210,7 @@ export async function upsertPlatformAccount(account) {
 }
 
 export async function createRegistrationRequest(request) {
-  if (!isSupabaseConfigured) return null;
+  if (!isSupabaseConfigured || isOffline()) return null;
 
   const legacyPayload = {
     academy_name: request.academyName,
@@ -245,7 +249,7 @@ export async function createRegistrationRequest(request) {
 }
 
 export async function updateRemoteRegistrationRequest(requestId, status) {
-  if (!isSupabaseConfigured) return null;
+  if (!isSupabaseConfigured || isOffline()) return null;
 
   const { data, error } = await supabase
     .from("registration_requests")
@@ -262,7 +266,7 @@ export async function updateRemoteRegistrationRequest(requestId, status) {
 }
 
 export async function updateRemoteRegistrationPassword(phone, passwordHash) {
-  if (!isSupabaseConfigured) return null;
+  if (!isSupabaseConfigured || isOffline()) return null;
 
   const updatePayload = {
     password_hash: passwordHash,
@@ -293,7 +297,7 @@ export async function updateRemoteRegistrationPassword(phone, passwordHash) {
 }
 
 export async function updateRemotePlatformAccountPassword(phone, passwordHash) {
-  if (!isSupabaseConfigured) return null;
+  if (!isSupabaseConfigured || isOffline()) return null;
 
   const { data, error } = await supabase
     .from("platform_accounts")
@@ -311,7 +315,7 @@ export async function updateRemotePlatformAccountPassword(phone, passwordHash) {
 }
 
 export async function updateRemotePlatformAccountStatus(phone, status) {
-  if (!isSupabaseConfigured) return null;
+  if (!isSupabaseConfigured || isOffline()) return null;
 
   const { data, error } = await supabase
     .from("platform_accounts")

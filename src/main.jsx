@@ -906,6 +906,8 @@ function App() {
   const lastCloudPayloadRef = useRef("");
   const [query, setQuery] = useState("");
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const [isOnline, setIsOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
+  const [onlineSyncTick, setOnlineSyncTick] = useState(0);
   const isSuperAdmin = isSuperAdminSession(session);
   const currentAcademyId = session?.academyId || "";
   const data = useMemo(() => {
@@ -994,6 +996,25 @@ function App() {
 
   const registrationRequests = platformRegistrationRequests;
 
+  useEffect(() => {
+    const updateConnectionState = () => {
+      const nextOnline = typeof navigator === "undefined" ? true : navigator.onLine;
+      setIsOnline(nextOnline);
+      if (nextOnline) {
+        setOnlineSyncTick((value) => value + 1);
+      }
+    };
+
+    window.addEventListener("online", updateConnectionState);
+    window.addEventListener("offline", updateConnectionState);
+    updateConnectionState();
+
+    return () => {
+      window.removeEventListener("online", updateConnectionState);
+      window.removeEventListener("offline", updateConnectionState);
+    };
+  }, []);
+
   const refreshPlatformUsers = async () => {
     try {
       const accounts = await listPlatformAccounts();
@@ -1046,6 +1067,12 @@ function App() {
   useEffect(() => {
     let isMounted = true;
 
+    if (!isOnline) {
+      return () => {
+        isMounted = false;
+      };
+    }
+
     listPlatformAccounts()
       .then(async (accounts) => {
         if (isMounted && Array.isArray(accounts)) {
@@ -1092,7 +1119,7 @@ function App() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [isOnline, onlineSyncTick]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -1107,6 +1134,13 @@ function App() {
 
     if (isSuperAdmin) {
       setCloudSyncState({ academyId: "platform", loaded: false, saving: false, error: "" });
+      if (!isOnline) {
+        setCloudSyncState({ academyId: "platform", loaded: true, saving: false, error: "أنت تعمل بدون إنترنت. سيتم تحديث بيانات السحابة عند عودة الاتصال." });
+        return () => {
+          isCancelled = true;
+        };
+      }
+
       listRemoteAcademyData()
         .then((rows) => {
           if (isCancelled) return;
@@ -1139,6 +1173,14 @@ function App() {
     };
 
     setCloudSyncState({ academyId: currentAcademyId, loaded: false, saving: false, error: "" });
+    if (!isOnline) {
+      lastCloudPayloadRef.current = JSON.stringify(toCloudAcademyData(academyDataById[currentAcademyId], session));
+      setCloudSyncState({ academyId: currentAcademyId, loaded: true, saving: false, error: "أنت تعمل بدون إنترنت. بياناتك محفوظة على الهاتف وستتزامن عند عودة الاتصال." });
+      return () => {
+        isCancelled = true;
+      };
+    }
+
     getRemoteAcademyData(currentAcademyId)
       .then(async (row) => {
         if (isCancelled) return;
@@ -1182,7 +1224,7 @@ function App() {
     return () => {
       isCancelled = true;
     };
-  }, [session?.verified, currentAcademyId, isSuperAdmin]);
+  }, [session?.verified, currentAcademyId, isSuperAdmin, isOnline, onlineSyncTick]);
 
   useEffect(() => {
     if (
@@ -1192,6 +1234,10 @@ function App() {
       !cloudSyncState.loaded ||
       cloudSyncState.academyId !== currentAcademyId
     ) {
+      return undefined;
+    }
+
+    if (!isOnline) {
       return undefined;
     }
 
@@ -1214,7 +1260,7 @@ function App() {
     }, 900);
 
     return () => window.clearTimeout(saveTimer);
-  }, [academyDataById, currentAcademyId, session, isSuperAdmin, cloudSyncState.loaded, cloudSyncState.academyId]);
+  }, [academyDataById, currentAcademyId, session, isSuperAdmin, cloudSyncState.loaded, cloudSyncState.academyId, isOnline, onlineSyncTick]);
 
   const addAgeGroup = (event) => {
     event.preventDefault();
@@ -2106,6 +2152,8 @@ function App() {
   const viewProps = {
     data,
     academyDataById,
+    cloudSyncState,
+    isOnline,
     stats,
     helpers,
     filteredPlayers,
@@ -2222,6 +2270,12 @@ function App() {
       <button className="global-refresh-button" type="button" onClick={handlePageRefresh} aria-label="تحديث الصفحة">
         <RefreshCw size={18} />
       </button>
+
+      {!isOnline && (
+        <div className="offline-banner" role="status">
+          أنت تعمل بدون إنترنت. البيانات محفوظة على الهاتف وستتزامن عند عودة الاتصال.
+        </div>
+      )}
 
       <div className="profile-menu-shell">
         <button

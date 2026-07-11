@@ -159,11 +159,37 @@ button {
   box-shadow: 0 10px 24px rgba(16, 24, 40, 0.14);
 }
 
+.offline-banner {
+  position: fixed;
+  top: max(10px, calc(10px + env(safe-area-inset-top)));
+  inset-inline-start: 62px;
+  inset-inline-end: 12px;
+  min-height: 42px;
+  border: 1px solid rgba(189, 139, 4, 0.34);
+  border-radius: 14px;
+  background: #fff8dc;
+  color: #735100;
+  box-shadow: 0 10px 24px rgba(16, 24, 40, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 12px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.5;
+  z-index: 1180;
+}
+
 .app-shell.home-view .profile-menu-shell {
   top: calc(16px + env(safe-area-inset-top));
 }
 
 .app-shell.home-view .global-refresh-button {
+  top: calc(16px + env(safe-area-inset-top));
+}
+
+.app-shell.home-view .offline-banner {
   top: calc(16px + env(safe-area-inset-top));
 }
 
