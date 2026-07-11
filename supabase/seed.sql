@@ -1,0 +1,2 @@
+-- No demo data.
+-- Production starts empty; add real academies, coaches, players, and teams through the app.

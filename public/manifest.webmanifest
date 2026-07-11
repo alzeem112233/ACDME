@@ -1,0 +1,19 @@
+{
+  "name": "Al-Qaisar Master Dashboard",
+  "short_name": "Al-Qaisar",
+  "description": "نظام إدارة أكاديمية رياضية",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f8fa",
+  "theme_color": "#111a4f",
+  "dir": "rtl",
+  "lang": "ar",
+  "icons": [
+    {
+      "src": "/icons/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

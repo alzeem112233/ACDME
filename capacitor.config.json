@@ -1,0 +1,9 @@
+{
+  "appId": "com.quzeschool.academy",
+  "appName": "QZ Academy",
+  "webDir": "dist",
+  "backgroundColor": "#111a4f",
+  "server": {
+    "androidScheme": "https"
+  }
+}

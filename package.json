@@ -1,0 +1,31 @@
+{
+  "name": "acdme-sports-academy-admin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "start": "vite preview --host 127.0.0.1",
+    "deploy:check": "pnpm build && pnpm preview",
+    "db:login": "pnpm dlx supabase login",
+    "db:link": "pnpm dlx supabase link",
+    "db:push": "pnpm dlx supabase db push",
+    "deploy:vercel": "pnpm dlx vercel --prod",
+    "deploy:netlify": "pnpm dlx netlify deploy --prod --dir=dist"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.4.1",
+    "@capacitor/core": "^8.4.1",
+    "@supabase/supabase-js": "^2.110.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "lucide-react": "^0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "vite": "^6.0.7"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.4.1"
+  }
+}

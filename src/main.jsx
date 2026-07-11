@@ -1,0 +1,5419 @@
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createRoot } from "react-dom/client";
+import {
+  Activity,
+  BadgeCheck,
+  Bell,
+  CalendarCheck,
+  Camera,
+  CheckCircle2,
+  CircleDollarSign,
+  ClipboardCheck,
+  ClipboardList,
+  Clock,
+  Dumbbell,
+  Eye,
+  EyeOff,
+  KeyRound,
+  Layers,
+  LockKeyhole,
+  MapPin,
+  Medal,
+  MessageSquare,
+  Plus,
+  RefreshCw,
+  Search,
+  Send,
+  Settings,
+  ShieldCheck,
+  Star,
+  Swords,
+  Trophy,
+  UserCircle,
+  UserRound,
+  Users,
+  Wallet,
+} from "lucide-react";
+import { registerServiceWorker } from "./registerServiceWorker";
+import { readLocalData, writeLocalData } from "./services/localRepository";
+import {
+  createRegistrationRequest,
+  getRemoteAcademyData,
+  listRemoteAcademyData,
+  listPlatformAccounts,
+  listRegistrationRequests,
+  updateRemotePlatformAccountPassword,
+  updateRemotePlatformAccountStatus,
+  updateRemoteRegistrationPassword,
+  updateRemoteRegistrationRequest,
+  upsertRemoteAcademyData,
+  upsertPlatformAccount,
+} from "./services/academyRepository";
+import "./styles.css";
+
+registerServiceWorker();
+
+const today = new Date().toISOString().slice(0, 10);
+const SUPER_ADMIN_PHONE = "+967772227092";
+const SUPER_ADMIN_PASSWORD = "772227092";
+const STATUS_PENDING = "قيد المراجعة";
+const STATUS_APPROVED = "مقبول";
+const STATUS_REJECTED = "مرفوض";
+const ROLE_SUPER_ADMIN = "سوبر أدمين";
+const ROLE_OWNER = "مالك أكاديمية";
+const ROLE_COACH = "مدرب";
+const PERMISSION_FULL = "إدارة كاملة";
+const PERMISSION_ATTENDANCE_PLAYERS = "الحضور واللاعبين";
+const PERMISSION_TEAM_FOLLOW = "متابعة فريق محدد";
+const PERMISSION_READ_ONLY = "قراءة فقط";
+const MAX_ACADEMY_ACCOUNTS = 3;
+const ageGroupPresets = [
+  { key: "hope", name: "الأمل", years: "2014-now", from: 2014, to: new Date().getFullYear() },
+  { key: "buds", name: "البراعم", years: "2012-2013", from: 2012, to: 2013 },
+  { key: "cubs", name: "الأشبال", years: "2010-2011", from: 2010, to: 2011 },
+  { key: "juniors", name: "الناشئين", years: "2008-2009", from: 2008, to: 2009 },
+  { key: "youth", name: "الشباب", years: "2006-2007", from: 2006, to: 2007 },
+];
+const trainingDayOptions = ["السبت", "الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة"];
+
+function normalizePhone(value = "") {
+  const raw = String(value).trim().replace(/\s+/g, "");
+  if (raw.startsWith("+")) return raw;
+  if (raw.startsWith("00")) return `+${raw.slice(2)}`;
+  if (raw.startsWith("0")) return `+967${raw.slice(1)}`;
+  if (raw.startsWith("7")) return `+967${raw}`;
+  return raw;
+}
+
+function normalizeText(value = "") {
+  return String(value).trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function isSuperAdminSession(session) {
+  return session?.role === ROLE_SUPER_ADMIN && normalizePhone(session?.phone) === SUPER_ADMIN_PHONE;
+}
+
+function accountCountForAcademy(users = [], academyId = "") {
+  return users.filter((user) => user.academyId === academyId && user.status !== "معطل").length;
+}
+
+async function hashPassword(password) {
+  const encoded = new TextEncoder().encode(password);
+  const digest = await crypto.subtle.digest("SHA-256", encoded);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function fileToDataUrl(file) {
+  if (!file || !file.size) return "";
+  const fallback = () => readFileAsDataUrl(file);
+
+  if (!file.type?.startsWith("image/") || file.type === "image/svg+xml" || file.type === "image/gif") {
+    return fallback();
+  }
+
+  let objectUrl = "";
+  try {
+    objectUrl = URL.createObjectURL(file);
+    const image = await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = objectUrl;
+    });
+    const sourceWidth = image.naturalWidth || image.width || 1;
+    const sourceHeight = image.naturalHeight || image.height || 1;
+    const maxSide = 960;
+    const scale = Math.min(1, maxSide / Math.max(sourceWidth, sourceHeight));
+    const width = Math.max(1, Math.round(sourceWidth * scale));
+    const height = Math.max(1, Math.round(sourceHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) return fallback();
+
+    context.drawImage(image, 0, 0, width, height);
+    let compressed = canvas.toDataURL("image/webp", 0.78);
+    if (!compressed.startsWith("data:image/webp")) {
+      compressed = canvas.toDataURL("image/jpeg", 0.82);
+    }
+
+    return compressed.length < file.size * 1.45 ? compressed : fallback();
+  } catch {
+    return fallback();
+  } finally {
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function imageFileFromForm(form, name) {
+  return form.getAll(name).find((file) => file && file.size) || null;
+}
+
+function mergeRegistrationRequests(remoteRequests, localRequests = []) {
+  const localByPhone = new Map(
+    localRequests
+      .filter((request) => request.phone || request.contact)
+      .map((request) => [normalizePhone(request.phone || request.contact), request]),
+  );
+  const remotePhones = new Set(remoteRequests.map((request) => normalizePhone(request.phone || request.contact)));
+  const mergedRemote = remoteRequests.map((request) => {
+    const localRequest = localByPhone.get(normalizePhone(request.phone || request.contact));
+    return {
+      ...request,
+      academyId: request.academyId || localRequest?.academyId || makeAcademyId(request.phone || localRequest?.phone || request.contact, request.id),
+      passwordHash: request.passwordHash || localRequest?.passwordHash || "",
+      phone: request.phone || localRequest?.phone || request.contact,
+    };
+  });
+  const localOnly = localRequests.filter((request) => !remotePhones.has(normalizePhone(request.phone || request.contact)));
+
+  return [...mergedRemote, ...localOnly];
+}
+
+async function syncMissingRemoteRegistrationRequests(remoteRequests = [], localRequests = []) {
+  const remotePhones = new Set(remoteRequests.map((request) => normalizePhone(request.phone || request.contact)));
+  const localRequestsToSync = localRequests.filter((request) => {
+    const phone = normalizePhone(request.phone || request.contact);
+    return phone && request.passwordHash && !remotePhones.has(phone) && request.status !== STATUS_REJECTED;
+  });
+
+  if (!localRequestsToSync.length) return remoteRequests;
+
+  const syncedRequests = [];
+  for (const request of localRequestsToSync) {
+    try {
+      const remoteRequest = await createRegistrationRequest({
+        ...request,
+        phone: normalizePhone(request.phone || request.contact),
+        contact: normalizePhone(request.phone || request.contact),
+        academyId: requestAcademyId(request),
+      });
+
+      if (remoteRequest) {
+        syncedRequests.push({
+          ...remoteRequest,
+          academyId: remoteRequest.academyId || requestAcademyId(request),
+          passwordHash: remoteRequest.passwordHash || request.passwordHash,
+          status: remoteRequest.status || request.status,
+        });
+      }
+    } catch {
+      // The local request stays available and can be synced on the next visit.
+    }
+  }
+
+  return [...syncedRequests, ...remoteRequests];
+}
+
+function mergePlatformUsers(remoteUsers = [], localUsers = []) {
+  const usersByPhone = new Map();
+
+  localUsers.forEach((user) => {
+    const phone = normalizePhone(user.phone);
+    if (phone) usersByPhone.set(phone, { ...user, phone });
+  });
+
+  remoteUsers.forEach((user) => {
+    const phone = normalizePhone(user.phone);
+    if (!phone) return;
+    const localUser = usersByPhone.get(phone);
+    usersByPhone.set(phone, {
+      ...localUser,
+      ...user,
+      phone,
+      passwordHash: user.passwordHash || localUser?.passwordHash || "",
+    });
+  });
+
+  return Array.from(usersByPhone.values());
+}
+
+async function syncMissingRemotePlatformAccounts(remoteUsers = [], localUsers = []) {
+  const remotePhones = new Set(remoteUsers.map((user) => normalizePhone(user.phone)));
+  const localUsersToSync = localUsers.filter((user) => {
+    const phone = normalizePhone(user.phone);
+    return phone && user.passwordHash && user.academyId && !remotePhones.has(phone) && user.status !== "معطل";
+  });
+
+  if (!localUsersToSync.length) return remoteUsers;
+
+  const syncedUsers = [];
+  for (const user of localUsersToSync) {
+    try {
+      const remoteUser = await upsertPlatformAccount({ ...user, phone: normalizePhone(user.phone) });
+      if (remoteUser) syncedUsers.push(remoteUser);
+    } catch {
+      // Local accounts stay available and can be synced on the next visit.
+    }
+  }
+
+  return [...syncedUsers, ...remoteUsers];
+}
+
+const seedData = {
+  coach: {
+    name: "",
+    birthDate: "",
+    phone: "",
+    nationality: "",
+    bio: "",
+    photo: "",
+  },
+  coaches: [],
+  academy: {
+    name: "",
+    nameEn: "",
+    field: "",
+    location: "",
+    logo: "",
+    plan: "",
+    ownerPhone: "",
+    gpsLocation: "",
+  },
+  users: [],
+  ageGroups: [],
+  teams: [],
+  players: [],
+  attendance: [],
+  payments: [],
+  matches: [],
+  badges: [],
+  notifications: [],
+  posts: [],
+  registrationRequests: [],
+};
+
+const platformSeedData = {
+  users: [],
+  registrationRequests: [],
+};
+
+function makeAcademyId(phone, fallback = "") {
+  const digits = normalizePhone(phone).replace(/\D/g, "");
+  return `academy-${digits || fallback || "new"}`;
+}
+
+function requestAcademyId(request) {
+  return request?.academyId || makeAcademyId(request?.phone || request?.contact, request?.id);
+}
+
+function accountFromApprovedRequest(request) {
+  if (!request || request.status !== STATUS_APPROVED || !request.passwordHash) return null;
+  const phone = normalizePhone(request.phone || request.contact);
+  if (!phone) return null;
+
+  return {
+    id: `user-${request.id}`,
+    name: request.ownerName,
+    phone,
+    role: ROLE_OWNER,
+    academyId: requestAcademyId(request),
+    academyName: request.academyName,
+    passwordHash: request.passwordHash,
+    passwordStatus: request.passwordStatus || "مشفرة",
+    passwordUpdatedAt: request.passwordUpdatedAt || today,
+    permissions: PERMISSION_FULL,
+    status: "نشط",
+  };
+}
+
+function generateTemporaryPassword() {
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  const numericPart = Array.from(bytes)
+    .map((byte) => String(byte % 10))
+    .join("");
+  return `QZ-${numericPart}`;
+}
+
+function normalizeAcademyData(value = {}, account = {}) {
+  return {
+    ...seedData,
+    ...value,
+    coach: {
+      ...seedData.coach,
+      ...(value.coach || {}),
+      name: value.coach?.name || account.name || seedData.coach.name,
+      phone: value.coach?.phone || account.phone || seedData.coach.phone,
+    },
+    academy: {
+      ...seedData.academy,
+      ...(value.academy || {}),
+      name: value.academy?.name || account.academyName || seedData.academy.name,
+      nameEn: value.academy?.nameEn || account.academyNameEn || seedData.academy.nameEn,
+      ownerPhone: value.academy?.ownerPhone || account.phone || seedData.academy.ownerPhone,
+      logo: value.academy?.logo || account.academyLogo || seedData.academy.logo,
+    },
+    coaches: Array.isArray(value.coaches) ? value.coaches : [],
+    users: Array.isArray(value.users) ? value.users : [],
+    ageGroups: Array.isArray(value.ageGroups) ? value.ageGroups : [],
+    teams: Array.isArray(value.teams) ? value.teams : [],
+    players: Array.isArray(value.players) ? value.players : [],
+    attendance: Array.isArray(value.attendance) ? value.attendance : [],
+    payments: Array.isArray(value.payments) ? value.payments : [],
+    matches: Array.isArray(value.matches) ? value.matches : [],
+    badges: Array.isArray(value.badges) ? value.badges : [],
+    notifications: Array.isArray(value.notifications) ? value.notifications : [],
+    posts: Array.isArray(value.posts) ? value.posts : [],
+    registrationRequests: [],
+  };
+}
+
+function hasAcademyContent(value = {}) {
+  return Boolean(
+    value.coach?.name ||
+      value.academy?.name ||
+      value.academy?.logo ||
+      value.ageGroups?.length ||
+      value.teams?.length ||
+      value.players?.length ||
+      value.attendance?.length ||
+      value.payments?.length ||
+      value.coaches?.length ||
+      value.users?.length,
+  );
+}
+
+function getUserPermission(session) {
+  if (!session) return PERMISSION_READ_ONLY;
+  if (isSuperAdminSession(session) || session.role === ROLE_OWNER) return PERMISSION_FULL;
+  return session.permissions || PERMISSION_ATTENDANCE_PLAYERS;
+}
+
+function canAccessView(viewId, session) {
+  if (!session?.verified) return false;
+  if (isSuperAdminSession(session)) return true;
+  if (viewId === "accountProfile") return true;
+  if (viewId === "platformDashboard" || viewId === "platformReports") return false;
+
+  const permission = getUserPermission(session);
+  if (permission === PERMISSION_FULL) return true;
+
+  const attendanceAndPlayers = new Set(["home", "players", "playerProfile", "attendance", "teamProfile", "reports"]);
+  const teamFollow = new Set(["home", "teamProfile", "players", "playerProfile", "attendance", "reports"]);
+  const readOnly = new Set(["home", "teamProfile", "playerProfile", "reports"]);
+
+  if (permission === PERMISSION_ATTENDANCE_PLAYERS) return attendanceAndPlayers.has(viewId);
+  if (permission === PERMISSION_TEAM_FOLLOW) return teamFollow.has(viewId);
+  if (permission === PERMISSION_READ_ONLY) return readOnly.has(viewId);
+
+  return viewId === "home";
+}
+
+const navItems = [
+  { id: "platformDashboard", label: "لوحة المنصة", icon: ClipboardCheck },
+  { id: "platformReports", label: "تقارير الأكاديميات", icon: ClipboardList },
+  { id: "home", label: "الرئيسية", icon: Activity },
+  { id: "coachSetup", label: "إعداد المدرب", icon: UserRound },
+  { id: "coaches", label: "إدارة المدربين", icon: Users },
+  { id: "settings", label: "إعدادات الأكاديمية", icon: Settings },
+  { id: "ageGroups", label: "إدارة الفئات العمرية", icon: Layers },
+  { id: "teams", label: "إدارة الفرق", icon: ShieldCheck },
+  { id: "players", label: "إدارة اللاعبين", icon: Users },
+  { id: "attendance", label: "التحضير", icon: CalendarCheck },
+  { id: "playerProfile", label: "ملف اللاعب", icon: UserCircle },
+  { id: "teamProfile", label: "ملف الفريق", icon: Trophy },
+  { id: "reports", label: "التقارير المالية", icon: Wallet },
+  { id: "accountProfile", label: "الملف الشخصي", icon: UserCircle },
+  { id: "notifications", label: "التنبيهات", icon: Bell },
+  { id: "community", label: "مركز المجتمع", icon: MessageSquare },
+];
+const setupNavIds = new Set(["coachSetup", "coaches", "settings", "ageGroups", "teams", "accountProfile"]);
+
+function useLocalState(key, initialValue) {
+  const [value, setValue] = useState(() => readLocalData(key, initialValue));
+
+  const update = (nextValue) => {
+    const resolved = typeof nextValue === "function" ? nextValue(value) : nextValue;
+    setValue(resolved);
+    writeLocalData(key, resolved);
+  };
+
+  return [value, update];
+}
+
+function currency(value) {
+  return new Intl.NumberFormat("ar-YE").format(Number(value || 0)) + " ريال";
+}
+
+function escapeHtml(value = "") {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => (
+    {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#039;",
+    }[character]
+  ));
+}
+
+function reportTable(title, headers, rows, emptyText = "لا توجد بيانات مطابقة لهذا التقرير.") {
+  const tableRows = rows.length
+    ? rows
+        .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
+        .join("")
+    : `<tr><td colspan="${headers.length}" class="empty-cell">${escapeHtml(emptyText)}</td></tr>`;
+
+  return `
+    <section class="report-section">
+      <h2>${escapeHtml(title)}</h2>
+      <table>
+        <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </section>
+  `;
+}
+
+function buildPrintReportHtml({ title, subtitle, academyName, logo, cards = [], sections = [], note = "" }) {
+  return `<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <title>${escapeHtml(title)}</title>
+    <style>
+      @page { size: A4; margin: 12mm; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: #f4f6fb;
+        color: #151b2d;
+        font-family: Tahoma, Arial, sans-serif;
+        direction: rtl;
+      }
+      .report-page {
+        width: 100%;
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 18px;
+      }
+      .report-hero {
+        min-height: 128px;
+        border-radius: 22px;
+        background: linear-gradient(135deg, #101947, #17207c 62%, #15644a);
+        color: #fff;
+        padding: 22px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+      }
+      .report-hero span, .report-hero p {
+        color: rgba(255, 255, 255, 0.76);
+        font-size: 12px;
+        font-weight: 800;
+      }
+      .report-hero h1 {
+        margin: 7px 0;
+        font-size: 26px;
+        line-height: 1.35;
+      }
+      .report-logo {
+        width: 72px;
+        height: 72px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.14);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+        color: #ffd75f;
+        font-weight: 900;
+        flex: 0 0 auto;
+      }
+      .report-logo img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      .report-cards {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+        margin: 14px 0;
+      }
+      .report-card {
+        border: 1px solid #e7ebf2;
+        border-radius: 16px;
+        background: #fff;
+        padding: 13px;
+        display: grid;
+        gap: 5px;
+      }
+      .report-card span {
+        color: #6b7280;
+        font-size: 11px;
+        font-weight: 800;
+      }
+      .report-card strong {
+        color: #111a79;
+        font-size: 17px;
+        line-height: 1.35;
+      }
+      .report-section {
+        border: 1px solid #e7ebf2;
+        border-radius: 18px;
+        background: #fff;
+        padding: 14px;
+        margin-top: 12px;
+        page-break-inside: avoid;
+      }
+      .report-section h2 {
+        color: #111a4f;
+        font-size: 17px;
+        margin: 0 0 10px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        overflow: hidden;
+        border-radius: 13px;
+        font-size: 11px;
+      }
+      th {
+        background: #111a79;
+        color: #fff;
+        padding: 9px 7px;
+        text-align: right;
+        white-space: nowrap;
+      }
+      td {
+        border-bottom: 1px solid #eef1f5;
+        padding: 8px 7px;
+        color: #25304a;
+        vertical-align: top;
+      }
+      tbody tr:nth-child(even) td {
+        background: #f8fafb;
+      }
+      .empty-cell {
+        text-align: center;
+        color: #6b7280;
+        padding: 18px;
+      }
+      .report-note {
+        border-radius: 14px;
+        background: #fff8dc;
+        color: #735100;
+        padding: 12px 14px;
+        font-size: 12px;
+        font-weight: 800;
+        line-height: 1.7;
+        margin-top: 12px;
+      }
+      .report-footer {
+        margin-top: 16px;
+        color: #6b7280;
+        text-align: center;
+        font-size: 11px;
+      }
+      @media print {
+        body { background: #fff; }
+        .report-page { max-width: none; padding: 0; }
+        .report-section, .report-card { box-shadow: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="report-page">
+      <header class="report-hero">
+        <div>
+          <span>${escapeHtml(academyName || "الأكاديمية الرياضية")}</span>
+          <h1>${escapeHtml(title)}</h1>
+          <p>${escapeHtml(subtitle)}</p>
+        </div>
+        <div class="report-logo">${logo ? `<img src="${escapeHtml(logo)}" alt="" />` : "PDF"}</div>
+      </header>
+      <section class="report-cards">
+        ${cards.map((card) => `
+          <article class="report-card">
+            <span>${escapeHtml(card.label)}</span>
+            <strong>${escapeHtml(card.value)}</strong>
+          </article>
+        `).join("")}
+      </section>
+      ${sections.join("")}
+      ${note ? `<div class="report-note">${escapeHtml(note)}</div>` : ""}
+      <footer class="report-footer">تم إنشاء التقرير من منصة إدارة الأكاديمية - ${escapeHtml(new Date().toLocaleDateString("ar-YE"))}</footer>
+    </main>
+  </body>
+</html>`;
+}
+
+function printReportHtml(html) {
+  const frame = document.createElement("iframe");
+  frame.style.position = "fixed";
+  frame.style.inset = "auto 0 0 auto";
+  frame.style.width = "0";
+  frame.style.height = "0";
+  frame.style.border = "0";
+  frame.style.opacity = "0";
+  document.body.appendChild(frame);
+
+  const printWindow = frame.contentWindow;
+  const printDocument = printWindow?.document;
+  if (!printWindow || !printDocument) {
+    frame.remove();
+    return false;
+  }
+
+  printDocument.open();
+  printDocument.write(html);
+  printDocument.close();
+  window.setTimeout(() => {
+    printWindow.focus();
+    printWindow.print();
+    window.setTimeout(() => frame.remove(), 1200);
+  }, 450);
+  return true;
+}
+
+function ageFromDate(date) {
+  if (!date) return "-";
+  const birth = new Date(date);
+  const diff = Date.now() - birth.getTime();
+  return Math.abs(new Date(diff).getUTCFullYear() - 1970);
+}
+
+function exactAgeFromDate(date) {
+  if (!date) return "";
+  const birth = new Date(`${date}T00:00:00`);
+  const now = new Date();
+  if (Number.isNaN(birth.getTime()) || birth > now) return "";
+
+  let years = now.getFullYear() - birth.getFullYear();
+  let months = now.getMonth() - birth.getMonth();
+  let days = now.getDate() - birth.getDate();
+
+  if (days < 0) {
+    months -= 1;
+    days += new Date(now.getFullYear(), now.getMonth(), 0).getDate();
+  }
+
+  if (months < 0) {
+    years -= 1;
+    months += 12;
+  }
+
+  return `${years} سنة، ${months} شهر، ${days} يوم`;
+}
+
+function ageGroupPresetFromBirthDate(date) {
+  if (!date) return null;
+  const birthYear = new Date(`${date}T00:00:00`).getFullYear();
+  if (!Number.isFinite(birthYear)) return null;
+  return ageGroupPresets.find((preset) => birthYear >= preset.from && birthYear <= preset.to) || null;
+}
+
+function readableDate(date) {
+  if (!date) return "";
+  return new Intl.DateTimeFormat("ar-YE", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  }).format(new Date(`${date}T00:00:00`));
+}
+
+function weekdayFromDate(date) {
+  if (!date) return "";
+  const parsedDate = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(parsedDate.getTime())) return "";
+  return ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"][parsedDate.getDay()];
+}
+
+function trainingDaysForGroup(group) {
+  return trainingDayOptions.filter((day) => (group?.days || "").includes(day));
+}
+
+function App() {
+  const [activeView, setActiveView] = useLocalState("acdme-active-view-v1", "platformDashboard");
+  const [session, setSession] = useLocalState("acdme-session-v5", null);
+  const [onboardingState, setOnboardingState] = useLocalState("acdme-onboarding-v4", {});
+  const [platformData, setPlatformData] = useLocalState("acdme-platform-data-v1", platformSeedData);
+  const [academyDataById, setAcademyDataById] = useLocalState("acdme-academy-data-by-id-v1", {});
+  const [cloudSyncState, setCloudSyncState] = useState({ academyId: "", loaded: false, saving: false, error: "" });
+  const lastCloudPayloadRef = useRef("");
+  const [query, setQuery] = useState("");
+  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const isSuperAdmin = isSuperAdminSession(session);
+  const currentAcademyId = session?.academyId || "";
+  const data = useMemo(() => {
+    if (!session?.verified || isSuperAdmin || !currentAcademyId) return seedData;
+    return normalizeAcademyData(academyDataById[currentAcademyId], session);
+  }, [academyDataById, currentAcademyId, isSuperAdmin, session]);
+  const setData = (nextValue) => {
+    if (!currentAcademyId || isSuperAdmin) return;
+
+    setAcademyDataById((prev) => {
+      const currentData = normalizeAcademyData(prev[currentAcademyId], session);
+      const resolved = typeof nextValue === "function" ? nextValue(currentData) : nextValue;
+      return {
+        ...prev,
+        [currentAcademyId]: normalizeAcademyData(resolved, session),
+      };
+    });
+  };
+  const [selectedPlayerId, setSelectedPlayerId] = useState(data.players[0]?.id);
+  const [selectedTeamId, setSelectedTeamId] = useState(data.teams[0]?.id);
+  const platformUsers = platformData.users || [];
+  const platformRegistrationRequests = platformData.registrationRequests || platformSeedData.registrationRequests;
+
+  const isPhoneRegisteredAnywhere = (phone, excludedPhone = "") => {
+    const normalizedPhone = normalizePhone(phone);
+    const normalizedExcluded = normalizePhone(excludedPhone);
+    if (!normalizedPhone || normalizedPhone === normalizedExcluded) return false;
+
+    return [
+      ...platformUsers,
+      ...platformRegistrationRequests,
+    ].some((item) => normalizePhone(item?.phone || item?.contact) === normalizedPhone);
+  };
+
+  const isAcademyNameTaken = (academyName, excludedAcademyId = "") => {
+    const normalizedName = normalizeText(academyName);
+    if (!normalizedName) return false;
+
+    const usersMatch = platformUsers.some(
+      (user) => user.academyId !== excludedAcademyId && normalizeText(user.academyName) === normalizedName,
+    );
+    const requestsMatch = platformRegistrationRequests.some(
+      (request) =>
+        requestAcademyId(request) !== excludedAcademyId &&
+        request.status !== STATUS_REJECTED &&
+        normalizeText(request.academyName) === normalizedName,
+    );
+
+    return usersMatch || requestsMatch;
+  };
+
+  useEffect(() => {
+    if (!data.players.some((player) => player.id === selectedPlayerId)) {
+      setSelectedPlayerId(data.players[0]?.id);
+    }
+
+    if (!data.teams.some((team) => team.id === selectedTeamId)) {
+      setSelectedTeamId(data.teams[0]?.id);
+    }
+  }, [currentAcademyId, data.players, data.teams, selectedPlayerId, selectedTeamId]);
+
+  const helpers = useMemo(() => {
+    const teamById = Object.fromEntries(data.teams.map((team) => [team.id, team]));
+    const groupById = Object.fromEntries(data.ageGroups.map((group) => [group.id, group]));
+    const playerById = Object.fromEntries(data.players.map((player) => [player.id, player]));
+    const paymentsByPlayer = data.payments.reduce((map, payment) => {
+      map[payment.playerId] = (map[payment.playerId] || 0) + Number(payment.amount || 0);
+      return map;
+    }, {});
+    return { teamById, groupById, playerById, paymentsByPlayer };
+  }, [data]);
+
+  const stats = useMemo(() => {
+    const present = data.attendance.filter((row) => row.status === "حاضر").length;
+    const late = data.attendance.filter((row) => row.status === "متأخر").length;
+    const absent = data.attendance.filter((row) => row.status === "غائب").length;
+    const revenue = data.payments.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+    const expected = data.players.reduce((sum, row) => sum + Number(row.monthlyFee || 0), 0);
+    return { present, late, absent, revenue, expected };
+  }, [data]);
+
+  const filteredPlayers = data.players.filter((player) => {
+    const team = helpers.teamById[player.teamId]?.name || "";
+    return `${player.name} ${player.position} ${team}`.toLowerCase().includes(query.toLowerCase());
+  });
+
+  const registrationRequests = platformRegistrationRequests;
+
+  const refreshPlatformUsers = async () => {
+    try {
+      const accounts = await listPlatformAccounts();
+      if (Array.isArray(accounts)) {
+        const remoteUsers = await syncMissingRemotePlatformAccounts(accounts, platformUsers || []);
+        const mergedUsers = mergePlatformUsers(remoteUsers, platformUsers || []);
+        setPlatformData((prev) => ({
+          ...prev,
+          users: mergePlatformUsers(remoteUsers, prev.users || []),
+        }));
+        return mergedUsers;
+      }
+    } catch {
+      // The local copy keeps existing sessions usable if the remote account table is not ready yet.
+    }
+
+    return platformUsers || [];
+  };
+
+  const refreshRegistrationRequests = async () => {
+    try {
+      const requests = await listRegistrationRequests();
+      if (Array.isArray(requests)) {
+        const remoteRequests = await syncMissingRemoteRegistrationRequests(requests, platformRegistrationRequests || []);
+        const accountsFromRequests = remoteRequests.map(accountFromApprovedRequest).filter(Boolean);
+        const syncedAccounts = [];
+        for (const account of accountsFromRequests) {
+          try {
+            const syncedAccount = await upsertPlatformAccount(account);
+            if (syncedAccount) syncedAccounts.push(syncedAccount);
+          } catch {
+            syncedAccounts.push(account);
+          }
+        }
+        const mergedForLogin = mergeRegistrationRequests(remoteRequests, platformRegistrationRequests || []);
+        setPlatformData((prev) => ({
+          ...prev,
+          users: mergePlatformUsers(syncedAccounts, prev.users || []),
+          registrationRequests: mergeRegistrationRequests(remoteRequests, prev.registrationRequests || []),
+        }));
+        return mergedForLogin;
+      }
+    } catch {
+      // Keep the local copy available if the remote table is temporarily unreachable.
+    }
+
+    return platformRegistrationRequests || [];
+  };
+
+  useEffect(() => {
+    let isMounted = true;
+
+    listPlatformAccounts()
+      .then(async (accounts) => {
+        if (isMounted && Array.isArray(accounts)) {
+          const remoteUsers = await syncMissingRemotePlatformAccounts(accounts, platformUsers || []);
+          if (!isMounted) return;
+
+          setPlatformData((prev) => ({
+            ...prev,
+            users: mergePlatformUsers(remoteUsers, prev.users || []),
+          }));
+        }
+      })
+      .catch(() => {
+        // The local copy keeps the app usable if the remote account table is not ready yet.
+      });
+
+    listRegistrationRequests()
+      .then(async (requests) => {
+        if (isMounted && Array.isArray(requests)) {
+          const remoteRequests = await syncMissingRemoteRegistrationRequests(requests, platformRegistrationRequests || []);
+          const accountsFromRequests = remoteRequests.map(accountFromApprovedRequest).filter(Boolean);
+          const syncedAccounts = [];
+          for (const account of accountsFromRequests) {
+            try {
+              const syncedAccount = await upsertPlatformAccount(account);
+              if (syncedAccount) syncedAccounts.push(syncedAccount);
+            } catch {
+              syncedAccounts.push(account);
+            }
+          }
+          if (!isMounted) return;
+
+          setPlatformData((prev) => ({
+            ...prev,
+            users: mergePlatformUsers(syncedAccounts, prev.users || []),
+            registrationRequests: mergeRegistrationRequests(remoteRequests, prev.registrationRequests || []),
+          }));
+        }
+      })
+      .catch(() => {
+        // The local copy keeps the app usable if the remote table is not ready yet.
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    if (!session?.verified) {
+      lastCloudPayloadRef.current = "";
+      setCloudSyncState({ academyId: "", loaded: false, saving: false, error: "" });
+      return () => {
+        isCancelled = true;
+      };
+    }
+
+    if (isSuperAdmin) {
+      setCloudSyncState({ academyId: "platform", loaded: false, saving: false, error: "" });
+      listRemoteAcademyData()
+        .then((rows) => {
+          if (isCancelled) return;
+          if (rows.length) {
+            setAcademyDataById((prev) => {
+              const next = { ...prev };
+              rows.forEach((row) => {
+                if (row.academyId) {
+                  next[row.academyId] = normalizeAcademyData(row.data);
+                }
+              });
+              return next;
+            });
+          }
+          setCloudSyncState({ academyId: "platform", loaded: true, saving: false, error: "" });
+        })
+        .catch((error) => {
+          if (!isCancelled) {
+            setCloudSyncState({ academyId: "platform", loaded: true, saving: false, error: error.message || "تعذر تحميل بيانات السحابة." });
+          }
+        });
+
+      return () => {
+        isCancelled = true;
+      };
+    }
+
+    if (!currentAcademyId) return () => {
+      isCancelled = true;
+    };
+
+    setCloudSyncState({ academyId: currentAcademyId, loaded: false, saving: false, error: "" });
+    getRemoteAcademyData(currentAcademyId)
+      .then(async (row) => {
+        if (isCancelled) return;
+        const localData = normalizeAcademyData(academyDataById[currentAcademyId], session);
+
+        if (row?.data && hasAcademyContent(row.data)) {
+          const remoteData = normalizeAcademyData(row.data, session);
+          lastCloudPayloadRef.current = JSON.stringify(remoteData);
+          setAcademyDataById((prev) => ({ ...prev, [currentAcademyId]: remoteData }));
+
+          if (session?.isFirstLogin) {
+            const onboardingKey = currentAcademyId || normalizePhone(session.phone);
+            setOnboardingState((prev) => ({ ...prev, [onboardingKey]: { completed: true, completedAt: new Date().toISOString() } }));
+            setSession((prev) => (prev ? { ...prev, isFirstLogin: false } : prev));
+            setActiveView("home");
+          }
+        } else if (hasAcademyContent(localData)) {
+          lastCloudPayloadRef.current = JSON.stringify(localData);
+          await upsertRemoteAcademyData(currentAcademyId, localData);
+        } else {
+          lastCloudPayloadRef.current = JSON.stringify(localData);
+        }
+
+        if (!isCancelled) {
+          setCloudSyncState({ academyId: currentAcademyId, loaded: true, saving: false, error: "" });
+        }
+      })
+      .catch((error) => {
+        if (!isCancelled) {
+          setCloudSyncState({ academyId: currentAcademyId, loaded: true, saving: false, error: error.message || "تعذر تحميل بيانات الأكاديمية من السحابة." });
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [session?.verified, currentAcademyId, isSuperAdmin]);
+
+  useEffect(() => {
+    if (
+      !session?.verified ||
+      isSuperAdmin ||
+      !currentAcademyId ||
+      !cloudSyncState.loaded ||
+      cloudSyncState.academyId !== currentAcademyId
+    ) {
+      return undefined;
+    }
+
+    const academyPayload = normalizeAcademyData(academyDataById[currentAcademyId], session);
+    if (!hasAcademyContent(academyPayload)) return undefined;
+
+    const nextSignature = JSON.stringify(academyPayload);
+    if (nextSignature === lastCloudPayloadRef.current) return undefined;
+
+    const saveTimer = window.setTimeout(() => {
+      setCloudSyncState((prev) => ({ ...prev, saving: true, error: "" }));
+      upsertRemoteAcademyData(currentAcademyId, academyPayload)
+        .then(() => {
+          lastCloudPayloadRef.current = nextSignature;
+          setCloudSyncState((prev) => ({ ...prev, saving: false, error: "" }));
+        })
+        .catch((error) => {
+          setCloudSyncState((prev) => ({ ...prev, saving: false, error: error.message || "تعذر حفظ بيانات الأكاديمية في السحابة." }));
+        });
+    }, 900);
+
+    return () => window.clearTimeout(saveTimer);
+  }, [academyDataById, currentAcademyId, session, isSuperAdmin, cloudSyncState.loaded, cloudSyncState.academyId]);
+
+  const addAgeGroup = (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const submitAction = event.nativeEvent.submitter?.value || "finish";
+    const presetKey = form.get("preset");
+    const preset = ageGroupPresets.find((item) => item.key === presetKey) || ageGroupPresets[0];
+    const selectedDays = trainingDayOptions.filter((day) => form.getAll("days").includes(day));
+    const group = {
+      id: crypto.randomUUID(),
+      presetKey: preset.key,
+      name: preset.name,
+      from: Number(preset.from),
+      to: Number(preset.to),
+      years: preset.years,
+      days: selectedDays.join("، "),
+      timeFrom: form.get("timeFrom"),
+      timeTo: form.get("timeTo"),
+    };
+    setData((prev) => ({ ...prev, ageGroups: [group, ...prev.ageGroups] }));
+    event.currentTarget.reset();
+
+    if (session?.isFirstLogin && submitAction === "finish") {
+      const onboardingKey = session.academyId || normalizePhone(session.phone);
+      setOnboardingState((prev) => ({ ...prev, [onboardingKey]: { completed: true, completedAt: new Date().toISOString() } }));
+      setSession((prev) => ({ ...prev, isFirstLogin: false }));
+      setActiveView("home");
+    } else if (!session?.isFirstLogin && submitAction === "finish") {
+      setActiveView("home");
+    }
+
+    return group;
+  };
+
+  const updateAgeGroup = (groupId, updates, options = {}) => {
+    setData((prev) => ({
+      ...prev,
+      ageGroups: prev.ageGroups.map((group) => (group.id === groupId ? { ...group, ...updates } : group)),
+    }));
+
+    if (!session?.isFirstLogin && !options.stay) {
+      setActiveView("home");
+    }
+  };
+
+  const removeAgeGroup = (groupId, options = {}) => {
+    setData((prev) => ({
+      ...prev,
+      ageGroups: prev.ageGroups.filter((group) => group.id !== groupId),
+    }));
+
+    if (!session?.isFirstLogin && !options.stay) {
+      setActiveView("home");
+    }
+  };
+
+  const finishOnboarding = () => {
+    if (session?.isFirstLogin) {
+      const onboardingKey = session.academyId || normalizePhone(session.phone);
+      setOnboardingState((prev) => ({ ...prev, [onboardingKey]: { completed: true, completedAt: new Date().toISOString() } }));
+      setSession((prev) => ({ ...prev, isFirstLogin: false }));
+    }
+
+    setActiveView("home");
+  };
+
+  const addAcademyCoach = async (coachInput) => {
+    const normalizedPhone = normalizePhone(coachInput.phone);
+    if (!session?.academyId) {
+      return { ok: false, message: "لا يمكن إضافة مدرب قبل ربط الحساب بأكاديمية واضحة." };
+    }
+
+    if (!normalizedPhone) {
+      return { ok: false, message: "أدخل رقم هاتف صحيح لإنشاء الحساب." };
+    }
+
+    const latestUsers = await refreshPlatformUsers();
+    const latestRequests = await refreshRegistrationRequests();
+    const currentPlatformUsers = mergePlatformUsers(latestUsers || [], platformUsers || []);
+    const currentRegistrationRequests = mergeRegistrationRequests(latestRequests || [], registrationRequests || []);
+
+    const existingPhone = [
+      data.coach,
+      ...(data.coaches || []),
+      ...currentPlatformUsers,
+      ...currentRegistrationRequests,
+    ].some((item) => normalizePhone(item?.phone || item?.contact) === normalizedPhone);
+
+    if (existingPhone) {
+      return { ok: false, message: "هذا الرقم مرتبط مسبقًا بحساب أو طلب تسجيل، ولا يمكن ربط الحساب بأكثر من أكاديمية." };
+    }
+
+    const academyAccountPhones = new Set(
+      [
+        ...currentPlatformUsers
+          .filter((user) => user.academyId === session.academyId && user.status !== "معطل")
+          .map((user) => normalizePhone(user.phone)),
+        normalizePhone(data.coach?.phone || session.phone),
+        ...(data.coaches || [])
+          .filter((coach) => coach.status !== "معطل")
+          .map((coach) => normalizePhone(coach.phone)),
+      ].filter(Boolean),
+    );
+
+    if (academyAccountPhones.size >= MAX_ACADEMY_ACCOUNTS) {
+      return { ok: false, message: `لا يمكن ربط أكثر من ${MAX_ACADEMY_ACCOUNTS} حسابات بهذه الأكاديمية.` };
+    }
+
+    if (!coachInput.password || coachInput.password.length < 6) {
+      return { ok: false, message: "كلمة السر المؤقتة يجب أن تكون 6 أحرف أو أرقام على الأقل." };
+    }
+
+    const passwordHash = await hashPassword(coachInput.password);
+    const coachRole = coachInput.role || ROLE_COACH;
+    const academyName = data.academy.name || session.academyName || "الأكاديمية";
+    const academyNameEn = data.academy.nameEn || session.academyNameEn || "";
+    const academyLogo = data.academy.logo || session.academyLogo || "";
+    const coach = {
+      id: crypto.randomUUID(),
+      name: coachInput.name,
+      phone: normalizedPhone,
+      role: coachRole,
+      permissions: coachInput.permissions,
+      status: "نشط",
+      joinedAt: today,
+      passwordHash,
+      passwordStatus: "مشفرة",
+      passwordUpdatedAt: today,
+    };
+    const coachAccount = {
+      id: `coach-user-${session.academyId}-${normalizedPhone.replace(/\D/g, "")}`,
+      name: coach.name,
+      phone: coach.phone,
+      role: coachRole,
+      academyId: session.academyId,
+      academyName,
+      academyNameEn,
+      academyLogo,
+      permissions: coach.permissions,
+      passwordHash,
+      passwordStatus: "مشفرة",
+      passwordUpdatedAt: today,
+      status: "نشط",
+    };
+
+    setData((prev) => ({
+      ...prev,
+      coaches: [coach, ...(prev.coaches || []).filter((item) => item.id !== coach.id)],
+      users: [
+        { ...coachAccount, academyName: prev.academy.name || academyName },
+        ...(prev.users || []).filter((user) => normalizePhone(user.phone) !== coach.phone),
+      ],
+    }));
+
+    setPlatformData((prev) => ({
+      ...prev,
+      users: [
+        coachAccount,
+        ...(prev.users || []).filter((user) => normalizePhone(user.phone) !== coach.phone),
+      ],
+    }));
+
+    try {
+      const syncedAccount = await upsertPlatformAccount(coachAccount);
+      if (syncedAccount) {
+        setPlatformData((prev) => ({
+          ...prev,
+          users: mergePlatformUsers([syncedAccount], prev.users || []),
+        }));
+      }
+    } catch {
+      // The local account remains available and will retry syncing on a later visit.
+    }
+
+    if (!session?.isFirstLogin && activeView === "coaches") {
+      setActiveView("home");
+    }
+
+    return { ok: true, message: "تم إنشاء حساب المستخدم مباشرة وربطه بالأكاديمية. يمكنه الدخول برقم الهاتف وكلمة السر المؤقتة." };
+  };
+
+  const toggleAcademyCoachStatus = (coachId) => {
+    const targetCoach = (data.coaches || []).find((coach) => coach.id === coachId);
+    const nextCoachStatus = targetCoach?.status === "نشط" ? "معطل" : "نشط";
+
+    setData((prev) => {
+      const target = (prev.coaches || []).find((coach) => coach.id === coachId);
+      if (!target || target.id === "coach-primary") return prev;
+
+      const nextStatus = target.status === "نشط" ? "معطل" : "نشط";
+
+      return {
+        ...prev,
+        coaches: (prev.coaches || []).map((coach) =>
+          coach.id === coachId ? { ...coach, status: nextStatus } : coach,
+        ),
+        users: (prev.users || []).map((user) =>
+          normalizePhone(user.phone) === normalizePhone(target.phone) ? { ...user, status: nextStatus } : user,
+        ),
+      };
+    });
+
+    setPlatformData((prev) => ({
+      ...prev,
+      users: (prev.users || []).map((user) =>
+        normalizePhone(user.phone) === normalizePhone(targetCoach?.phone)
+          ? { ...user, status: nextCoachStatus }
+          : user,
+      ),
+    }));
+
+    updateRemotePlatformAccountStatus(normalizePhone(targetCoach?.phone), nextCoachStatus).catch(() => {
+      // The local status stays visible if the remote table is temporarily unavailable.
+    });
+
+    if (!session?.isFirstLogin && activeView === "coaches") {
+      setActiveView("home");
+    }
+  };
+
+  const togglePlatformUserStatus = (targetUser) => {
+    if (!isSuperAdmin) {
+      window.alert("هذا الإجراء مخصص للحساب الرئيسي فقط.");
+      return;
+    }
+
+    const normalizedPhone = normalizePhone(targetUser?.phone);
+    const nextStatus = targetUser?.status === "معطل" ? "نشط" : "معطل";
+
+    setPlatformData((prev) => ({
+      ...prev,
+      users: (prev.users || []).map((user) =>
+        normalizePhone(user.phone) === normalizedPhone ? { ...user, status: nextStatus } : user,
+      ),
+    }));
+
+    setAcademyDataById((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((academyId) => {
+        const academyData = normalizeAcademyData(next[academyId]);
+        next[academyId] = {
+          ...academyData,
+          users: (academyData.users || []).map((user) =>
+            normalizePhone(user.phone) === normalizedPhone ? { ...user, status: nextStatus } : user,
+          ),
+          coaches: (academyData.coaches || []).map((coach) =>
+            normalizePhone(coach.phone) === normalizedPhone ? { ...coach, status: nextStatus } : coach,
+          ),
+        };
+      });
+      return next;
+    });
+
+    updateRemotePlatformAccountStatus(normalizedPhone, nextStatus).catch(() => {
+      // The local state stays available and can sync again on a later visit.
+    });
+  };
+
+  const togglePlayerStatus = (playerId) => {
+    setData((prev) => ({
+      ...prev,
+      players: (prev.players || []).map((player) =>
+        player.id === playerId
+          ? {
+              ...player,
+              status: player.status === "منقطع" ? "نشط" : "منقطع",
+              statusUpdatedAt: today,
+            }
+          : player,
+      ),
+    }));
+  };
+
+  const addPlayer = async (event) => {
+    event.preventDefault();
+    const submitAction = event.nativeEvent.submitter?.value || "save";
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const photo = await fileToDataUrl(imageFileFromForm(form, "playerPhoto"));
+    const player = {
+      id: crypto.randomUUID(),
+      name: form.get("name"),
+      photo,
+      birthDate: form.get("birthDate"),
+      position: form.get("position"),
+      jersey: form.get("jersey"),
+      guardianPhone: form.get("guardianPhone"),
+      teamId: form.get("teamId"),
+      ageGroupPreset: form.get("ageGroupPreset") || "",
+      ageText: exactAgeFromDate(form.get("birthDate")),
+      monthlyFee: Number(form.get("monthlyFee")),
+      subscriptionType: form.get("subscriptionType"),
+      status: "نشط",
+      xp: 0,
+      level: 1,
+      rating: 70,
+      skill: 70,
+      fitness: 70,
+      commitment: 70,
+      badges: [],
+    };
+    setSelectedPlayerId(player.id);
+    setData((prev) => ({ ...prev, players: [player, ...prev.players] }));
+    formElement.reset();
+
+    if (session?.isFirstLogin && submitAction === "save") {
+      const onboardingKey = session.academyId || normalizePhone(session.phone);
+      setOnboardingState((prev) => ({ ...prev, [onboardingKey]: { completed: true, completedAt: new Date().toISOString() } }));
+      setSession((prev) => ({ ...prev, isFirstLogin: false }));
+      setActiveView("home");
+    }
+  };
+
+  const addTeam = (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const team = {
+      id: crypto.randomUUID(),
+      name: form.get("name"),
+      ageGroupId: form.get("ageGroupId"),
+      coach: form.get("coach"),
+      wins: 0,
+      losses: 0,
+      draws: 0,
+      goalsFor: 0,
+      goalsAgainst: 0,
+    };
+    setSelectedTeamId(team.id);
+    setData((prev) => ({ ...prev, teams: [team, ...prev.teams] }));
+    event.currentTarget.reset();
+  };
+
+  const recordAttendance = (playerId, status, date = today, note = "") => {
+    setData((prev) => ({
+      ...prev,
+      attendance: [
+        { id: crypto.randomUUID(), playerId, date, status, note, source: "attendance" },
+        ...prev.attendance.filter((row) => !(row.playerId === playerId && row.date === date)),
+      ],
+    }));
+  };
+
+  const addPayment = (eventOrPayment) => {
+    const isFormEvent = typeof eventOrPayment?.preventDefault === "function";
+    let payment;
+
+    if (isFormEvent) {
+      eventOrPayment.preventDefault();
+      const form = new FormData(eventOrPayment.currentTarget);
+      payment = {
+        id: crypto.randomUUID(),
+        playerId: form.get("playerId"),
+        amount: Number(form.get("amount")),
+        date: form.get("date"),
+        method: form.get("method"),
+        status: form.get("status"),
+        note: form.get("note"),
+      };
+      eventOrPayment.currentTarget.reset();
+    } else {
+      payment = {
+        id: crypto.randomUUID(),
+        method: "نقدًا",
+        status: "مدفوع",
+        note: "",
+        ...eventOrPayment,
+        amount: Number(eventOrPayment.amount || 0),
+      };
+    }
+
+    setData((prev) => ({
+      ...prev,
+      payments: [
+        payment,
+        ...prev.payments.filter(
+          (row) =>
+            !(
+              payment.source === "attendance" &&
+              row.source === "attendance" &&
+              row.playerId === payment.playerId &&
+              row.date === payment.date
+            ),
+        ),
+      ],
+    }));
+  };
+
+  const addMatch = (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const match = {
+      id: crypto.randomUUID(),
+      teamAId: form.get("teamAId"),
+      teamBId: form.get("teamBId"),
+      date: form.get("date"),
+      scoreA: Number(form.get("scoreA")),
+      scoreB: Number(form.get("scoreB")),
+      mvpId: form.get("mvpId"),
+      evaluation: form.get("evaluation"),
+    };
+    setData((prev) => ({ ...prev, matches: [match, ...prev.matches] }));
+    event.currentTarget.reset();
+  };
+
+  const addBadge = (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const badge = {
+      id: crypto.randomUUID(),
+      name: form.get("name"),
+      condition: form.get("condition"),
+      xp: Number(form.get("xp")),
+    };
+    setData((prev) => ({ ...prev, badges: [badge, ...prev.badges] }));
+    event.currentTarget.reset();
+  };
+
+  const addNotification = (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const notification = {
+      id: crypto.randomUUID(),
+      type: form.get("type"),
+      target: form.get("target"),
+      date: today,
+      status: "جديد",
+    };
+    setData((prev) => ({ ...prev, notifications: [notification, ...prev.notifications] }));
+    event.currentTarget.reset();
+  };
+
+  const addPost = (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const post = {
+      id: crypto.randomUUID(),
+      title: form.get("title"),
+      content: form.get("content"),
+      type: form.get("type"),
+      pinned: form.get("pinned") === "on",
+      likes: 0,
+    };
+    setData((prev) => ({ ...prev, posts: [post, ...prev.posts] }));
+    event.currentTarget.reset();
+  };
+
+  const updateCoach = async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const photo = await fileToDataUrl(imageFileFromForm(form, "coachPhoto"));
+    const coachName = form.get("coachName");
+
+    setData((prev) => ({
+      ...prev,
+      coach: {
+        ...(prev.coach || seedData.coach),
+        name: coachName,
+        birthDate: form.get("birthDate"),
+        phone: form.get("phone"),
+        nationality: form.get("nationality"),
+        bio: form.get("bio"),
+        photo: photo || prev.coach?.photo || "",
+      },
+    }));
+
+    setPlatformData((prev) => ({
+      ...prev,
+      users: (prev.users || []).map((user) =>
+        user.id === session?.userId || normalizePhone(user.phone) === normalizePhone(session?.phone)
+          ? { ...user, name: coachName, photo: photo || user.photo || "" }
+          : user,
+      ),
+    }));
+
+    if (session?.isFirstLogin) {
+      setActiveView("settings");
+    } else {
+      setActiveView("home");
+    }
+  };
+
+  const updateAcademy = async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const logo = await fileToDataUrl(imageFileFromForm(form, "academyLogo"));
+    const academyName = form.get("name");
+    const academyNameEn = String(form.get("nameEn") || "").trim();
+    const coachName = form.get("coachName");
+
+    if (isAcademyNameTaken(academyName, session?.academyId)) {
+      window.alert("اسم الأكاديمية مستخدم مسبقًا. يرجى اختيار اسم مختلف قبل الحفظ.");
+      return;
+    }
+
+    setData((prev) => ({
+      ...prev,
+      coach: {
+        ...(prev.coach || seedData.coach),
+        name: coachName || prev.coach?.name || seedData.coach.name,
+      },
+      academy: {
+        ...prev.academy,
+        name: academyName,
+        nameEn: academyNameEn,
+        field: coachName || form.get("field") || prev.academy.field,
+        location: form.get("location"),
+        gpsLocation: form.get("gpsLocation") || prev.academy.gpsLocation || "",
+        logo: logo || prev.academy.logo || "",
+        ownerPhone: form.get("ownerPhone") || prev.academy.ownerPhone,
+        plan: form.get("plan") || prev.academy.plan,
+      },
+      users: (prev.users || []).map((user) => ({
+        ...user,
+        academyName,
+        academyNameEn,
+        academyLogo: logo || prev.academy.logo || "",
+      })),
+    }));
+
+    setPlatformData((prev) => ({
+      ...prev,
+      users: (prev.users || []).map((user) =>
+        user.academyId === session?.academyId
+          ? { ...user, academyName, academyNameEn, academyLogo: logo || data.academy.logo || "" }
+          : user,
+      ),
+    }));
+    setSession((prev) => (prev ? { ...prev, academyName, academyNameEn, academyLogo: logo || data.academy.logo || prev.academyLogo || "" } : prev));
+
+    if (session?.isFirstLogin) {
+      setActiveView("ageGroups");
+    } else {
+      setActiveView("home");
+    }
+  };
+
+  const submitRegistrationRequest = async (requestInput) => {
+    const normalizedPhone = normalizePhone(requestInput.phone || requestInput.contact);
+    const academyName = String(requestInput.academyName || "").trim();
+
+    if (isPhoneRegisteredAnywhere(normalizedPhone)) {
+      throw new Error("رقم الهاتف مسجل مسبقًا أو لديه طلب سابق، ولا يمكن استخدامه لإنشاء حساب جديد.");
+    }
+
+    if (isAcademyNameTaken(academyName)) {
+      throw new Error("اسم الأكاديمية مستخدم مسبقًا. يرجى تغيير اسم الأكاديمية وإرسال الطلب مرة أخرى.");
+    }
+
+    const request = {
+      id: crypto.randomUUID(),
+      academyName,
+      ownerName: requestInput.ownerName,
+      contact: requestInput.contact || requestInput.phone,
+      phone: normalizedPhone,
+      academyId: makeAcademyId(normalizedPhone),
+      passwordHash: requestInput.passwordHash,
+      passwordStatus: "مشفرة",
+      passwordUpdatedAt: today,
+      city: requestInput.city,
+      status: STATUS_PENDING,
+      createdAt: today,
+    };
+
+    setPlatformData((prev) => ({
+      ...prev,
+      registrationRequests: [request, ...(prev.registrationRequests || [])],
+    }));
+
+    try {
+      const remoteRequest = await createRegistrationRequest(request);
+      if (remoteRequest) {
+        setPlatformData((prev) => ({
+          ...prev,
+          registrationRequests: [
+            { ...remoteRequest, academyId: request.academyId, passwordHash: remoteRequest.passwordHash || request.passwordHash },
+            ...(prev.registrationRequests || []).filter((item) => item.id !== request.id),
+          ],
+        }));
+        return remoteRequest;
+      }
+    } catch {
+      // Keep the local request visible and retry can be handled from a later refresh/deploy.
+    }
+
+    return request;
+  };
+
+  const updateRegistrationRequest = async (requestId, status) => {
+    const currentRequest = (platformData.registrationRequests || platformSeedData.registrationRequests).find((request) => request.id === requestId);
+    const academyId = requestAcademyId(currentRequest);
+
+    if (!isSuperAdmin) {
+      window.alert("هذا الإجراء مخصص للحساب الرئيسي فقط.");
+      return;
+    }
+
+    if (!currentRequest) return;
+
+    if (status === STATUS_APPROVED) {
+      const normalizedPhone = normalizePhone(currentRequest.phone || currentRequest.contact);
+      const phoneUsed = platformUsers.some((user) => normalizePhone(user.phone) === normalizedPhone);
+      const academyNameUsed = isAcademyNameTaken(currentRequest.academyName, academyId);
+
+      if (phoneUsed) {
+        window.alert("لا يمكن قبول الطلب: رقم الهاتف مسجل مسبقًا.");
+        return;
+      }
+
+      if (academyNameUsed) {
+        window.alert("لا يمكن قبول الطلب: اسم الأكاديمية مستخدم مسبقًا.");
+        return;
+      }
+
+      if (accountCountForAcademy(platformUsers, academyId) >= MAX_ACADEMY_ACCOUNTS) {
+        window.alert(`لا يمكن قبول الطلب: هذه الأكاديمية مرتبطة بالفعل بـ ${MAX_ACADEMY_ACCOUNTS} حسابات.`);
+        return;
+      }
+    }
+
+    const approvedAccount =
+      status === STATUS_APPROVED && currentRequest?.phone
+        ? {
+            id: `user-${currentRequest.id}`,
+            name: currentRequest.ownerName,
+            phone: normalizePhone(currentRequest.phone),
+            role: ROLE_OWNER,
+            academyId,
+            academyName: currentRequest.academyName,
+            passwordHash: currentRequest.passwordHash,
+            passwordStatus: "مشفرة",
+            passwordUpdatedAt: currentRequest.passwordUpdatedAt || today,
+            permissions: PERMISSION_FULL,
+            status: "نشط",
+          }
+        : null;
+
+    setPlatformData((prev) => ({
+      ...prev,
+      registrationRequests: (prev.registrationRequests || platformSeedData.registrationRequests).map((request) =>
+        request.id === requestId ? { ...request, status } : request,
+      ),
+      users:
+        approvedAccount
+          ? [
+              ...(prev.users || []).filter((user) => normalizePhone(user.phone) !== normalizePhone(currentRequest.phone)),
+              approvedAccount,
+            ]
+          : prev.users,
+    }));
+
+    if (status === STATUS_APPROVED && currentRequest?.phone) {
+      setAcademyDataById((prev) => ({
+        ...prev,
+        [academyId]: normalizeAcademyData(prev[academyId], {
+          name: currentRequest.ownerName,
+          phone: normalizePhone(currentRequest.phone),
+          academyName: currentRequest.academyName,
+        }),
+      }));
+    }
+
+    try {
+      await updateRemoteRegistrationRequest(requestId, status);
+      if (approvedAccount) {
+        await upsertPlatformAccount(approvedAccount);
+      }
+    } catch {
+      // The visible dashboard state is kept locally if remote update is unavailable.
+    }
+  };
+
+  const resetPlatformUserPassword = async (targetUser) => {
+    if (!isSuperAdmin) {
+      return { ok: false, message: "هذا الإجراء مخصص للحساب الرئيسي فقط." };
+    }
+
+    const normalizedPhone = normalizePhone(targetUser?.phone);
+    if (!normalizedPhone) {
+      return { ok: false, message: "لا يوجد رقم هاتف واضح لهذا الحساب." };
+    }
+
+    const temporaryPassword = generateTemporaryPassword();
+    const passwordHash = await hashPassword(temporaryPassword);
+
+    setPlatformData((prev) => ({
+      ...prev,
+      users: (prev.users || []).map((user) =>
+        normalizePhone(user.phone) === normalizedPhone
+          ? {
+              ...user,
+              passwordHash,
+              passwordStatus: "تم إعادة التعيين",
+              passwordUpdatedAt: today,
+            }
+          : user,
+      ),
+      registrationRequests: (prev.registrationRequests || []).map((request) =>
+        normalizePhone(request.phone || request.contact) === normalizedPhone
+          ? { ...request, passwordHash, passwordStatus: "تم إعادة التعيين", passwordUpdatedAt: today }
+          : request,
+      ),
+    }));
+
+    setAcademyDataById((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((academyId) => {
+        const academyData = normalizeAcademyData(next[academyId]);
+        next[academyId] = {
+          ...academyData,
+          users: (academyData.users || []).map((user) =>
+            normalizePhone(user.phone) === normalizedPhone ? { ...user, passwordHash } : user,
+          ),
+          coaches: (academyData.coaches || []).map((coach) =>
+            normalizePhone(coach.phone) === normalizedPhone ? { ...coach, passwordHash } : coach,
+          ),
+        };
+      });
+      return next;
+    });
+
+    try {
+      await updateRemoteRegistrationPassword(normalizedPhone, passwordHash);
+      await updateRemotePlatformAccountPassword(normalizedPhone, passwordHash);
+    } catch {
+      // The local dashboard still reflects the reset; the next sync can refresh the remote row.
+    }
+
+    return {
+      ok: true,
+      temporaryPassword,
+      message: "تم إنشاء كلمة سر جديدة لهذا الحساب.",
+    };
+  };
+
+  const updateAccountProfile = async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const nextPhoto = await fileToDataUrl(imageFileFromForm(form, "accountPhoto"));
+    const nextName = String(form.get("accountName") || "").trim();
+    const currentPassword = String(form.get("currentPassword") || "");
+    const nextPassword = String(form.get("newPassword") || "");
+    const confirmPassword = String(form.get("confirmPassword") || "");
+    const currentPhone = normalizePhone(session?.phone);
+    const currentUser = platformUsers.find(
+      (user) => user.id === session?.userId || normalizePhone(user.phone) === currentPhone,
+    );
+
+    if (!nextName) {
+      return { ok: false, message: "أدخل اسم المستخدم." };
+    }
+
+    let nextPasswordHash = currentUser?.passwordHash || "";
+    let passwordWasChanged = false;
+
+    if (nextPassword || confirmPassword || currentPassword) {
+      if (isSuperAdmin) {
+        return { ok: false, message: "كلمة سر الحساب الرئيسي ثابتة ولا يتم عرضها أو تغييرها من هنا." };
+      }
+
+      if (!currentUser?.passwordHash) {
+        return { ok: false, message: "لا يمكن تغيير كلمة السر لهذا الحساب قبل مزامنة بياناته." };
+      }
+
+      if (nextPassword.length < 6) {
+        return { ok: false, message: "كلمة السر الجديدة يجب أن تكون 6 أحرف أو أرقام على الأقل." };
+      }
+
+      if (nextPassword !== confirmPassword) {
+        return { ok: false, message: "تأكيد كلمة السر غير مطابق." };
+      }
+
+      const currentPasswordHash = await hashPassword(currentPassword);
+      if (currentPasswordHash !== currentUser.passwordHash) {
+        return { ok: false, message: "كلمة السر الحالية غير صحيحة." };
+      }
+
+      nextPasswordHash = await hashPassword(nextPassword);
+      passwordWasChanged = true;
+    }
+
+    if (!isSuperAdmin) {
+      setPlatformData((prev) => ({
+        ...prev,
+        users: (prev.users || []).map((user) =>
+          user.id === session?.userId || normalizePhone(user.phone) === currentPhone
+            ? {
+                ...user,
+                name: nextName,
+                photo: nextPhoto || user.photo || "",
+                passwordHash: passwordWasChanged ? nextPasswordHash : user.passwordHash,
+                passwordStatus: "مشفرة",
+                passwordUpdatedAt: passwordWasChanged ? today : user.passwordUpdatedAt,
+              }
+            : user,
+        ),
+      }));
+
+      setData((prev) => ({
+        ...prev,
+        coach:
+          normalizePhone(prev.coach?.phone) === currentPhone || session?.role === ROLE_OWNER
+            ? { ...(prev.coach || seedData.coach), name: nextName, photo: nextPhoto || prev.coach?.photo || "" }
+            : prev.coach,
+        coaches: (prev.coaches || []).map((coach) =>
+          normalizePhone(coach.phone) === currentPhone
+            ? { ...coach, name: nextName, photo: nextPhoto || coach.photo || "", passwordHash: passwordWasChanged ? nextPasswordHash : coach.passwordHash }
+            : coach,
+        ),
+        users: (prev.users || []).map((user) =>
+          normalizePhone(user.phone) === currentPhone
+            ? { ...user, name: nextName, photo: nextPhoto || user.photo || "", passwordHash: passwordWasChanged ? nextPasswordHash : user.passwordHash }
+            : user,
+        ),
+      }));
+
+      if (currentUser) {
+        upsertPlatformAccount({
+          ...currentUser,
+          name: nextName,
+          photo: nextPhoto || currentUser.photo || "",
+          passwordHash: passwordWasChanged ? nextPasswordHash : currentUser.passwordHash,
+          passwordStatus: "مشفرة",
+          passwordUpdatedAt: passwordWasChanged ? today : currentUser.passwordUpdatedAt,
+        }).catch(() => {
+          // Local profile updates stay in place and can sync later.
+        });
+      }
+    }
+
+    setSession((prev) => (prev ? { ...prev, name: nextName, photo: nextPhoto || prev.photo || "" } : prev));
+    return { ok: true, message: passwordWasChanged ? "تم تحديث الاسم وكلمة السر." : "تم تحديث اسم المستخدم." };
+  };
+
+  const viewProps = {
+    data,
+    academyDataById,
+    stats,
+    helpers,
+    filteredPlayers,
+    platformUsers,
+    registrationRequests,
+    setActiveView,
+    selectedPlayerId,
+    setSelectedPlayerId,
+    selectedTeamId,
+    setSelectedTeamId,
+    addAgeGroup,
+    updateAgeGroup,
+    removeAgeGroup,
+    finishOnboarding,
+    addAcademyCoach,
+    toggleAcademyCoachStatus,
+    addPlayer,
+    addTeam,
+    recordAttendance,
+    addPayment,
+    addMatch,
+    addBadge,
+    addNotification,
+    addPost,
+    updateCoach,
+    updateAcademy,
+    updateAccountProfile,
+    updateRegistrationRequest,
+    resetPlatformUserPassword,
+    togglePlatformUserStatus,
+    togglePlayerStatus,
+    session,
+    isFirstLogin: Boolean(session?.isFirstLogin),
+  };
+
+  const fallbackView = isSuperAdmin ? "platformDashboard" : session?.isFirstLogin ? "coachSetup" : "home";
+  const visibleNavItems = isSuperAdmin
+    ? navItems
+    : navItems.filter((item) => canAccessView(item.id, session));
+  const bottomNavItems = visibleNavItems.filter((item) => !setupNavIds.has(item.id));
+  const displayedView = visibleNavItems.some((item) => item.id === activeView) ? activeView : fallbackView;
+  const customScreenViews = new Set(["home", "coachSetup", "coaches", "settings", "ageGroups", "attendance", "reports", "accountProfile"]);
+  const showGlobalHeader = !customScreenViews.has(displayedView);
+  const showScreenTitle = !customScreenViews.has(displayedView);
+  const showBottomNav = !session?.isFirstLogin && !setupNavIds.has(displayedView);
+  const handlePageRefresh = () => {
+    writeLocalData("acdme-active-view-v1", displayedView);
+    window.location.reload();
+  };
+  const sessionPhone = normalizePhone(session?.phone);
+  const sessionCoach = (data.coaches || []).find((coach) => normalizePhone(coach.phone) === sessionPhone);
+  const profileImage =
+    session?.photo ||
+    sessionCoach?.photo ||
+    (session?.role === ROLE_OWNER || normalizePhone(data.coach?.phone) === sessionPhone ? data.coach?.photo : "") ||
+    data.academy.logo ||
+    session?.academyLogo ||
+    "";
+  const profileDisplayName = session?.name || sessionCoach?.name || data.coach?.name || "الملف الشخصي";
+  const profileMenuItems = [
+    { id: "platformDashboard", label: "لوحة المنصة", icon: ClipboardCheck },
+    { id: "platformReports", label: "تقارير الأكاديميات", icon: ClipboardList },
+    { id: "accountProfile", label: "الملف الشخصي", icon: UserCircle },
+    { id: "coachSetup", label: "إعدادات المدرب", icon: UserRound },
+    { id: "coaches", label: "إدارة المدربين", icon: Users },
+    { id: "settings", label: "إعدادات الأكاديمية", icon: Settings },
+    { id: "ageGroups", label: "إعدادات الفئات", icon: Layers },
+    { id: "teams", label: "إدارة الفرق", icon: ShieldCheck },
+  ].filter((item) => canAccessView(item.id, session));
+  const handleLogout = () => {
+    setIsProfileMenuOpen(false);
+    setSession(null);
+    setActiveView("platformDashboard");
+  };
+  const handleProfileHome = () => {
+    setActiveView(isSuperAdmin ? "platformDashboard" : "home");
+    setIsProfileMenuOpen(false);
+  };
+
+  if (!session?.verified) {
+    return (
+      <LoginPassword
+        data={data}
+        users={platformData.users || []}
+        registrationRequests={registrationRequests}
+        refreshPlatformUsers={refreshPlatformUsers}
+        refreshRegistrationRequests={refreshRegistrationRequests}
+        onRequestRegistration={submitRegistrationRequest}
+        onVerified={(nextSession) => {
+          const onboardingKey = nextSession.academyId || normalizePhone(nextSession.phone);
+          const hasCompletedOnboarding = Boolean(onboardingState[onboardingKey]?.completed);
+          const nextIsSuperAdmin = nextSession.role === ROLE_SUPER_ADMIN;
+          const shouldCompleteSetup = !nextIsSuperAdmin && nextSession.role === ROLE_OWNER && !hasCompletedOnboarding;
+          const nextView = nextIsSuperAdmin ? "platformDashboard" : shouldCompleteSetup ? "coachSetup" : "home";
+
+          if (!nextIsSuperAdmin && nextSession.academyId) {
+            setAcademyDataById((prev) => ({
+              ...prev,
+              [nextSession.academyId]: normalizeAcademyData(prev[nextSession.academyId], nextSession),
+            }));
+          }
+
+          setSession({ ...nextSession, verified: true, isFirstLogin: shouldCompleteSetup });
+          setActiveView(nextView);
+        }}
+      />
+    );
+  }
+
+  return (
+    <div className={`${showBottomNav ? "app-shell" : "app-shell setup-mode"} ${displayedView === "home" ? "home-view" : ""}`}>
+      <button className="global-refresh-button" type="button" onClick={handlePageRefresh} aria-label="تحديث الصفحة">
+        <RefreshCw size={18} />
+      </button>
+
+      <div className="profile-menu-shell">
+        <button
+          className="profile-menu-button"
+          type="button"
+          aria-label="قائمة البروفايل"
+          aria-expanded={isProfileMenuOpen}
+          onClick={() => setIsProfileMenuOpen((value) => !value)}
+        >
+          {profileImage ? <img src={profileImage} alt="صورة البروفايل" decoding="async" /> : <UserRound size={22} />}
+        </button>
+
+        {isProfileMenuOpen && (
+          <div className="profile-dropdown">
+            <div className="profile-dropdown-head">
+              <strong>{profileDisplayName}</strong>
+              <span>{session.academyName || data.academy.name || "الأكاديمية"}</span>
+            </div>
+            {!session?.isFirstLogin && (
+              <button className="profile-home" type="button" onClick={handleProfileHome}>
+                <Activity size={17} />
+                <span>القائمة الرئيسية</span>
+              </button>
+            )}
+            {profileMenuItems.map((item) => {
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => {
+                    setActiveView(item.id);
+                    setIsProfileMenuOpen(false);
+                  }}
+                >
+                  <Icon size={17} />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+            <button className="profile-logout" type="button" onClick={handleLogout}>
+              <LockKeyhole size={17} />
+              <span>تسجيل الخروج</span>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {showGlobalHeader && <header className="app-header">
+        <div className="brand">
+          <div className="brand-mark">
+            <Dumbbell size={22} />
+          </div>
+          <div>
+            <strong>Al-Qaisar Master Dashboard</strong>
+            <span>{session.academyName || data.academy.name || "الأكاديمية"}</span>
+          </div>
+        </div>
+      </header>}
+
+      <main className="main-panel">
+        {showScreenTitle && <header className="screen-titlebar">
+          <div>
+            <p className="eyebrow">لوحة الإدارة</p>
+            <h1>{visibleNavItems.find((item) => item.id === displayedView)?.label}</h1>
+          </div>
+          <div className="search-box">
+            <Search size={18} />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="بحث عن لاعب أو فريق"
+            />
+          </div>
+        </header>}
+
+        {displayedView === "home" && <Dashboard {...viewProps} />}
+        {displayedView === "coachSetup" && <CoachSetup {...viewProps} />}
+        {displayedView === "coaches" && <CoachesSettings {...viewProps} />}
+        {displayedView === "platformDashboard" && <PlatformDashboard {...viewProps} />}
+        {displayedView === "platformReports" && <PlatformReports {...viewProps} />}
+        {displayedView === "settings" && <AcademySettings {...viewProps} />}
+        {displayedView === "ageGroups" && <AgeGroups {...viewProps} />}
+        {displayedView === "teams" && <Teams {...viewProps} />}
+        {displayedView === "teamProfile" && <TeamProfile {...viewProps} />}
+        {displayedView === "players" && <Players {...viewProps} />}
+        {displayedView === "playerProfile" && <PlayerProfile {...viewProps} />}
+        {displayedView === "attendance" && <Attendance {...viewProps} />}
+        {displayedView === "reports" && <Reports {...viewProps} />}
+        {displayedView === "accountProfile" && <AccountProfile {...viewProps} />}
+        {displayedView === "gamification" && <Gamification {...viewProps} />}
+        {displayedView === "matches" && <Matches {...viewProps} />}
+        {displayedView === "notifications" && <Notifications {...viewProps} />}
+        {displayedView === "community" && <Community {...viewProps} />}
+      </main>
+
+      {showBottomNav && <nav className="bottom-nav" aria-label="التنقل السفلي">
+        <div className="bottom-nav-track">
+          {bottomNavItems.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button
+                className={displayedView === item.id ? "bottom-nav-item active" : "bottom-nav-item"}
+                key={item.id}
+                onClick={() => setActiveView(item.id)}
+                title={item.label}
+              >
+                <Icon size={20} />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>}
+    </div>
+  );
+}
+
+function Dashboard({ data, stats, helpers, setActiveView, session }) {
+  const leaders = [...data.players].sort((a, b) => b.xp - a.xp).slice(0, 4);
+  const academyLogo = data.academy.logo || session?.academyLogo || "";
+  const academyName = data.academy.name || session?.academyName || "اسم الأكاديمية";
+  const academyNameEn = data.academy.nameEn || session?.academyNameEn || "Official Sports Academy";
+  const activeAlerts = stats.absent + stats.late;
+  const ageFilters = data.ageGroups.length ? data.ageGroups.slice(0, 4) : ageGroupPresets.slice(0, 3);
+
+  return (
+    <section className="mobile-home">
+      <header className="home-hero-header">
+        <div className="home-brand-copy">
+          <span className="home-brand-label">SPORTS ACADEMY</span>
+          <strong>{academyName}</strong>
+          <em>{academyNameEn}</em>
+        </div>
+        <div className="home-logo-mark" aria-label="شعار الأكاديمية">
+          {academyLogo ? <img src={academyLogo} alt="شعار الأكاديمية" loading="lazy" decoding="async" /> : <Dumbbell size={20} />}
+        </div>
+        <button className="home-refresh-button" type="button" onClick={() => setActiveView("home")} aria-label="تحديث الرئيسية">
+          <Activity size={16} />
+        </button>
+      </header>
+
+      <div className="home-alert">
+        <Bell size={16} />
+        <span>{activeAlerts} متابعة تحتاج مراجعة اليوم</span>
+      </div>
+
+      <div className="home-stat-grid">
+        <article>
+          <span>اللاعبين</span>
+          <strong>{data.players.length}</strong>
+          <small>لاعب مسجل</small>
+          <Users size={18} />
+        </article>
+        <article>
+          <span>الحضور</span>
+          <strong>{stats.present}</strong>
+          <small>حاضر اليوم</small>
+          <span className="home-live-dot" aria-hidden="true" />
+        </article>
+      </div>
+
+      <section className="home-balance">
+        <div>
+          <span>رصيد الأكاديمية</span>
+          <strong>{currency(stats.revenue)}</strong>
+          <small>آخر دخل مسجل</small>
+        </div>
+        <div className="home-balance-icon">
+          <Wallet size={23} />
+        </div>
+      </section>
+
+      <div className="home-actions">
+        <button type="button" onClick={() => setActiveView("home")} aria-label="تحديث">
+          <Activity size={17} />
+        </button>
+        <button type="button" onClick={() => setActiveView("attendance")}>
+          <CalendarCheck size={16} />
+          الحضور
+        </button>
+        <button className="active" type="button" onClick={() => setActiveView("players")}>
+          <Users size={16} />
+          إضافة لاعب
+        </button>
+      </div>
+
+      <label className="home-search">
+        <Search size={16} />
+        <input placeholder="ابحث باسم لاعب، ولي أمر، أو فريق" />
+      </label>
+
+      <div className="home-chips">
+        <button className="active">الكل</button>
+        {ageFilters.map((group) => (
+          <button key={group.id || group.key}>{group.name}</button>
+        ))}
+      </div>
+
+      <section className="home-player-list">
+        <h2>قائمة اللاعبين</h2>
+        {leaders.length === 0 && (
+          <div className="home-empty-list">
+            لا يوجد لاعبون بعد. أضف أول لاعب لتظهر القائمة هنا.
+          </div>
+        )}
+        {leaders.map((player) => (
+          <article className="home-player-card" key={player.id}>
+            <div className="home-player-avatar">
+              {player.photo ? <img src={player.photo} alt={player.name} loading="lazy" decoding="async" /> : <UserCircle size={28} />}
+            </div>
+            <div>
+              <strong>{player.name}</strong>
+              <span>{helpers.teamById[player.teamId]?.name || "بدون فريق"}</span>
+            </div>
+            <b>{player.xp} XP</b>
+          </article>
+        ))}
+      </section>
+    </section>
+  );
+}
+
+function PlatformDashboard({
+  data,
+  stats,
+  platformUsers,
+  registrationRequests,
+  updateRegistrationRequest,
+  resetPlatformUserPassword,
+  togglePlatformUserStatus,
+}) {
+  const [visiblePasswordRows, setVisiblePasswordRows] = useState({});
+  const [temporaryPasswords, setTemporaryPasswords] = useState({});
+  const [resettingRows, setResettingRows] = useState({});
+  const [passwordMessages, setPasswordMessages] = useState({});
+  const pending = registrationRequests.filter((request) => request.status === "قيد المراجعة").length;
+  const approved = registrationRequests.filter((request) => request.status === "مقبول").length;
+  const rejected = registrationRequests.filter((request) => request.status === "مرفوض").length;
+  const approvedAccounts = platformUsers || [];
+
+  const handlePasswordReset = async (user) => {
+    const rowKey = user.id || user.phone;
+    setResettingRows((prev) => ({ ...prev, [rowKey]: true }));
+    setPasswordMessages((prev) => ({ ...prev, [rowKey]: "" }));
+
+    try {
+      const result = await resetPlatformUserPassword(user);
+      if (result.ok) {
+        setTemporaryPasswords((prev) => ({ ...prev, [rowKey]: result.temporaryPassword }));
+        setVisiblePasswordRows((prev) => ({ ...prev, [rowKey]: true }));
+      }
+      setPasswordMessages((prev) => ({ ...prev, [rowKey]: result.message }));
+    } catch (error) {
+      setPasswordMessages((prev) => ({ ...prev, [rowKey]: error.message || "تعذر تغيير كلمة السر." }));
+    } finally {
+      setResettingRows((prev) => ({ ...prev, [rowKey]: false }));
+    }
+  };
+
+  return (
+    <section className="view-stack">
+      <div className="metric-grid">
+        <Metric title="طلبات بانتظار الموافقة" value={pending} icon={ClipboardCheck} tone="amber" />
+        <Metric title="حسابات معتمدة" value={approvedAccounts.length} icon={BadgeCheck} tone="green" />
+        <Metric title="طلبات مرفوضة" value={rejected} icon={Bell} tone="red" />
+        <Metric title="إجمالي الإيرادات" value={currency(stats.revenue)} icon={CircleDollarSign} tone="blue" />
+      </div>
+
+      <div className="split-layout">
+        <section className="panel">
+          <PanelHead
+            title="نظرة عامة على المنصة"
+            text="متابعة كل البيانات التشغيلية قبل الدخول إلى تفاصيل كل أكاديمية."
+            icon={Activity}
+          />
+          <div className="detail-grid">
+            <Detail label="الأكاديميات المسجلة" value={Math.max(approved, 1)} />
+            <Detail label="اللاعبون" value={data.players.length} />
+            <Detail label="الفرق" value={data.teams.length} />
+            <Detail label="الفئات العمرية" value={data.ageGroups.length} />
+            <Detail label="حضور اليوم" value={stats.present} />
+            <Detail label="مدفوعات مسجلة" value={currency(stats.revenue)} />
+          </div>
+        </section>
+
+        <section className="panel">
+          <PanelHead
+            title="حالة الطلبات"
+            text="مراجعة سريعة لحالة طلبات الانضمام."
+            icon={ClipboardList}
+          />
+          <div className="status-row">
+            <StatusPill label="قيد المراجعة" value={pending} />
+            <StatusPill label="مقبول" value={approved} />
+            <StatusPill label="مرفوض" value={rejected} />
+          </div>
+          <p className="muted platform-note">
+            عند الموافقة على الطلب يتم اعتبار الأكاديمية جاهزة للتهيئة، ثم يمكن للمالك إكمال إعدادات الأكاديمية والفئات والفرق.
+          </p>
+        </section>
+      </div>
+
+      <section className="panel table-panel">
+        <PanelHead
+          title="طلبات تسجيل الأكاديميات"
+          text="وافق على الأكاديميات الجديدة أو ارفض الطلبات غير المكتملة."
+          icon={Users}
+        />
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>الأكاديمية</th>
+                <th>المسؤول</th>
+                <th>التواصل</th>
+                <th>المدينة</th>
+                <th>التاريخ</th>
+                <th>الحالة</th>
+                <th>الإجراء</th>
+              </tr>
+            </thead>
+            <tbody>
+              {registrationRequests.map((request) => (
+                <tr key={request.id}>
+                  <td>{request.academyName}</td>
+                  <td>{request.ownerName}</td>
+                  <td>{request.contact}</td>
+                  <td>{request.city}</td>
+                  <td>{request.createdAt}</td>
+                  <td>
+                    <span className={`status-badge ${request.status === "مقبول" ? "ok" : request.status === "مرفوض" ? "danger" : ""}`}>
+                      {request.status}
+                    </span>
+                  </td>
+                  <td>
+                    <div className="action-row">
+                      <button className="mini-button approve" onClick={() => updateRegistrationRequest(request.id, "مقبول")}>
+                        موافقة
+                      </button>
+                      <button className="mini-button reject" onClick={() => updateRegistrationRequest(request.id, "مرفوض")}>
+                        رفض
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="panel table-panel">
+        <PanelHead
+          title="الحسابات المعتمدة"
+          text={`كل أكاديمية يمكن ربطها بحد أقصى ${MAX_ACADEMY_ACCOUNTS} حسابات. كلمة السر الأصلية لا تُحفظ كنص، ويمكن للحساب الرئيسي تعيين كلمة جديدة ثم عرضها مباشرة.`}
+          icon={LockKeyhole}
+        />
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>المستخدم</th>
+                <th>رقم الهاتف</th>
+                <th>كلمة السر</th>
+                <th>الأكاديمية</th>
+                <th>الدور</th>
+                <th>الصلاحية</th>
+                <th>الحالة</th>
+              </tr>
+            </thead>
+            <tbody>
+              {approvedAccounts.length === 0 && (
+                <tr>
+                  <td className="empty-table-cell" colSpan="7">لا توجد حسابات معتمدة بعد</td>
+                </tr>
+              )}
+              {approvedAccounts.map((user) => {
+                const rowKey = user.id || user.phone;
+                const isPasswordVisible = Boolean(visiblePasswordRows[rowKey]);
+                const PasswordIcon = isPasswordVisible ? EyeOff : Eye;
+                const visiblePassword = temporaryPasswords[rowKey];
+
+                return (
+                <tr key={rowKey}>
+                  <td>{user.name}</td>
+                  <td>{user.phone}</td>
+                  <td>
+                    <div className="password-admin-box">
+                      <div className="password-cell">
+                        <span className="password-safe-pill">
+                          {isPasswordVisible
+                            ? visiblePassword || "الأصلية غير محفوظة كنص - عيّن كلمة جديدة"
+                            : "••••••••"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setVisiblePasswordRows((prev) => ({ ...prev, [rowKey]: !prev[rowKey] }))}
+                          aria-label={isPasswordVisible ? "إخفاء كلمة السر" : "عرض كلمة السر"}
+                          title={isPasswordVisible ? "إخفاء" : "عرض"}
+                        >
+                          <PasswordIcon size={15} />
+                        </button>
+                      </div>
+                      <button
+                        className="mini-button password-reset-button"
+                        type="button"
+                        onClick={() => handlePasswordReset(user)}
+                        disabled={Boolean(resettingRows[rowKey])}
+                      >
+                        {resettingRows[rowKey] ? "جاري التعيين..." : "تعيين كلمة جديدة"}
+                      </button>
+                      {passwordMessages[rowKey] && <small>{passwordMessages[rowKey]}</small>}
+                    </div>
+                  </td>
+                  <td>{user.academyName}</td>
+                  <td>{user.role}</td>
+                  <td>{user.permissions}</td>
+                  <td>
+                    <div className="account-status-actions">
+                      <span className={`status-badge ${user.status === "نشط" ? "ok" : "danger"}`}>
+                        {user.status || "نشط"}
+                      </span>
+                      <button
+                        className={user.status === "معطل" ? "mini-button approve" : "mini-button reject"}
+                        type="button"
+                        onClick={() => togglePlatformUserStatus(user)}
+                      >
+                        {user.status === "معطل" ? "تفعيل" : "إيقاف"}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function PlatformReports({ academyDataById, platformUsers, registrationRequests }) {
+  const approvedRequests = (registrationRequests || []).filter((request) => request.status === STATUS_APPROVED);
+  const academyIds = new Set([
+    ...Object.keys(academyDataById || {}),
+    ...(platformUsers || []).map((user) => user.academyId).filter(Boolean),
+    ...approvedRequests.map((request) => requestAcademyId(request)).filter(Boolean),
+  ]);
+
+  const academyRows = Array.from(academyIds).map((academyId) => {
+    const accounts = (platformUsers || []).filter((user) => user.academyId === academyId);
+    const ownerAccount = accounts.find((user) => user.role === ROLE_OWNER) || accounts[0] || {};
+    const request = approvedRequests.find((item) => requestAcademyId(item) === academyId);
+    const academyData = normalizeAcademyData(academyDataById?.[academyId], {
+      name: ownerAccount.name || request?.ownerName,
+      phone: ownerAccount.phone || request?.phone,
+      academyName: ownerAccount.academyName || request?.academyName,
+    });
+    const accountsByPhone = new Map();
+
+    [
+      ...accounts,
+      ...(academyData.users || []),
+      ...(request
+        ? [{
+            name: request.ownerName,
+            phone: request.phone || request.contact,
+            role: ROLE_OWNER,
+            academyId,
+            academyName: request.academyName,
+            permissions: PERMISSION_FULL,
+            status: request.status === STATUS_APPROVED ? "نشط" : request.status,
+          }]
+        : []),
+    ].forEach((account) => {
+      const key = normalizePhone(account.phone) || account.id || account.name;
+      if (!key) return;
+      accountsByPhone.set(key, {
+        name: account.name || "مستخدم",
+        phone: account.phone || "",
+        role: account.role || ROLE_COACH,
+        permissions: account.permissions || PERMISSION_ATTENDANCE_PLAYERS,
+        status: account.status || "نشط",
+      });
+    });
+
+    const linkedAccounts = Array.from(accountsByPhone.values());
+    const activePlayers = academyData.players.filter((player) => player.status !== "منقطع");
+    const stoppedPlayers = academyData.players.length - activePlayers.length;
+    const paidByPlayer = academyData.payments.reduce((map, payment) => {
+      map[payment.playerId] = (map[payment.playerId] || 0) + Number(payment.amount || 0);
+      return map;
+    }, {});
+    const expected = academyData.players.reduce((sum, player) => sum + Number(player.monthlyFee || 0), 0);
+    const collected = academyData.payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+    const remaining = academyData.players.reduce((sum, player) => {
+      const due = Number(player.monthlyFee || 0);
+      const paid = paidByPlayer[player.id] || 0;
+      return sum + Math.max(due - paid, 0);
+    }, 0);
+    const storedCoaches = academyData.coaches || [];
+    const accountCoaches = linkedAccounts.filter((user) => user.role !== ROLE_OWNER);
+    const primaryCoach = academyData.coach?.name
+      ? [{ name: academyData.coach.name, phone: academyData.coach.phone, role: "مدرب رئيسي", permissions: PERMISSION_FULL, status: "نشط" }]
+      : [];
+    const coachesByPhone = new Map();
+
+    [...primaryCoach, ...storedCoaches, ...accountCoaches].forEach((coach) => {
+      const key = normalizePhone(coach.phone) || coach.id || coach.name;
+      if (!key) return;
+      coachesByPhone.set(key, {
+        name: coach.name || "مدرب",
+        phone: coach.phone || "",
+        role: coach.role || ROLE_COACH,
+        permissions: coach.permissions || PERMISSION_ATTENDANCE_PLAYERS,
+        status: coach.status || "نشط",
+      });
+    });
+
+    const coaches = Array.from(coachesByPhone.values());
+    const debtPlayers = academyData.players
+      .map((player) => {
+        const due = Number(player.monthlyFee || 0);
+        const paid = paidByPlayer[player.id] || 0;
+        return {
+          ...player,
+          paid,
+          remaining: Math.max(due - paid, 0),
+        };
+      })
+      .filter((player) => player.remaining > 0)
+      .sort((a, b) => b.remaining - a.remaining);
+
+    return {
+      academyId,
+      name: academyData.academy.name || ownerAccount.academyName || request?.academyName || "أكاديمية بدون اسم",
+      owner: ownerAccount.name || request?.ownerName || academyData.coach?.name || "-",
+      phone: ownerAccount.phone || request?.phone || academyData.academy.ownerPhone || "-",
+      accounts: linkedAccounts,
+      coaches,
+      players: academyData.players,
+      activePlayers,
+      stoppedPlayers,
+      teams: academyData.teams,
+      collected,
+      expected,
+      remaining,
+      debtPlayers,
+      hasLocalDetails: Boolean(academyDataById?.[academyId]),
+    };
+  });
+
+  const totals = academyRows.reduce(
+    (sum, academy) => ({
+      academies: sum.academies + 1,
+      coaches: sum.coaches + academy.coaches.length,
+      players: sum.players + academy.players.length,
+      collected: sum.collected + academy.collected,
+      remaining: sum.remaining + academy.remaining,
+    }),
+    { academies: 0, coaches: 0, players: 0, collected: 0, remaining: 0 },
+  );
+
+  return (
+    <section className="platform-report-screen">
+      <div className="platform-report-hero">
+        <div>
+          <span>للحساب الرئيسي فقط</span>
+          <h1>تقارير الأكاديميات</h1>
+          <p>ملخص سريع لكل أكاديمية: المدربون، اللاعبين، المحصل، والمتبقي لدى اللاعبين.</p>
+        </div>
+        <ClipboardList size={34} />
+      </div>
+
+      <div className="metric-grid">
+        <Metric title="الأكاديميات" value={totals.academies} icon={ShieldCheck} tone="blue" />
+        <Metric title="المدربون" value={totals.coaches} icon={Users} tone="green" />
+        <Metric title="اللاعبون" value={totals.players} icon={UserCircle} tone="amber" />
+        <Metric title="المتبقي" value={currency(totals.remaining)} icon={Wallet} tone="red" />
+      </div>
+
+      <section className="platform-report-summary">
+        <div>
+          <span>إجمالي المحصل</span>
+          <strong>{currency(totals.collected)}</strong>
+        </div>
+        <div>
+          <span>إجمالي المتبقي</span>
+          <strong>{currency(totals.remaining)}</strong>
+        </div>
+      </section>
+
+      <section className="academy-report-list">
+        {academyRows.length === 0 && (
+          <div className="finance-empty">لا توجد أكاديميات معتمدة بعد.</div>
+        )}
+
+        {academyRows.map((academy) => (
+          <article className="academy-report-card" key={academy.academyId}>
+            <div className="academy-report-head">
+              <div>
+                <span>{academy.owner}</span>
+                <h2>{academy.name}</h2>
+                <small>{academy.phone}</small>
+              </div>
+              <b>{academy.hasLocalDetails ? "بيانات متاحة" : "بيانات أساسية"}</b>
+            </div>
+
+            <div className="academy-report-kpis">
+              <Detail label="المدربون" value={academy.coaches.length} />
+              <Detail label="الحسابات" value={academy.accounts.length} />
+              <Detail label="اللاعبون" value={academy.players.length} />
+              <Detail label="النشطون" value={academy.activePlayers.length} />
+              <Detail label="المنقطعون" value={academy.stoppedPlayers} />
+              <Detail label="المحصل" value={currency(academy.collected)} />
+              <Detail label="المتبقي" value={currency(academy.remaining)} />
+            </div>
+
+            <div className="academy-report-mini">
+              <div>
+                <strong>المدربون</strong>
+                {academy.coaches.length === 0 && <span>لا توجد بيانات مدربين بعد.</span>}
+                {academy.coaches.slice(0, 3).map((coach) => (
+                  <span key={`${academy.academyId}-${coach.phone || coach.name}`}>
+                    {coach.name} - {coach.role} - {coach.permissions} - {coach.status}
+                  </span>
+                ))}
+              </div>
+              <div>
+                <strong>الحسابات المرتبطة</strong>
+                {academy.accounts.length === 0 && <span>لا توجد حسابات مرتبطة بعد.</span>}
+                {academy.accounts.slice(0, 4).map((account) => (
+                  <span className="academy-account-line" key={`${academy.academyId}-account-${account.phone || account.name}`}>
+                    {account.name} - {account.phone || "بدون رقم"} - {account.role} - {account.permissions} - {account.status}
+                  </span>
+                ))}
+              </div>
+              <div>
+                <strong>أعلى المتبقيات</strong>
+                {academy.debtPlayers.length === 0 && <span>لا توجد مبالغ متبقية مسجلة.</span>}
+                {academy.debtPlayers.slice(0, 3).map((player) => (
+                  <span key={player.id}>{player.name}: {currency(player.remaining)}</span>
+                ))}
+              </div>
+            </div>
+          </article>
+        ))}
+      </section>
+
+      <section className="panel table-panel">
+        <PanelHead
+          title="جدول مختصر"
+          text="قراءة سريعة قابلة للمقارنة بين الأكاديميات."
+          icon={ClipboardList}
+        />
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>الأكاديمية</th>
+                <th>الحسابات</th>
+                <th>المدربون</th>
+                <th>اللاعبون</th>
+                <th>المحصل</th>
+                <th>المتبقي</th>
+                <th>الحالة</th>
+              </tr>
+            </thead>
+            <tbody>
+              {academyRows.map((academy) => (
+                <tr key={`row-${academy.academyId}`}>
+                  <td>{academy.name}</td>
+                  <td>{academy.accounts.length}</td>
+                  <td>{academy.coaches.length}</td>
+                  <td>{academy.players.length}</td>
+                  <td>{currency(academy.collected)}</td>
+                  <td>{currency(academy.remaining)}</td>
+                  <td>{academy.hasLocalDetails ? "تفصيلي" : "أساسي"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function PasswordField({ value, onChange, name, placeholder, required = false, minLength, autoComplete }) {
+  const [isVisible, setIsVisible] = useState(false);
+  const Icon = isVisible ? EyeOff : Eye;
+
+  return (
+    <div className="password-field">
+      <input
+        name={name}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        type={isVisible ? "text" : "password"}
+        required={required}
+        minLength={minLength}
+        autoComplete={autoComplete}
+      />
+      <button
+        type="button"
+        onClick={() => setIsVisible((current) => !current)}
+        aria-label={isVisible ? "إخفاء كلمة السر" : "إظهار كلمة السر"}
+        title={isVisible ? "إخفاء كلمة السر" : "إظهار كلمة السر"}
+      >
+        <Icon size={17} />
+      </button>
+    </div>
+  );
+}
+
+function ImageSourceControls({ name, onChange }) {
+  return (
+    <div className="image-source-controls" aria-label="اختيار مصدر الصورة">
+      <label>
+        <Camera size={16} />
+        <span>الكاميرا</span>
+        <input name={name} type="file" accept="image/*" capture="environment" onChange={onChange} />
+      </label>
+      <label>
+        <Plus size={16} />
+        <span>المعرض</span>
+        <input name={name} type="file" accept="image/*" onChange={onChange} />
+      </label>
+    </div>
+  );
+}
+
+function LoginPassword({
+  data,
+  users,
+  registrationRequests,
+  refreshPlatformUsers,
+  refreshRegistrationRequests,
+  onVerified,
+  onRequestRegistration,
+}) {
+  const [mode, setMode] = useState("login");
+  const [phone, setPhone] = useState("");
+  const [password, setPassword] = useState("");
+  const [registration, setRegistration] = useState({
+    academyName: "",
+    ownerName: "",
+    phone: "",
+    password: "",
+    city: "",
+  });
+  const [message, setMessage] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+
+  const findRequestByPhone = (normalizedPhone, requests = registrationRequests) =>
+    (requests || []).find((request) => normalizePhone(request.phone || request.contact) === normalizedPhone);
+
+  const findAcademyByName = (academyName, requests = registrationRequests, userList = users) => {
+    const normalizedName = normalizeText(academyName);
+    return [
+      ...(userList || []),
+      ...(requests || []),
+    ].find((item) => item.status !== STATUS_REJECTED && normalizeText(item.academyName) === normalizedName);
+  };
+
+  const findAccountByPhone = (normalizedPhone, requests = registrationRequests, userList = users) => {
+    if (normalizedPhone === SUPER_ADMIN_PHONE) {
+      return {
+        id: "super-admin",
+        name: "مدير المنصة",
+        phone: SUPER_ADMIN_PHONE,
+        password: SUPER_ADMIN_PASSWORD,
+        role: ROLE_SUPER_ADMIN,
+        academyId: "platform",
+        academyName: "إدارة المنصة",
+        permissions: PERMISSION_FULL,
+        status: "نشط",
+      };
+    }
+
+    const localUser = (userList || []).find((user) => normalizePhone(user.phone) === normalizedPhone);
+    if (localUser) {
+      return localUser.status === "معطل" ? { ...localUser, blocked: true } : localUser;
+    }
+
+    const approvedRequest = (requests || []).find(
+      (request) => normalizePhone(request.phone || request.contact) === normalizedPhone && request.status === STATUS_APPROVED,
+    );
+
+    if (!approvedRequest) return null;
+
+    return {
+      id: `request-${approvedRequest.id}`,
+      name: approvedRequest.ownerName,
+      phone: normalizedPhone,
+      academyId: requestAcademyId(approvedRequest),
+      passwordHash: approvedRequest.passwordHash,
+      role: ROLE_OWNER,
+      academyName: approvedRequest.academyName,
+      permissions: PERMISSION_FULL,
+      status: "نشط",
+    };
+  };
+
+  const passwordMatches = async (account, enteredPassword) => {
+    if (account.passwordHash) {
+      return (await hashPassword(enteredPassword)) === account.passwordHash;
+    }
+
+    if (!account.password) {
+      return false;
+    }
+
+    return enteredPassword === account.password;
+  };
+
+  const submitLogin = async (event) => {
+    event.preventDefault();
+    setMessage("");
+
+    const normalizedPhone = normalizePhone(phone);
+
+    if (normalizedPhone.length < 8 || password.length < 1) {
+      setMessage("أدخل رقم الهاتف وكلمة السر للمتابعة.");
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const liveRegistrationRequests = await refreshRegistrationRequests?.();
+      const liveUsers = await refreshPlatformUsers?.();
+      const requestsForLogin = Array.isArray(liveRegistrationRequests) ? liveRegistrationRequests : registrationRequests;
+      const usersForLogin = Array.isArray(liveUsers) ? liveUsers : users;
+      const account = findAccountByPhone(normalizedPhone, requestsForLogin, usersForLogin);
+      const existingRequest = findRequestByPhone(normalizedPhone, requestsForLogin);
+
+      if (!account) {
+        if (existingRequest?.status === STATUS_PENDING) {
+          setMessage("طلب التسجيل لهذا الرقم ما زال بانتظار موافقة إدارة المنصة.");
+          return;
+        }
+
+        if (existingRequest?.status === STATUS_REJECTED) {
+          setMessage("تم رفض طلب هذا الرقم سابقًا. يمكنك إرسال طلب جديد ببيانات مكتملة.");
+        } else {
+          setMessage("هذا الرقم غير مسجل. أنشئ حسابًا جديدًا ليظهر الطلب في داشبورد الموافقة.");
+        }
+
+        setRegistration((prev) => ({ ...prev, phone: normalizedPhone }));
+        setMode("register");
+        return;
+      }
+
+      if (account.blocked || account.status === "معطل") {
+        setMessage("تم تعطيل هذا الحساب من إدارة الأكاديمية.");
+        return;
+      }
+
+      const isCorrectPassword = await passwordMatches(account, password);
+      if (!isCorrectPassword) {
+        setMessage("كلمة السر غير صحيحة.");
+        return;
+      }
+
+      onVerified({
+        userId: account.id,
+        name: account.name,
+        phone: normalizedPhone,
+        role: account.role || ROLE_OWNER,
+        academyId: account.academyId || makeAcademyId(normalizedPhone),
+        academyName: account.academyName || data.academy.name,
+        academyNameEn: account.academyNameEn || data.academy.nameEn,
+        academyLogo: account.academyLogo || data.academy.logo,
+        permissions: account.permissions || PERMISSION_FULL,
+        signedInAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      setMessage(error.message || "تعذر تسجيل الدخول.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const submitRegistration = async (event) => {
+    event.preventDefault();
+    setMessage("");
+
+    const normalizedPhone = normalizePhone(registration.phone);
+    if (normalizedPhone.length < 8) {
+      setMessage("أدخل رقم هاتف صحيحًا.");
+      return;
+    }
+
+    if (registration.password.length < 6) {
+      setMessage("كلمة السر يجب أن تكون 6 أحرف أو أرقام على الأقل.");
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const liveRegistrationRequests = await refreshRegistrationRequests?.();
+      const liveUsers = await refreshPlatformUsers?.();
+      const requestsForRegistration = Array.isArray(liveRegistrationRequests) ? liveRegistrationRequests : registrationRequests;
+      const usersForRegistration = Array.isArray(liveUsers) ? liveUsers : users;
+      const existingAccount = findAccountByPhone(normalizedPhone, requestsForRegistration, usersForRegistration);
+      const existingRequest = findRequestByPhone(normalizedPhone, requestsForRegistration);
+      const existingAcademyName = findAcademyByName(registration.academyName, requestsForRegistration, usersForRegistration);
+
+      if (existingAccount) {
+        setMessage("هذا الرقم مسجل مسبقًا. يمكنك تسجيل الدخول مباشرة.");
+        setPhone(normalizedPhone);
+        setMode("login");
+        return;
+      }
+
+      if (existingRequest) {
+        setMessage("رقم الهاتف مسجل مسبقًا أو لديه طلب سابق، ولا يمكن استخدامه لإنشاء حساب جديد.");
+        return;
+      }
+
+      if (existingAcademyName) {
+        setMessage("اسم الأكاديمية مستخدم مسبقًا. يرجى تغيير اسم الأكاديمية.");
+        return;
+      }
+
+      const passwordHash = await hashPassword(registration.password);
+      await onRequestRegistration({
+        academyName: registration.academyName,
+        ownerName: registration.ownerName,
+        phone: normalizedPhone,
+        contact: normalizedPhone,
+        passwordHash,
+        city: registration.city,
+      });
+
+      setPhone(normalizedPhone);
+      setPassword("");
+      setRegistration({ academyName: "", ownerName: "", phone: "", password: "", city: "" });
+      setMode("login");
+      setMessage("تم إرسال طلب التسجيل. بعد موافقة السوبر أدمين يمكنك الدخول برقم الهاتف وكلمة السر.");
+    } catch (error) {
+      setMessage(error.message || "تعذر إرسال طلب التسجيل.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const updateRegistrationField = (field, value) => {
+    setRegistration((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const switchAuthMode = (nextMode) => {
+    setMode(nextMode);
+    setMessage("");
+    setIsLoading(false);
+  };
+
+  return (
+    <main className="login-shell">
+      <section className="login-hero">
+        <div className="login-brand">
+          <div className="brand-mark">
+            <Dumbbell size={24} />
+          </div>
+          <div>
+            <strong>Al-Qaisar Master Dashboard</strong>
+            <span>منصة عامة لإدارة الأكاديميات الرياضية</span>
+          </div>
+        </div>
+
+        <div className="login-copy">
+          <p className="eyebrow">Phone & Password</p>
+          <h1>ادخل إلى مساحة الأكاديمية الخاصة بك</h1>
+          <p>
+            كل أكاديمية تدخل برقم الهاتف وكلمة السر بعد اعتمادها من إدارة المنصة، ثم تظهر لها أدوات الإدارة الخاصة
+            باللاعبين والفرق والحضور والمدفوعات.
+          </p>
+        </div>
+
+        <div className="login-stats">
+          <StatusPill label="أكاديميات" value="متعددة" />
+          <StatusPill label="الدخول" value="كلمة سر" />
+          <StatusPill label="الموافقة" value="إلزامية" />
+        </div>
+      </section>
+
+      <section className="login-card">
+        <div className="auth-switch" aria-label="اختيار وضع الدخول">
+          <button
+            className={mode === "login" ? "active" : ""}
+            type="button"
+            aria-pressed={mode === "login"}
+            onClick={() => switchAuthMode("login")}
+          >
+            تسجيل الدخول
+          </button>
+          <button
+            className={mode === "register" ? "active" : ""}
+            type="button"
+            aria-pressed={mode === "register"}
+            onClick={() => switchAuthMode("register")}
+          >
+            إنشاء حساب
+          </button>
+        </div>
+
+        {mode === "login" ? (
+          <form className="form-panel" onSubmit={submitLogin}>
+            <FormTitle icon={LockKeyhole} title="تسجيل الدخول" />
+            <input
+              value={phone}
+              onChange={(event) => setPhone(event.target.value)}
+              placeholder="رقم الهاتف"
+              inputMode="tel"
+              autoFocus
+              required
+            />
+            <PasswordField
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="كلمة السر"
+              required
+            />
+            <button className="primary-button" type="submit" disabled={isLoading}>
+              <KeyRound size={18} />
+              {isLoading ? "جاري التحقق..." : "دخول"}
+            </button>
+          </form>
+        ) : (
+          <form className="form-panel" onSubmit={submitRegistration}>
+            <FormTitle icon={Plus} title="إنشاء حساب أكاديمية" />
+            <input
+              value={registration.academyName}
+              onChange={(event) => updateRegistrationField("academyName", event.target.value)}
+              placeholder="اسم الأكاديمية"
+              required
+            />
+            <input
+              value={registration.ownerName}
+              onChange={(event) => updateRegistrationField("ownerName", event.target.value)}
+              placeholder="اسم المسؤول"
+              required
+            />
+            <input
+              value={registration.phone}
+              onChange={(event) => updateRegistrationField("phone", event.target.value)}
+              placeholder="رقم الهاتف"
+              inputMode="tel"
+              required
+            />
+            <PasswordField
+              value={registration.password}
+              onChange={(event) => updateRegistrationField("password", event.target.value)}
+              placeholder="كلمة السر"
+              required
+              minLength="6"
+              autoComplete="new-password"
+            />
+            <input
+              value={registration.city}
+              onChange={(event) => updateRegistrationField("city", event.target.value)}
+              placeholder="المدينة"
+              required
+            />
+            <button className="primary-button" type="submit" disabled={isLoading}>
+              <Send size={18} />
+              {isLoading ? "جاري إرسال الطلب..." : "إرسال الطلب للموافقة"}
+            </button>
+          </form>
+        )}
+
+        {message && <p className="login-message">{message}</p>}
+
+        <div className="login-modules">
+          {navItems.slice(1, 5).map((item) => {
+            const Icon = item.icon;
+            return (
+              <span key={item.id}>
+                <Icon size={16} />
+                {item.label}
+              </span>
+            );
+          })}
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function AccountProfile({ data, session, updateAccountProfile }) {
+  const [message, setMessage] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const currentPhone = normalizePhone(session?.phone);
+  const linkedCoach = (data.coaches || []).find((coach) => normalizePhone(coach.phone) === currentPhone);
+  const primaryCoachPhoto =
+    session?.role === ROLE_OWNER || normalizePhone(data.coach?.phone) === currentPhone ? data.coach?.photo || "" : "";
+  const profilePhoto = session?.photo || linkedCoach?.photo || primaryCoachPhoto || "";
+  const [photoPreview, setPhotoPreview] = useState(profilePhoto);
+  const displayName = session?.name || data.coach?.name || "مستخدم الأكاديمية";
+
+  useEffect(() => {
+    setPhotoPreview(profilePhoto);
+  }, [profilePhoto]);
+
+  const updatePhotoPreview = (event) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      setPhotoPreview(URL.createObjectURL(file));
+    }
+  };
+
+  const handleSubmit = async (event) => {
+    setMessage("");
+    setIsSaving(true);
+    const result = await updateAccountProfile(event);
+    setMessage(result.message);
+    setIsSaving(false);
+
+    if (result.ok) {
+      event.currentTarget.elements.currentPassword.value = "";
+      event.currentTarget.elements.newPassword.value = "";
+      event.currentTarget.elements.confirmPassword.value = "";
+    }
+  };
+
+  return (
+    <section className="account-profile-screen">
+      <header className="account-profile-hero">
+        <div>
+          <span>الملف الشخصي</span>
+          <h1>{displayName}</h1>
+          <p>{session?.academyName || data.academy.name || "الأكاديمية"}</p>
+        </div>
+        <UserCircle size={32} />
+      </header>
+
+      <section className="account-security-card">
+        <div>
+          <span>رقم الهاتف المسجل</span>
+          <strong>{session?.phone}</strong>
+        </div>
+        <div>
+          <span>الدور</span>
+          <strong>{session?.role}</strong>
+        </div>
+        <div>
+          <span>كلمة السر</span>
+          <strong>•••••••• - مشفرة</strong>
+        </div>
+      </section>
+
+      <form className="account-profile-form" onSubmit={handleSubmit}>
+        <FormTitle icon={Settings} title="تعديل بيانات الحساب" />
+        <div className="account-photo-block">
+          <div className="account-photo-preview">
+            {photoPreview ? <img src={photoPreview} alt="صورة المدرب" decoding="async" /> : <UserRound size={34} />}
+          </div>
+          <ImageSourceControls name="accountPhoto" onChange={updatePhotoPreview} />
+        </div>
+        <label>
+          <span>اسم المستخدم</span>
+          <input name="accountName" defaultValue={displayName} placeholder="اسم المستخدم" required />
+        </label>
+        <label>
+          <span>كلمة السر الحالية</span>
+          <PasswordField name="currentPassword" placeholder="مطلوبة عند تغيير كلمة السر فقط" autoComplete="current-password" />
+        </label>
+        <label>
+          <span>كلمة السر الجديدة</span>
+          <PasswordField name="newPassword" placeholder="اتركها فارغة إذا لا تريد التغيير" minLength="6" autoComplete="new-password" />
+        </label>
+        <label>
+          <span>تأكيد كلمة السر الجديدة</span>
+          <PasswordField name="confirmPassword" placeholder="تأكيد كلمة السر الجديدة" minLength="6" autoComplete="new-password" />
+        </label>
+        <button className="gold-button" type="submit" disabled={isSaving}>
+          {isSaving ? "جاري الحفظ..." : "حفظ التغييرات"}
+        </button>
+        {message && <p className="account-profile-message">{message}</p>}
+      </form>
+    </section>
+  );
+}
+
+function CoachSetup({ data, updateCoach }) {
+  const coach = data.coach || seedData.coach;
+  const [photoPreview, setPhotoPreview] = useState(coach.photo || "");
+  const [formError, setFormError] = useState("");
+  const updatePhotoPreview = (event) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      setPhotoPreview(URL.createObjectURL(file));
+      setFormError("");
+    }
+  };
+  const handleCoachSubmit = (event) => {
+    if (!photoPreview) {
+      event.preventDefault();
+      setFormError("أضف صورة المدرب قبل المتابعة.");
+      return;
+    }
+
+    updateCoach(event);
+  };
+
+  return (
+    <section className="setup-screen coach-setup-screen">
+      <header className="setup-header light">
+        <span>إعداد بيانات المدرب</span>
+        <span aria-hidden="true">?</span>
+      </header>
+
+      <div className="setup-intro">
+        <h1>أهلًا بك في منصة الأكاديمية الرياضية</h1>
+        <p>يرجى إدخال ملفك الشخصي كمدرب حتى تظهر بياناتك داخل صفحات الأكاديمية.</p>
+      </div>
+
+      <form className="setup-card coach-card" onSubmit={handleCoachSubmit}>
+        <div className="coach-photo">
+          {photoPreview ? <img src={photoPreview} alt="صورة المدرب" decoding="async" /> : <UserRound size={52} />}
+          <span><Camera size={14} /></span>
+        </div>
+        <ImageSourceControls name="coachPhoto" onChange={updatePhotoPreview} />
+        <strong className="coach-name">{coach.name}</strong>
+        {formError && <p className="setup-error">{formError}</p>}
+
+        <label>
+          <span>اسم المدرب *</span>
+          <input name="coachName" defaultValue={coach.name} placeholder="أدخل اسم المدرب" required />
+        </label>
+
+        <label>
+          <span>تاريخ الميلاد *</span>
+          <div className="field-with-icon">
+            <CalendarCheck size={17} />
+            <input name="birthDate" defaultValue={coach.birthDate} type="date" required />
+          </div>
+        </label>
+
+        <label>
+          <span>رقم الهاتف *</span>
+          <div className="field-with-icon">
+            <LockKeyhole size={17} />
+            <input name="phone" defaultValue={coach.phone} inputMode="tel" placeholder="+967 770 000 000" required />
+          </div>
+        </label>
+
+        <label>
+          <span>الجنسية *</span>
+          <select name="nationality" defaultValue={coach.nationality} required>
+            <option>اليمن - الريال اليمني</option>
+            <option>السعودية - الريال السعودي</option>
+            <option>الإمارات - الدرهم</option>
+            <option>عُمان - الريال العماني</option>
+          </select>
+        </label>
+
+        <label>
+          <span>نبذة مختصرة *</span>
+          <textarea name="bio" defaultValue={coach.bio} placeholder="اكتب نبذة قصيرة عن خبرتك التدريبية..." required />
+        </label>
+
+        <div className="setup-note">
+          <CheckCircle2 size={18} />
+          <p>لن يتم مشاركة بياناتك الشخصية إلا داخل مساحة الأكاديمية.</p>
+        </div>
+
+        <button className="gold-button" type="submit">حفظ ومتابعة</button>
+      </form>
+
+      <section className="setup-help">
+        <BadgeCheck size={18} />
+        <div>
+          <strong>هل تحتاج مساعدة؟</strong>
+          <p>يمكنك تعديل بيانات المدرب لاحقًا من صفحة الإعدادات.</p>
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function CoachesSettings({ data, addAcademyCoach, toggleAcademyCoachStatus }) {
+  const [message, setMessage] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const storedCoaches = data.coaches || [];
+  const storedPrimary = storedCoaches.find((coach) => coach.id === "coach-primary");
+  const hasPrimaryCoach = Boolean(storedPrimary || data.coach?.name || data.coach?.phone);
+  const primaryCoach = {
+    ...storedPrimary,
+    id: "coach-primary",
+    name: data.coach?.name || storedPrimary?.name || "المدرب الرئيسي",
+    phone: normalizePhone(data.coach?.phone || storedPrimary?.phone || ""),
+    role: storedPrimary?.role || "مدرب رئيسي",
+    permissions: storedPrimary?.permissions || "إدارة كاملة",
+    status: storedPrimary?.status || "نشط",
+    joinedAt: storedPrimary?.joinedAt || today,
+  };
+  const coaches = [
+    ...(hasPrimaryCoach ? [primaryCoach] : []),
+    ...storedCoaches.filter((coach) => coach.id !== "coach-primary"),
+  ];
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    setMessage("");
+    setIsSaving(true);
+
+    const form = new FormData(event.currentTarget);
+    const result = await addAcademyCoach({
+      name: String(form.get("coachName") || "").trim(),
+      phone: form.get("phone"),
+      role: form.get("role"),
+      permissions: form.get("permissions"),
+      password: String(form.get("password") || ""),
+    });
+
+    setMessage(result.message);
+    setIsSaving(false);
+
+    if (result.ok) {
+      event.currentTarget.reset();
+    }
+  };
+
+  return (
+    <section className="setup-screen coaches-setup-screen">
+      <header className="setup-header dark">
+        <span>إدارة المدربين</span>
+        <span aria-hidden="true">?</span>
+      </header>
+
+      <form className="setup-card coach-link-card" onSubmit={handleSubmit}>
+        <section className="age-hero-card">
+          <span>ربط آمن</span>
+          <h2>إضافة مدرب لنفس الأكاديمية</h2>
+          <p>أضف رقم الهاتف وكلمة سر مؤقتة، ثم يدخل المدرب إلى نفس مساحة {data.academy.name} حسب الصلاحية المحددة له.</p>
+        </section>
+
+        <label>
+          <span>اسم المدرب *</span>
+          <input name="coachName" placeholder="اكتب اسم المدرب" required />
+        </label>
+
+        <label>
+          <span>رقم الهاتف *</span>
+          <div className="field-with-icon">
+            <LockKeyhole size={17} />
+            <input name="phone" inputMode="tel" placeholder="+967 7xx xxx xxx" required />
+          </div>
+        </label>
+
+        <label>
+          <span>الدور *</span>
+          <select name="role" defaultValue="مدرب" required>
+            <option>مدرب</option>
+            <option>مساعد مدرب</option>
+            <option>إداري فريق</option>
+            <option>مدرب رئيسي</option>
+          </select>
+        </label>
+
+        <label>
+          <span>الصلاحية *</span>
+          <select name="permissions" defaultValue="الحضور واللاعبين" required>
+            <option>إدارة كاملة</option>
+            <option>الحضور واللاعبين</option>
+            <option>متابعة فريق محدد</option>
+            <option>قراءة فقط</option>
+          </select>
+        </label>
+
+        <label>
+          <span>كلمة سر مؤقتة *</span>
+          <div className="field-with-icon">
+            <KeyRound size={17} />
+            <PasswordField name="password" minLength="6" placeholder="6 أحرف أو أرقام على الأقل" autoComplete="new-password" required />
+          </div>
+        </label>
+
+        {message && <p className={message.startsWith("تم") ? "setup-success" : "setup-error"}>{message}</p>}
+
+        <button className="gold-button" type="submit" disabled={isSaving}>
+          {isSaving ? "جاري الربط..." : "ربط المدرب بالأكاديمية"}
+        </button>
+      </form>
+
+      <section className="coach-roster-list">
+        <div className="coach-roster-head">
+          <Users size={18} />
+          <h2>المدربون المرتبطون</h2>
+        </div>
+
+        {coaches.map((coach) => {
+          const isPrimary = coach.id === "coach-primary";
+          const isDisabled = coach.status === "معطل";
+          const coachAvatar = coach.photo || (isPrimary ? data.coach?.photo : "") || data.academy.logo || "";
+
+          return (
+            <article key={coach.id} className={isDisabled ? "coach-roster-card disabled" : "coach-roster-card"}>
+              <div className="coach-roster-avatar">
+                {coachAvatar ? <img src={coachAvatar} alt={coach.name} loading="lazy" decoding="async" /> : <UserRound size={22} />}
+              </div>
+              <div className="coach-roster-info">
+                <strong>{coach.name}</strong>
+                <span>{coach.phone || "لم يحدد رقم الهاتف"}</span>
+                <small>{coach.role} - {coach.permissions}</small>
+              </div>
+              <div className="coach-roster-actions">
+                <span className={isDisabled ? "coach-status-chip muted" : "coach-status-chip"}>
+                  {coach.status}
+                </span>
+                {isPrimary ? (
+                  <span className="coach-status-chip primary">رئيسي</span>
+                ) : (
+                  <button type="button" onClick={() => toggleAcademyCoachStatus(coach.id)}>
+                    {isDisabled ? "تفعيل" : "تعطيل"}
+                  </button>
+                )}
+              </div>
+            </article>
+          );
+        })}
+        {coaches.length === 0 && (
+          <div className="coach-roster-empty">
+            لا يوجد مدربون مرتبطون بعد. أضف أول مدرب حقيقي من النموذج أعلاه.
+          </div>
+        )}
+      </section>
+    </section>
+  );
+}
+
+function AcademySettings({ data, updateAcademy }) {
+  const [logoPreview, setLogoPreview] = useState(data.academy.logo || "");
+  const [locationText, setLocationText] = useState(data.academy.location || "");
+  const [gpsLocation, setGpsLocation] = useState(data.academy.gpsLocation || "");
+  const [gpsMessage, setGpsMessage] = useState("");
+  const [formError, setFormError] = useState("");
+
+  const updateLogoPreview = (event) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      setLogoPreview(URL.createObjectURL(file));
+      setFormError("");
+    }
+  };
+
+  const requestGpsLocation = () => {
+    if (!navigator.geolocation) {
+      setGpsMessage("خدمة GPS غير مدعومة في هذا الجهاز.");
+      return;
+    }
+
+    setGpsMessage("جاري تحديد الموقع...");
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const nextLocation = `${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)}`;
+        setGpsLocation(nextLocation);
+        setLocationText(`GPS: ${nextLocation}`);
+        setGpsMessage("تم تحديد موقع الأكاديمية بنجاح.");
+        setFormError("");
+      },
+      () => {
+        setGpsMessage("تعذر تحديد الموقع. تأكد من السماح للمتصفح باستخدام GPS.");
+      },
+      { enableHighAccuracy: true, timeout: 12000 },
+    );
+  };
+  const handleAcademySubmit = (event) => {
+    if (!logoPreview) {
+      event.preventDefault();
+      setFormError("أضف شعار الأكاديمية قبل المتابعة.");
+      return;
+    }
+
+    if (!gpsLocation) {
+      event.preventDefault();
+      setFormError("حدد موقع الأكاديمية عبر GPS قبل المتابعة.");
+      return;
+    }
+
+    updateAcademy(event);
+  };
+
+  return (
+    <section className="setup-screen academy-setup-screen">
+      <header className="setup-header dark">
+        <span>إعداد بيانات الأكاديمية</span>
+        <span aria-hidden="true">?</span>
+      </header>
+
+      <form className="setup-card academy-card" onSubmit={handleAcademySubmit}>
+        <div className="logo-uploader">
+          {logoPreview ? <img src={logoPreview} alt="شعار الأكاديمية" decoding="async" /> : <Camera size={28} />}
+          <span aria-label="تأكيد الشعار"><CheckCircle2 size={15} /></span>
+        </div>
+        <ImageSourceControls name="academyLogo" onChange={updateLogoPreview} />
+        <p className="upload-caption">رفع شعار الأكاديمية</p>
+        {formError && <p className="setup-error">{formError}</p>}
+
+        <label>
+          <span>اسم الأكاديمية *</span>
+          <input name="name" defaultValue={data.academy.name} placeholder="اكتب اسم الأكاديمية" required />
+        </label>
+
+        <label>
+          <span>اسم الأكاديمية بالإنجليزية</span>
+          <input name="nameEn" dir="ltr" defaultValue={data.academy.nameEn} placeholder="Academy official English name" />
+        </label>
+
+        <label>
+          <span>اسم المدرب *</span>
+          <input name="coachName" defaultValue={data.coach?.name || data.academy.field} placeholder="اكتب اسم المدرب" required />
+        </label>
+
+        <label>
+          <span>الموقع (اختياري)</span>
+          <textarea
+            name="location"
+            value={locationText}
+            onChange={(event) => setLocationText(event.target.value)}
+            placeholder="أدخل تفاصيل العنوان، الشارع، والمنطقة..."
+          />
+        </label>
+        <input name="gpsLocation" type="hidden" value={gpsLocation} />
+
+        <div className="gps-row">
+          <MapPin size={19} />
+          <strong>تحديد الموقع عبر GPS</strong>
+          <button type="button" onClick={requestGpsLocation}>اختيار</button>
+        </div>
+        {gpsMessage && <p className="gps-message">{gpsMessage}</p>}
+
+        <div className="location-preview">
+          <MapPin size={42} />
+          <span>موقع الأكاديمية</span>
+        </div>
+
+        <button className="yellow-button" type="submit">
+          <CheckCircle2 size={18} />
+          إتمام الإعداد
+        </button>
+        <small className="setup-footnote">يمكنك تعديل هذه البيانات لاحقًا من قسم الإعدادات.</small>
+      </form>
+    </section>
+  );
+}
+
+function AgeGroups({ data, addAgeGroup, updateAgeGroup, removeAgeGroup, finishOnboarding, helpers, isFirstLogin }) {
+  const [formError, setFormError] = useState("");
+  const [editingGroup, setEditingGroup] = useState(null);
+  const [formKey, setFormKey] = useState(0);
+  const activePresetKey =
+    editingGroup?.presetKey || ageGroupPresets.find((preset) => preset.name === editingGroup?.name)?.key || ageGroupPresets[0].key;
+  const activeDays = editingGroup
+    ? trainingDayOptions.filter((day) => (editingGroup.days || "").includes(day))
+    : trainingDayOptions.filter((_, index) => index === 1 || index === 3);
+
+  const readAgeGroupForm = (form) => {
+    const preset = ageGroupPresets.find((item) => item.key === form.get("preset")) || ageGroupPresets[0];
+    const selectedDays = trainingDayOptions.filter((day) => form.getAll("days").includes(day));
+
+    return {
+      presetKey: preset.key,
+      name: preset.name,
+      from: Number(preset.from),
+      to: Number(preset.to),
+      years: preset.years,
+      days: selectedDays.join("، "),
+      timeFrom: form.get("timeFrom"),
+      timeTo: form.get("timeTo"),
+    };
+  };
+
+  const handleAgeGroupSubmit = (event) => {
+    const form = new FormData(event.currentTarget);
+    const submitAction = event.nativeEvent.submitter?.value || "finish";
+
+    if (!form.get("preset")) {
+      event.preventDefault();
+      setFormError("اختر الفئة العمرية قبل الحفظ.");
+      return;
+    }
+
+    if (form.getAll("days").length === 0) {
+      event.preventDefault();
+      setFormError("اختر يوم تدريب واحدًا على الأقل.");
+      return;
+    }
+
+    setFormError("");
+
+    if (editingGroup) {
+      event.preventDefault();
+      const updates = readAgeGroupForm(form);
+      updateAgeGroup(editingGroup.id, updates, { stay: true });
+      setEditingGroup(null);
+      setFormKey((value) => value + 1);
+      if (submitAction === "finish") {
+        finishOnboarding();
+      }
+      return;
+    }
+
+    const savedGroup = addAgeGroup(event);
+
+    if (submitAction === "addAnother" && savedGroup) {
+      setEditingGroup(null);
+      setFormKey((value) => value + 1);
+    }
+  };
+
+  const startEditingGroup = (group) => {
+    setEditingGroup(group);
+    setFormError("");
+    setFormKey((value) => value + 1);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const cancelEditing = () => {
+    setEditingGroup(null);
+    setFormError("");
+    setFormKey((value) => value + 1);
+  };
+
+  const deleteGroup = (group) => {
+    removeAgeGroup(group.id, { stay: true });
+    if (editingGroup?.id === group.id) {
+      cancelEditing();
+    }
+  };
+
+  return (
+    <section className="setup-screen age-setup-screen">
+      <header className="setup-header dark">
+        <span>إعداد الفئات العمرية</span>
+        <span aria-hidden="true">?</span>
+      </header>
+
+      <form className="setup-card age-card" key={formKey} onSubmit={handleAgeGroupSubmit}>
+        <section className="age-hero-card">
+          <span>{isFirstLogin ? "الخطوة 3" : "إدارة الفئات"}</span>
+          <h2>{editingGroup ? "تعديل الفئة العمرية" : "تخصيص الفئات العمرية"}</h2>
+          <p>اختر الفئة، ثم حدد أيام ومواعيد التدريب. كل الفئات المحفوظة تظهر أسفل الصفحة مباشرة.</p>
+        </section>
+
+        {editingGroup && (
+          <div className="age-form-state">
+            <strong>يتم تعديل: {editingGroup.name}</strong>
+            <button type="button" onClick={cancelEditing}>إلغاء</button>
+          </div>
+        )}
+
+        <div className="setup-section-title">
+          <Layers size={17} />
+          <strong>اختر الفئة</strong>
+        </div>
+
+        <div className="age-choice-grid">
+          {ageGroupPresets.map((preset) => (
+            <label className="age-choice" key={preset.key}>
+              <input name="preset" type="radio" value={preset.key} defaultChecked={preset.key === activePresetKey} />
+              <span>
+                <b>{preset.name}</b>
+                <small>{preset.years}</small>
+              </span>
+            </label>
+          ))}
+        </div>
+
+        <div className="setup-section-title">
+          <CalendarCheck size={17} />
+          <strong>تحديد أيام التدريب</strong>
+        </div>
+
+        <div className="day-choice-grid">
+          {trainingDayOptions.map((day) => (
+            <label className="day-choice" key={day}>
+              <input name="days" type="checkbox" value={day} defaultChecked={activeDays.includes(day)} />
+              <span>{day}</span>
+            </label>
+          ))}
+        </div>
+        {formError && <p className="setup-error">{formError}</p>}
+
+        <label>
+          <span>من الساعة</span>
+          <div className="field-with-icon">
+            <Clock size={17} />
+            <input name="timeFrom" type="time" defaultValue={editingGroup?.timeFrom || "16:00"} required />
+          </div>
+        </label>
+
+        <label>
+          <span>إلى الساعة</span>
+          <div className="field-with-icon">
+            <Clock size={17} />
+            <input name="timeTo" type="time" defaultValue={editingGroup?.timeTo || "18:00"} required />
+          </div>
+        </label>
+
+        <div className="training-preview">
+          <span>ملعب الأكاديمية</span>
+          <strong>{data.academy.location}</strong>
+        </div>
+
+        <button className="outline-gold-button" name="ageAction" value="addAnother" type="submit">
+          {editingGroup ? "حفظ التعديل والبقاء هنا" : "حفظ الفئة وإضافة فئة جديدة"}
+        </button>
+        <button className="gold-button" name="ageAction" value="finish" type="submit">
+          {editingGroup ? "حفظ التعديل والانتقال للرئيسية" : "حفظ الفئة والانتقال للرئيسية"}
+        </button>
+      </form>
+
+      <section className="saved-age-list">
+        <div className="saved-age-list-head">
+          <h2>الفئات المضافة</h2>
+          <span>{data.ageGroups.length} فئة</span>
+        </div>
+        {data.ageGroups.length === 0 && (
+          <p className="saved-age-empty">لم تتم إضافة أي فئة بعد. احفظ أول فئة لتظهر هنا.</p>
+        )}
+        {data.ageGroups.map((group) => {
+          const teams = data.teams.filter((team) => team.ageGroupId === group.id);
+          const players = data.players.filter((player) => helpers.teamById[player.teamId]?.ageGroupId === group.id);
+          return (
+            <article key={group.id}>
+              <div className="saved-age-main">
+                <div>
+                  <strong>{group.name}</strong>
+                  <span>{group.years || `${group.from} - ${group.to}`}</span>
+                </div>
+                <b>{teams.length} فرق / {players.length} لاعبين</b>
+              </div>
+              <div className="selected-age-meta compact">
+                <span><CalendarCheck size={15} /> {group.days || "لم يتم تحديد الأيام"}</span>
+                <span><Clock size={15} /> {group.timeFrom && group.timeTo ? `${group.timeFrom} - ${group.timeTo}` : "لم يتم تحديد الوقت"}</span>
+              </div>
+              <div className="age-manage-row">
+                <button className="mini-button" type="button" onClick={() => startEditingGroup(group)}>
+                  تعديل
+                </button>
+                <button className="mini-button reject" type="button" onClick={() => deleteGroup(group)}>
+                  حذف
+                </button>
+              </div>
+            </article>
+          );
+        })}
+      </section>
+    </section>
+  );
+}
+
+function Teams({ data, helpers, addTeam, setSelectedTeamId, setActiveView }) {
+  return (
+    <section className="view-grid">
+      <form className="panel form-panel" onSubmit={addTeam}>
+        <FormTitle icon={ShieldCheck} title="إنشاء فريق" />
+        <input name="name" placeholder="اسم الفريق" required />
+        <select name="ageGroupId" required>
+          {data.ageGroups.map((group) => (
+            <option key={group.id} value={group.id}>{group.name}</option>
+          ))}
+        </select>
+        <input name="coach" placeholder="المدرب المسؤول" required />
+        <button className="primary-button" type="submit">
+          <Plus size={18} />
+          إنشاء الفريق
+        </button>
+      </form>
+      <section className="team-grid">
+        {data.teams.map((team) => {
+          const teamPlayers = data.players.filter((player) => player.teamId === team.id);
+          return (
+            <article className="team-card" key={team.id}>
+              <div className="team-card-head">
+                <h2>{team.name}</h2>
+                <BadgeCheck size={22} />
+              </div>
+              <p>{helpers.groupById[team.ageGroupId]?.name} - {team.coach}</p>
+              <div className="team-stats">
+                <span>{teamPlayers.length} لاعب</span>
+                <span>{team.wins} فوز</span>
+                <span>{team.losses} خسارة</span>
+              </div>
+              <button className="ghost-button" onClick={() => { setSelectedTeamId(team.id); setActiveView("teamProfile"); }}>
+                فتح ملف الفريق
+              </button>
+            </article>
+          );
+        })}
+      </section>
+    </section>
+  );
+}
+
+function TeamProfile({ data, helpers, selectedTeamId, setSelectedTeamId }) {
+  const team = helpers.teamById[selectedTeamId] || data.teams[0];
+  const players = data.players.filter((player) => player.teamId === team?.id);
+  if (!team) {
+    return (
+      <EmptyState
+        icon={Trophy}
+        title="لا توجد فرق بعد"
+        text="أضف الفئات العمرية ثم أنشئ أول فريق لتظهر بيانات ملف الفريق هنا."
+      />
+    );
+  }
+
+  const winRate = Math.round((team.wins / Math.max(team.wins + team.losses + team.draws, 1)) * 100);
+
+  return (
+    <section className="view-stack">
+      <select className="compact-select" value={team?.id} onChange={(event) => setSelectedTeamId(event.target.value)}>
+        {data.teams.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+      </select>
+      <div className="metric-grid">
+        <Metric title="اللاعبون" value={players.length} icon={Users} tone="blue" />
+        <Metric title="نسبة الفوز" value={`${winRate}%`} icon={Trophy} tone="green" />
+        <Metric title="الأهداف المسجلة" value={team.goalsFor} icon={Activity} tone="amber" />
+        <Metric title="الأهداف المستقبلة" value={team.goalsAgainst} icon={ShieldCheck} tone="red" />
+      </div>
+      <section className="panel table-panel">
+        <PanelHead title={team.name} text={`${helpers.groupById[team.ageGroupId]?.name} - ${team.coach}`} icon={ShieldCheck} />
+        <SimpleTable
+          headers={["اللاعب", "المركز", "القميص", "التقييم", "XP"]}
+          rows={players.map((player) => [player.name, player.position, player.jersey, `${player.rating}%`, player.xp])}
+        />
+      </section>
+    </section>
+  );
+}
+
+function Players({ data, helpers, addPlayer, togglePlayerStatus, setSelectedPlayerId, setActiveView }) {
+  const [isAddingPlayer, setIsAddingPlayer] = useState(false);
+  const [playerSearch, setPlayerSearch] = useState("");
+  const [activeGroupFilter, setActiveGroupFilter] = useState("all");
+  const [playerPhotoPreview, setPlayerPhotoPreview] = useState("");
+  const [birthDateValue, setBirthDateValue] = useState("");
+  const [subscriptionChoice, setSubscriptionChoice] = useState("اشتراك شهري");
+  const [monthlyFeeValue, setMonthlyFeeValue] = useState("");
+  const groupFilters = data.ageGroups.length ? data.ageGroups : ageGroupPresets;
+  const selectedBirthYear = birthDateValue ? new Date(`${birthDateValue}T00:00:00`).getFullYear() : null;
+  const selectedAgeGroupPreset = ageGroupPresetFromBirthDate(birthDateValue);
+  const exactAgeText = exactAgeFromDate(birthDateValue);
+  const teamsForSelectedGroup = selectedAgeGroupPreset
+    ? data.teams.filter((team) => {
+        const group = helpers.groupById[team.ageGroupId];
+        const groupFrom = Number(group?.from);
+        const groupTo = Number(group?.to || group?.from);
+        const matchesSavedRange =
+          Number.isFinite(selectedBirthYear) &&
+          Number.isFinite(groupFrom) &&
+          Number.isFinite(groupTo) &&
+          selectedBirthYear >= groupFrom &&
+          selectedBirthYear <= groupTo;
+
+        return group?.presetKey === selectedAgeGroupPreset.key || group?.name === selectedAgeGroupPreset.name || matchesSavedRange;
+      })
+    : [];
+  const expectedRevenue = data.players.reduce((sum, player) => sum + Number(player.monthlyFee || 0), 0);
+  const paidRevenue = data.payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  const activePlayersCount = data.players.filter((player) => player.status !== "منقطع").length;
+  const stoppedPlayersCount = data.players.length - activePlayersCount;
+  const visiblePlayers = data.players.filter((player) => {
+    const team = helpers.teamById[player.teamId];
+    const group = helpers.groupById[team?.ageGroupId];
+    const searchTarget = `${player.name} ${player.position} ${player.guardianPhone} ${team?.name || ""} ${group?.name || ""}`.toLowerCase();
+    const matchesSearch = searchTarget.includes(playerSearch.toLowerCase());
+    const matchesGroup =
+      activeGroupFilter === "all" ||
+      team?.ageGroupId === activeGroupFilter ||
+      group?.presetKey === activeGroupFilter ||
+      group?.name === activeGroupFilter;
+
+    return matchesSearch && matchesGroup;
+  });
+  const updatePlayerPhotoPreview = (event) => {
+    const file = event.target.files?.[0];
+    setPlayerPhotoPreview(file ? URL.createObjectURL(file) : "");
+  };
+  const submitPlayer = async (event) => {
+    const submitAction = event.nativeEvent.submitter?.value || "save";
+    await addPlayer(event);
+    setPlayerPhotoPreview("");
+    setBirthDateValue("");
+    setSubscriptionChoice("اشتراك شهري");
+    setMonthlyFeeValue("");
+    setIsAddingPlayer(submitAction === "save-add");
+  };
+
+  return (
+    <section className="players-mobile-screen">
+      <header className="players-hero-card">
+        <div>
+          <span>إدارة اللاعبين</span>
+          <h1>قائمة لاعبي الأكاديمية</h1>
+          <p>{data.academy.name || "الأكاديمية"}</p>
+        </div>
+        <button type="button" onClick={() => setIsAddingPlayer((value) => !value)} aria-label="إضافة لاعب">
+          <Plus size={21} />
+        </button>
+      </header>
+
+      <div className="players-summary-grid">
+        <article>
+          <span>اللاعبين</span>
+          <strong>{data.players.length}</strong>
+          <small>مسجل</small>
+        </article>
+        <article>
+          <span>الفرق</span>
+          <strong>{activePlayersCount}</strong>
+          <small>نشط</small>
+        </article>
+        <article>
+          <span>منقطع</span>
+          <strong>{stoppedPlayersCount}</strong>
+          <small>موقوف</small>
+        </article>
+        <article>
+          <span>المدفوع</span>
+          <strong>{currency(paidRevenue)}</strong>
+          <small>من {currency(expectedRevenue)}</small>
+        </article>
+      </div>
+
+      <div className="players-toolbar">
+        <label className="players-search">
+          <Search size={16} />
+          <input value={playerSearch} onChange={(event) => setPlayerSearch(event.target.value)} placeholder="ابحث عن لاعب أو ولي أمر" />
+        </label>
+        <button type="button" className={isAddingPlayer ? "active" : ""} onClick={() => setIsAddingPlayer((value) => !value)}>
+          <Plus size={17} />
+        </button>
+      </div>
+
+      <div className="players-filter-row">
+        <button className={activeGroupFilter === "all" ? "active" : ""} type="button" onClick={() => setActiveGroupFilter("all")}>
+          الكل
+        </button>
+        {groupFilters.map((group) => (
+          <button
+            className={activeGroupFilter === (group.id || group.key) ? "active" : ""}
+            key={group.id || group.key}
+            type="button"
+            onClick={() => setActiveGroupFilter(group.id || group.key)}
+          >
+            {group.name}
+          </button>
+        ))}
+      </div>
+
+      {isAddingPlayer && (
+        <form className="player-add-card" onSubmit={submitPlayer}>
+          <div className="player-add-card-header">
+            <span>إضافة لاعب جديد</span>
+            <button type="button" onClick={() => setIsAddingPlayer(false)} aria-label="إغلاق النموذج">
+              ?
+            </button>
+          </div>
+
+          <div className="player-photo-uploader">
+            {playerPhotoPreview ? <img src={playerPhotoPreview} alt="صورة اللاعب" decoding="async" /> : <UserCircle size={54} />}
+            <span><Plus size={18} /></span>
+          </div>
+          <ImageSourceControls name="playerPhoto" onChange={updatePlayerPhotoPreview} />
+          <p className="player-photo-caption">صورة اللاعب</p>
+
+          <div className="player-form-section-title">
+            <Trophy size={17} />
+            <strong>المعلومات الأساسية والرياضية</strong>
+          </div>
+
+          <label>
+            <span>اسم اللاعب</span>
+            <input name="name" placeholder="أدخل اسم اللاعب" required />
+          </label>
+          <label>
+            <span>تاريخ الميلاد</span>
+            <div className="field-with-icon">
+              <CalendarCheck size={17} />
+              <input
+                name="birthDate"
+                type="date"
+                value={birthDateValue}
+                onChange={(event) => setBirthDateValue(event.target.value)}
+                required
+              />
+            </div>
+          </label>
+          {birthDateValue && (
+            <div className="player-age-result">
+              <Clock size={16} />
+              <span>العمر: <b>{exactAgeText || "تاريخ غير صحيح"}</b></span>
+            </div>
+          )}
+          {selectedAgeGroupPreset && (
+            <>
+              <input type="hidden" name="ageGroupPreset" value={selectedAgeGroupPreset.key} />
+              <div className="player-age-group-chip">
+                <span>الفئة المناسبة</span>
+                <strong>{selectedAgeGroupPreset.name}</strong>
+                <small>{selectedAgeGroupPreset.years}</small>
+              </div>
+            </>
+          )}
+          <div className="two-cols">
+            <label>
+              <span>المركز</span>
+              <input name="position" placeholder="اختر المركز" required />
+            </label>
+            <label>
+              <span>رقم القميص</span>
+              <input name="jersey" placeholder="مثال: 10" required />
+            </label>
+          </div>
+          <label>
+            <span>رقم ولي الأمر</span>
+            <input name="guardianPhone" inputMode="tel" placeholder="رقم ولي الأمر" required />
+          </label>
+          <label>
+            <span>الفريق</span>
+            <select name="teamId" required disabled={!selectedAgeGroupPreset || !teamsForSelectedGroup.length}>
+              <option value="">
+                {!birthDateValue
+                  ? "أدخل تاريخ الميلاد أولًا"
+                  : teamsForSelectedGroup.length
+                    ? `اختر فريق ${selectedAgeGroupPreset.name}`
+                    : `لا يوجد فريق لفئة ${selectedAgeGroupPreset?.name || "مناسبة"}`}
+              </option>
+              {teamsForSelectedGroup.map((team) => (
+                <option key={team.id} value={team.id}>{team.name}</option>
+              ))}
+            </select>
+          </label>
+          <div className="player-subscription-section">
+            <span>نوع الاشتراك</span>
+            <div className="player-subscription-cards" role="radiogroup" aria-label="نوع الاشتراك">
+              <label className={`player-subscription-card ${subscriptionChoice === "مجاني" ? "active" : ""}`}>
+                <input
+                  name="subscriptionType"
+                  type="radio"
+                  value="مجاني"
+                  checked={subscriptionChoice === "مجاني"}
+                  onChange={() => setSubscriptionChoice("مجاني")}
+                />
+                <Wallet size={18} />
+                <strong>مجاني</strong>
+                <small>بدون رسوم شهرية</small>
+              </label>
+              <label className={`player-subscription-card ${subscriptionChoice === "اشتراك شهري" ? "active" : ""}`}>
+                <input
+                  name="subscriptionType"
+                  type="radio"
+                  value="اشتراك شهري"
+                  checked={subscriptionChoice === "اشتراك شهري"}
+                  onChange={() => setSubscriptionChoice("اشتراك شهري")}
+                />
+                <CircleDollarSign size={18} />
+                <strong>اشتراك شهري</strong>
+                <small>تحديد مبلغ ثابت</small>
+              </label>
+            </div>
+          </div>
+          {subscriptionChoice === "مجاني" ? (
+            <input type="hidden" name="monthlyFee" value="0" />
+          ) : (
+            <label>
+              <span>قيمة الاشتراك الشهري</span>
+              <input
+                name="monthlyFee"
+                type="number"
+                min="0"
+                placeholder="قيمة الاشتراك"
+                value={monthlyFeeValue}
+                onChange={(event) => setMonthlyFeeValue(event.target.value)}
+                required
+              />
+            </label>
+          )}
+          <div className="player-save-actions">
+            <button className="outline-gold-button" type="submit" value="save-add" disabled={!teamsForSelectedGroup.length}>
+              حفظ مع إضافة لاعب
+            </button>
+            <button className="gold-button" type="submit" value="save" disabled={!teamsForSelectedGroup.length}>
+              حفظ اللاعب
+            </button>
+          </div>
+        </form>
+      )}
+
+      <section className="players-card-list">
+        <div className="players-list-title">
+          <h2>اللاعبون</h2>
+          <span>{visiblePlayers.length}</span>
+        </div>
+
+        {visiblePlayers.length === 0 && (
+          <div className="players-empty-state">
+            لا يوجد لاعبون مطابقون. أضف لاعبًا جديدًا أو غيّر الفلتر.
+          </div>
+        )}
+
+        {visiblePlayers.map((player) => {
+          const team = helpers.teamById[player.teamId];
+          const group = helpers.groupById[team?.ageGroupId];
+          const playerAgeText = player.ageText || exactAgeFromDate(player.birthDate) || `${ageFromDate(player.birthDate)} سنة`;
+          const isStopped = player.status === "منقطع";
+          return (
+            <button
+              className={isStopped ? "player-mobile-card stopped" : "player-mobile-card"}
+              key={player.id}
+              type="button"
+              onClick={() => {
+                setSelectedPlayerId(player.id);
+                setActiveView("playerProfile");
+              }}
+            >
+              <div className="player-card-avatar">
+                {player.photo ? <img src={player.photo} alt={player.name} loading="lazy" decoding="async" /> : player.name.slice(0, 1)}
+                <span />
+              </div>
+              <div className="player-card-info">
+                <strong>
+                  {player.name}
+                  {isStopped && <em>منقطع</em>}
+                </strong>
+                <span>{team?.name || "بدون فريق"} {group?.name ? `• ${group.name}` : ""}</span>
+                <small>{player.position} #{player.jersey} - {playerAgeText}</small>
+              </div>
+              <div className="player-card-meta">
+                <b>{currency(player.monthlyFee)}</b>
+                <small>{player.subscriptionType}</small>
+                <span
+                  className={isStopped ? "player-status-toggle active" : "player-status-toggle"}
+                  role="button"
+                  tabIndex={0}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    togglePlayerStatus(player.id);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      togglePlayerStatus(player.id);
+                    }
+                  }}
+                >
+                  {isStopped ? "تفعيل" : "إيقاف"}
+                </span>
+              </div>
+            </button>
+          );
+        })}
+      </section>
+    </section>
+  );
+}
+
+function PlayerProfile({ data, helpers, selectedPlayerId, setSelectedPlayerId }) {
+  const player = helpers.playerById[selectedPlayerId] || data.players[0];
+  const attendance = data.attendance.filter((row) => row.playerId === player?.id);
+  const payments = data.payments.filter((row) => row.playerId === player?.id);
+  const paid = payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  const playerAgeText = player?.ageText || exactAgeFromDate(player?.birthDate) || ageFromDate(player?.birthDate);
+  if (!player) {
+    return (
+      <EmptyState
+        icon={UserCircle}
+        title="لا يوجد لاعبون بعد"
+        text="بعد إضافة أول لاعب ستظهر هنا بيانات الملف، التقييم، الحضور، والمدفوعات."
+      />
+    );
+  }
+
+  return (
+    <section className="view-stack">
+      <select className="compact-select" value={player?.id} onChange={(event) => setSelectedPlayerId(event.target.value)}>
+        {data.players.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+      </select>
+      <div className="profile-header player-profile-hero">
+        <div className="avatar-large">
+          {player.photo ? <img src={player.photo} alt={player.name} loading="lazy" decoding="async" /> : player.name.slice(0, 1)}
+        </div>
+        <div>
+          <h2>{player.name}</h2>
+          <p>{helpers.teamById[player.teamId]?.name || "بدون فريق"} - {player.position} #{player.jersey}</p>
+          <span>{player.guardianPhone}</span>
+        </div>
+      </div>
+      <div className="metric-grid">
+        <Metric title="العمر" value={playerAgeText} icon={UserRound} tone="blue" />
+        <Metric title="التقييم العام" value={`${player.rating}%`} icon={Star} tone="green" />
+        <Metric title="المستوى" value={player.level} icon={Medal} tone="amber" />
+        <Metric title="المدفوع" value={currency(paid)} icon={CircleDollarSign} tone="red" />
+      </div>
+      <div className="split-layout">
+        <section className="panel">
+          <PanelHead title="التقييم الفني" text="مهارة، لياقة، والتزام." icon={ClipboardCheck} />
+          <Score label="المهارة" value={player.skill} />
+          <Score label="اللياقة" value={player.fitness} />
+          <Score label="الالتزام" value={player.commitment} />
+        </section>
+        <section className="panel">
+          <PanelHead title="الإنجازات" text="الأوسمة التي حصل عليها اللاعب." icon={Medal} />
+          <div className="roadmap">
+            {player.badges.map((badge) => <span key={badge}>{badge}</span>)}
+            {player.badges.length === 0 && <span>لا توجد أوسمة بعد</span>}
+          </div>
+        </section>
+      </div>
+      <section className="panel table-panel">
+        <PanelHead title="سجل النشاط" text="آخر حضور ومدفوعات لهذا اللاعب." icon={ClipboardList} />
+        <SimpleTable
+          headers={["النوع", "التاريخ", "الحالة", "ملاحظة"]}
+          rows={[
+            ...attendance.map((row) => ["حضور", row.date, row.status, row.note || "-"]),
+            ...payments.map((row) => ["دفعة", row.date, currency(row.amount), row.note || row.status]),
+          ]}
+        />
+      </section>
+    </section>
+  );
+}
+
+function Attendance({ data, helpers, recordAttendance, addPayment }) {
+  const groupOptions = data.ageGroups;
+  const [attendanceDate, setAttendanceDate] = useState(today);
+  const [selectedGroupId, setSelectedGroupId] = useState(groupOptions[0]?.id || "");
+  const [activePaymentPlayerId, setActivePaymentPlayerId] = useState("");
+  const [paymentDrafts, setPaymentDrafts] = useState({});
+
+  useEffect(() => {
+    if (!groupOptions.length) {
+      setSelectedGroupId("");
+      return;
+    }
+
+    if (!groupOptions.some((group) => group.id === selectedGroupId)) {
+      setSelectedGroupId(groupOptions[0].id);
+    }
+  }, [groupOptions, selectedGroupId]);
+
+  const attendanceRows = Object.fromEntries(
+    data.attendance
+      .filter((row) => row.date === attendanceDate && (row.source === "attendance" || !row.source))
+      .map((row) => [row.playerId, row]),
+  );
+  const attendancePayments = Object.fromEntries(
+    data.payments
+      .filter((payment) => payment.date === attendanceDate && payment.source === "attendance")
+      .map((payment) => [payment.playerId, payment]),
+  );
+  const selectedGroup = helpers.groupById[selectedGroupId];
+  const selectedDateDay = weekdayFromDate(attendanceDate);
+  const selectedTrainingDays = trainingDaysForGroup(selectedGroup);
+  const hasTrainingDays = selectedTrainingDays.length > 0;
+  const isScheduledTrainingDay = Boolean(selectedGroup && hasTrainingDays && selectedTrainingDays.includes(selectedDateDay));
+  const groupPlayers = data.players.filter(
+    (player) => player.status !== "منقطع" && helpers.teamById[player.teamId]?.ageGroupId === selectedGroupId,
+  );
+  const countablePlayers = isScheduledTrainingDay ? groupPlayers : [];
+  const presentCount = countablePlayers.filter((player) => attendanceRows[player.id]?.status === "حاضر").length;
+  const lateCount = countablePlayers.filter((player) => attendanceRows[player.id]?.status === "متأخر").length;
+  const absentCount = countablePlayers.filter((player) => attendanceRows[player.id]?.status === "غائب").length;
+
+  const updatePlayerStatus = (player, status) => {
+    if (!isScheduledTrainingDay) return;
+    recordAttendance(player.id, status, attendanceDate);
+
+    if (status === "غائب") {
+      setActivePaymentPlayerId((current) => (current === player.id ? "" : current));
+      return;
+    }
+
+    setActivePaymentPlayerId(player.id);
+    setPaymentDrafts((prev) => ({
+      ...prev,
+      [player.id]: prev[player.id] ?? String(player.monthlyFee || ""),
+    }));
+  };
+
+  const saveAttendancePayment = (event, player) => {
+    event.preventDefault();
+    if (!isScheduledTrainingDay) return;
+    const amount = Number(paymentDrafts[player.id] || 0);
+    if (amount <= 0) return;
+
+    addPayment({
+      playerId: player.id,
+      amount,
+      date: attendanceDate,
+      method: "نقدًا",
+      status: "مدفوع",
+      source: "attendance",
+      note: `دفعة ${attendanceRows[player.id]?.status || "حضور"} من صفحة التحضير`,
+    });
+    setActivePaymentPlayerId("");
+  };
+
+  return (
+    <section className="attendance-mobile-screen">
+      <header className="attendance-hero">
+        <div>
+          <span>تحضير اللاعبين</span>
+          <h1>سجل الحضور اليومي</h1>
+          <p>{data.academy.name || "الأكاديمية الرياضية"}</p>
+        </div>
+        <CalendarCheck size={30} />
+      </header>
+
+      <section className="attendance-date-panel">
+        <div>
+          <Clock size={17} />
+          <span>{readableDate(attendanceDate)}</span>
+        </div>
+        <input type="date" value={attendanceDate} onChange={(event) => setAttendanceDate(event.target.value)} />
+      </section>
+
+      <section className="attendance-group-panel">
+        <div className="attendance-section-title">
+          <Layers size={17} />
+          <span>اختر فئة واحدة</span>
+        </div>
+        {groupOptions.length ? (
+          <div className="attendance-group-scroll" role="radiogroup" aria-label="فئة التحضير">
+            {groupOptions.map((group) => (
+              <button
+                key={group.id}
+                className={selectedGroupId === group.id ? "active" : ""}
+                type="button"
+                onClick={() => setSelectedGroupId(group.id)}
+              >
+                <strong>{group.name}</strong>
+                <small>{trainingDaysForGroup(group).join("، ") || group.years}</small>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="attendance-empty">أضف الفئات العمرية أولًا حتى تظهر صفحة التحضير.</div>
+        )}
+      </section>
+
+      {selectedGroup && (
+        <section className={`attendance-schedule-note ${isScheduledTrainingDay ? "valid" : "blocked"}`}>
+          <CalendarCheck size={18} />
+          <div>
+            <strong>
+              {isScheduledTrainingDay
+                ? `اليوم محسوب في تحضير ${selectedGroup.name}`
+                : `اليوم غير مجدول لفئة ${selectedGroup.name}`}
+            </strong>
+            <span>
+              {hasTrainingDays
+                ? `أيام التدريب: ${selectedTrainingDays.join("، ")} - اليوم المختار: ${selectedDateDay}`
+                : "لم يتم تحديد أيام تدريب لهذه الفئة"}
+            </span>
+          </div>
+        </section>
+      )}
+
+      <div className="attendance-summary-row">
+        <article>
+          <span>حاضر</span>
+          <strong>{presentCount}</strong>
+        </article>
+        <article>
+          <span>متأخر</span>
+          <strong>{lateCount}</strong>
+        </article>
+        <article>
+          <span>غائب</span>
+          <strong>{absentCount}</strong>
+        </article>
+      </div>
+
+      <section className="attendance-player-list">
+        <div className="attendance-list-head">
+          <div>
+            <h2>{selectedGroup?.name || "الفئة"}</h2>
+            <p>{isScheduledTrainingDay ? `${groupPlayers.length} لاعب في التحضير` : "التحضير مغلق لهذا اليوم"}</p>
+          </div>
+          <BadgeCheck size={21} />
+        </div>
+
+        {!isScheduledTrainingDay && selectedGroup && (
+          <div className="attendance-empty">اختر تاريخًا يوافق أحد أيام تدريب هذه الفئة حتى يتم احتساب التحضير.</div>
+        )}
+
+        {isScheduledTrainingDay && groupPlayers.length === 0 && (
+          <div className="attendance-empty">لا يوجد لاعبون في هذه الفئة بعد.</div>
+        )}
+
+        {groupPlayers.map((player) => {
+          const team = helpers.teamById[player.teamId];
+          const currentStatus = isScheduledTrainingDay ? attendanceRows[player.id]?.status || "" : "";
+          const payment = isScheduledTrainingDay ? attendancePayments[player.id] : null;
+          const canReceivePayment = currentStatus === "حاضر" || currentStatus === "متأخر";
+          const isPaymentOpen = activePaymentPlayerId === player.id && canReceivePayment;
+          const statusTone =
+            currentStatus === "حاضر" ? "present" : currentStatus === "متأخر" ? "late" : currentStatus === "غائب" ? "absent" : "";
+
+          return (
+            <article className={`attendance-player-card ${currentStatus ? "marked" : ""}`} key={player.id}>
+              <div className="attendance-player-head">
+                <div className="attendance-player-avatar">
+                  {player.photo ? <img src={player.photo} alt={player.name} loading="lazy" decoding="async" /> : player.name.slice(0, 1)}
+                </div>
+                <div>
+                  <strong>{player.name}</strong>
+                  <span>{team?.name || "بدون فريق"} - {player.position || "لاعب"}</span>
+                </div>
+                {currentStatus && <b className={`attendance-status-dot ${statusTone}`}>{currentStatus}</b>}
+              </div>
+
+              <div className="attendance-status-actions" aria-label={`تحضير ${player.name}`}>
+                {["حاضر", "متأخر", "غائب"].map((status) => (
+                  <button
+                    key={status}
+                    className={currentStatus === status ? "active" : ""}
+                    type="button"
+                    disabled={!isScheduledTrainingDay}
+                    onClick={() => updatePlayerStatus(player, status)}
+                  >
+                    {status}
+                  </button>
+                ))}
+              </div>
+
+              {canReceivePayment && (
+                <form className="attendance-payment-inline" onSubmit={(event) => saveAttendancePayment(event, player)}>
+                  <CircleDollarSign size={17} />
+                  <input
+                    inputMode="numeric"
+                    min="0"
+                    placeholder="المبلغ المالي"
+                    type="number"
+                    value={paymentDrafts[player.id] ?? ""}
+                    onChange={(event) =>
+                      setPaymentDrafts((prev) => ({ ...prev, [player.id]: event.target.value }))
+                    }
+                    disabled={!isPaymentOpen && Boolean(payment)}
+                  />
+                  <button type="submit" disabled={!isPaymentOpen && Boolean(payment)}>
+                    {payment && !isPaymentOpen ? "تم الحفظ" : payment ? "تحديث" : "حفظ"}
+                  </button>
+                  {payment && <small>{currency(payment.amount)}</small>}
+                </form>
+              )}
+            </article>
+          );
+        })}
+      </section>
+    </section>
+  );
+}
+
+function Reports({ data, helpers, addPayment }) {
+  const currentMonth = today.slice(0, 7);
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
+  const [selectedGroupId, setSelectedGroupId] = useState("all");
+  const [activeReportTab, setActiveReportTab] = useState("overview");
+  const [reportNotice, setReportNotice] = useState("");
+  const monthOptions = Array.from(
+    new Set([currentMonth, ...data.payments.map((payment) => String(payment.date || "").slice(0, 7)).filter(Boolean)]),
+  ).sort((a, b) => b.localeCompare(a));
+  const isAllMonths = selectedMonth === "all";
+  const filteredPlayers = data.players.filter((player) => {
+    if (selectedGroupId === "all") return true;
+    const team = helpers.teamById[player.teamId];
+    return team?.ageGroupId === selectedGroupId;
+  });
+  const filteredPlayerIds = new Set(filteredPlayers.map((player) => player.id));
+  const filteredPayments = data.payments.filter((payment) => {
+    const paymentMonth = String(payment.date || "").slice(0, 7);
+    return filteredPlayerIds.has(payment.playerId) && (isAllMonths || paymentMonth === selectedMonth);
+  });
+  const filteredAttendance = data.attendance.filter((row) => {
+    const rowMonth = String(row.date || "").slice(0, 7);
+    return filteredPlayerIds.has(row.playerId) && (isAllMonths || rowMonth === selectedMonth);
+  });
+  const collected = filteredPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  const expected = filteredPlayers.reduce((sum, player) => sum + Number(player.monthlyFee || 0), 0);
+  const remaining = Math.max(expected - collected, 0);
+  const collectionRate = Math.min(100, Math.round((collected / Math.max(expected, 1)) * 100));
+  const freePlayers = filteredPlayers.filter((player) => Number(player.monthlyFee || 0) === 0 || player.subscriptionType === "مجاني").length;
+  const monthlyPlayers = filteredPlayers.length - freePlayers;
+  const attendanceRate = Math.round(
+    (filteredAttendance.filter((row) => row.status === "حاضر").length / Math.max(filteredAttendance.length, 1)) * 100,
+  );
+  const paidByPlayer = filteredPayments.reduce((map, payment) => {
+    map[payment.playerId] = (map[payment.playerId] || 0) + Number(payment.amount || 0);
+    return map;
+  }, {});
+  const playerFinanceRows = filteredPlayers
+    .map((player) => {
+      const paid = paidByPlayer[player.id] || 0;
+      const due = Number(player.monthlyFee || 0);
+      const playerRemaining = Math.max(due - paid, 0);
+      const status = due === 0 ? "مجاني" : playerRemaining === 0 ? "مدفوع" : paid > 0 ? "جزئي" : "متأخر";
+      return { ...player, paid, due, remaining: playerRemaining, status };
+    })
+    .sort((a, b) => b.remaining - a.remaining);
+  const statusSummary = [
+    { label: "مدفوع", value: playerFinanceRows.filter((row) => row.status === "مدفوع").length, color: "#157347" },
+    { label: "جزئي", value: playerFinanceRows.filter((row) => row.status === "جزئي").length, color: "#bd8b04" },
+    { label: "متأخر", value: playerFinanceRows.filter((row) => row.status === "متأخر").length, color: "#b94a48" },
+    { label: "مجاني", value: playerFinanceRows.filter((row) => row.status === "مجاني").length, color: "#17207c" },
+  ];
+  const monthSeries = Array.from({ length: 6 }, (_, index) => {
+    const date = new Date();
+    date.setMonth(date.getMonth() - (5 - index));
+    const key = date.toISOString().slice(0, 7);
+    const value = data.payments
+      .filter((payment) => filteredPlayerIds.has(payment.playerId) && String(payment.date || "").slice(0, 7) === key)
+      .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+    return { key, label: new Intl.DateTimeFormat("ar-YE", { month: "short" }).format(date), value };
+  });
+  const maxMonthValue = Math.max(...monthSeries.map((item) => item.value), 1);
+  const groupRevenue = data.ageGroups.map((group) => {
+    const playersInGroup = data.players.filter((player) => helpers.teamById[player.teamId]?.ageGroupId === group.id);
+    const playerIds = new Set(playersInGroup.map((player) => player.id));
+    const value = data.payments
+      .filter((payment) => playerIds.has(payment.playerId) && (isAllMonths || String(payment.date || "").slice(0, 7) === selectedMonth))
+      .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+    return { name: group.name, value };
+  }).filter((item) => item.value > 0);
+  const maxGroupRevenue = Math.max(...groupRevenue.map((item) => item.value), 1);
+  const paymentMethods = ["نقد", "نقدًا", "تحويل"];
+  const methodSummary = paymentMethods
+    .map((method) => ({
+      label: method === "نقدًا" ? "نقد من التحضير" : method,
+      value: filteredPayments
+        .filter((payment) => payment.method === method)
+        .reduce((sum, payment) => sum + Number(payment.amount || 0), 0),
+    }))
+    .filter((item) => item.value > 0);
+  const maxMethodValue = Math.max(...methodSummary.map((item) => item.value), 1);
+  const sourceSummary = [
+    {
+      label: "دفعات التحضير",
+      value: filteredPayments
+        .filter((payment) => payment.source === "attendance")
+        .reduce((sum, payment) => sum + Number(payment.amount || 0), 0),
+      color: "#157347",
+    },
+    {
+      label: "دفعات يدوية",
+      value: filteredPayments
+        .filter((payment) => payment.source !== "attendance")
+        .reduce((sum, payment) => sum + Number(payment.amount || 0), 0),
+      color: "#17207c",
+    },
+  ].filter((item) => item.value > 0);
+  const recentPayments = [...filteredPayments].sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 6);
+  const latePlayers = playerFinanceRows.filter((row) => row.status === "متأخر" || row.status === "جزئي").slice(0, 6);
+  const forecastDate = isAllMonths ? new Date() : new Date(`${selectedMonth}-01T00:00:00`);
+  const forecastToday = new Date();
+  const forecastDaysInMonth = new Date(forecastDate.getFullYear(), forecastDate.getMonth() + 1, 0).getDate();
+  const isSelectedCurrentMonth =
+    !isAllMonths &&
+    forecastDate.getFullYear() === forecastToday.getFullYear() &&
+    forecastDate.getMonth() === forecastToday.getMonth();
+  const elapsedDays = isAllMonths
+    ? Math.max(1, filteredPayments.length ? new Set(filteredPayments.map((payment) => payment.date)).size : 1)
+    : isSelectedCurrentMonth
+      ? forecastToday.getDate()
+      : forecastDaysInMonth;
+  const remainingDays = isAllMonths ? 0 : Math.max(forecastDaysInMonth - elapsedDays, 0);
+  const dailyAverage = Math.round(collected / Math.max(elapsedDays, 1));
+  const projectedCollection = isAllMonths ? collected : Math.min(expected, Math.round(dailyAverage * forecastDaysInMonth));
+  const neededDailyCollection = remainingDays > 0 ? Math.ceil(remaining / remainingDays) : remaining;
+  const reportTabs = [
+    { id: "overview", label: "الملخص" },
+    { id: "players", label: "كشف اللاعبين" },
+    { id: "debts", label: "المتأخرات" },
+    { id: "payments", label: "الدفعات" },
+  ];
+  const largestDebt = playerFinanceRows.find((player) => player.remaining > 0);
+  const topRevenueGroup = groupRevenue.reduce((top, group) => (group.value > (top?.value || 0) ? group : top), null);
+  const averagePayment = Math.round(collected / Math.max(filteredPayments.length, 1));
+  const riskLabel = collectionRate >= 85 ? "الوضع المالي مستقر" : collectionRate >= 55 ? "التحصيل يحتاج متابعة" : "التحصيل منخفض ويحتاج إجراء سريع";
+  const reportPeriodLabel = isAllMonths ? "كل الفترات" : `شهر ${selectedMonth}`;
+  const reportGroupLabel = selectedGroupId === "all" ? "كل الفئات" : helpers.groupById[selectedGroupId]?.name || "فئة محددة";
+  const attendancePayments = filteredPayments.filter((payment) => payment.source === "attendance");
+  const attendancePaymentsByRow = attendancePayments.reduce((map, payment) => {
+    const key = `${payment.playerId}-${payment.date}`;
+    map[key] = (map[key] || 0) + Number(payment.amount || 0);
+    return map;
+  }, {});
+  const attendancePresent = filteredAttendance.filter((row) => row.status === "حاضر").length;
+  const attendanceLate = filteredAttendance.filter((row) => row.status === "متأخر").length;
+  const attendanceAbsent = filteredAttendance.filter((row) => row.status === "غائب").length;
+  const attendanceCollected = attendancePayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  const reportSummaryText = [
+    `التقرير المالي - ${data.academy.name || "الأكاديمية الرياضية"}`,
+    `الفترة: ${reportPeriodLabel}`,
+    `الفئة: ${reportGroupLabel}`,
+    `المحصّل: ${currency(collected)}`,
+    `المتوقع: ${currency(expected)}`,
+    `المتبقي: ${currency(remaining)}`,
+    `نسبة التحصيل: ${collectionRate}%`,
+    `أكبر متأخر: ${largestDebt ? `${largestDebt.name} - ${currency(largestDebt.remaining)}` : "لا يوجد"}`,
+  ].join("\n");
+  const showReportNotice = (message) => {
+    setReportNotice(message);
+    window.setTimeout(() => setReportNotice(""), 2400);
+  };
+  const copyFinancialSummary = async () => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(reportSummaryText);
+      } else {
+        const textArea = document.createElement("textarea");
+        textArea.value = reportSummaryText;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand("copy");
+        textArea.remove();
+      }
+      showReportNotice("تم نسخ الملخص");
+    } catch {
+      showReportNotice("تعذر نسخ الملخص");
+    }
+  };
+  const downloadFinancialCsv = () => {
+    const csvRows = [
+      ["اللاعب", "الفريق", "الفئة", "نوع الاشتراك", "المطلوب", "المدفوع", "المتبقي", "الحالة"],
+      ...playerFinanceRows.map((player) => {
+        const team = helpers.teamById[player.teamId];
+        const group = helpers.groupById[team?.ageGroupId];
+        return [
+          player.name,
+          team?.name || "بدون فريق",
+          group?.name || "-",
+          player.subscriptionType,
+          player.due,
+          player.paid,
+          player.remaining,
+          player.status,
+        ];
+      }),
+    ];
+    const csvText = `\ufeff${csvRows
+      .map((row) => row.map((value) => `"${String(value ?? "").replace(/"/g, '""')}"`).join(","))
+      .join("\n")}`;
+    const blob = new Blob([csvText], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `financial-report-${isAllMonths ? "all" : selectedMonth}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showReportNotice("تم تنزيل ملف التقرير");
+  };
+  const printFinancialPdf = () => {
+    const playerRows = playerFinanceRows.map((player) => {
+      const team = helpers.teamById[player.teamId];
+      const group = helpers.groupById[team?.ageGroupId];
+      return [
+        player.name,
+        team?.name || "بدون فريق",
+        group?.name || "-",
+        player.subscriptionType || "-",
+        currency(player.due),
+        currency(player.paid),
+        currency(player.remaining),
+        player.status,
+      ];
+    });
+    const debtRows = playerFinanceRows
+      .filter((player) => player.remaining > 0)
+      .map((player) => [
+        player.name,
+        helpers.teamById[player.teamId]?.name || "بدون فريق",
+        currency(player.remaining),
+        player.status,
+      ]);
+    const paymentRows = [...filteredPayments]
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+      .map((payment) => [
+        payment.date || "-",
+        helpers.playerById[payment.playerId]?.name || "لاعب غير معروف",
+        currency(payment.amount),
+        payment.source === "attendance" ? "من التحضير" : payment.method || "-",
+        payment.note || "-",
+      ]);
+    const ok = printReportHtml(buildPrintReportHtml({
+      title: "التقرير المالي",
+      subtitle: `${reportPeriodLabel} - ${reportGroupLabel}`,
+      academyName: data.academy.name,
+      logo: data.academy.logo,
+      cards: [
+        { label: "المحصّل", value: currency(collected) },
+        { label: "المتوقع", value: currency(expected) },
+        { label: "المتبقي", value: currency(remaining) },
+        { label: "نسبة التحصيل", value: `${collectionRate}%` },
+      ],
+      sections: [
+        reportTable("كشف حساب اللاعبين", ["اللاعب", "الفريق", "الفئة", "الاشتراك", "المطلوب", "المدفوع", "المتبقي", "الحالة"], playerRows),
+        reportTable("المتأخرات", ["اللاعب", "الفريق", "المبلغ المتبقي", "الحالة"], debtRows, "لا توجد متأخرات في الفترة المحددة."),
+        reportTable("سجل الدفعات", ["التاريخ", "اللاعب", "المبلغ", "المصدر", "الملاحظة"], paymentRows, "لا توجد دفعات في الفترة المحددة."),
+      ],
+      note: riskLabel,
+    }));
+    showReportNotice(ok ? "تم فتح التقرير المالي للطباعة PDF" : "تعذر فتح نافذة الطباعة");
+  };
+  const printAttendancePdf = () => {
+    const attendanceRows = [...filteredAttendance]
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+      .map((row) => {
+        const player = helpers.playerById[row.playerId];
+        const team = helpers.teamById[player?.teamId];
+        const group = helpers.groupById[team?.ageGroupId];
+        const paymentAmount = attendancePaymentsByRow[`${row.playerId}-${row.date}`] || 0;
+        return [
+          row.date || "-",
+          player?.name || "لاعب غير معروف",
+          team?.name || "بدون فريق",
+          group?.name || "-",
+          row.status || "-",
+          row.departureTime || "غير مسجل",
+          paymentAmount ? currency(paymentAmount) : "-",
+        ];
+      });
+    const ok = printReportHtml(buildPrintReportHtml({
+      title: "تقرير الحضور والانصراف",
+      subtitle: `${reportPeriodLabel} - ${reportGroupLabel}`,
+      academyName: data.academy.name,
+      logo: data.academy.logo,
+      cards: [
+        { label: "إجمالي السجلات", value: filteredAttendance.length },
+        { label: "حاضر", value: attendancePresent },
+        { label: "متأخر", value: attendanceLate },
+        { label: "غائب", value: attendanceAbsent },
+        { label: "مبالغ التحضير", value: currency(attendanceCollected) },
+      ],
+      sections: [
+        reportTable("كشف الحضور والانصراف بأسماء اللاعبين", ["التاريخ", "اللاعب", "الفريق", "الفئة", "الحالة", "الانصراف", "دفعة التحضير"], attendanceRows),
+      ],
+      note: "وقت الانصراف يظهر كغير مسجل لأن النظام الحالي لا يحتوي على خانة وقت انصراف مستقلة.",
+    }));
+    showReportNotice(ok ? "تم فتح تقرير الحضور للطباعة PDF" : "تعذر فتح نافذة الطباعة");
+  };
+
+  return (
+    <section className="finance-report-screen">
+      <header className="finance-report-hero">
+        <div>
+          <span>التقارير المالية</span>
+          <h1>{data.academy.name || "الأكاديمية الرياضية"}</h1>
+          <p>{isAllMonths ? "كل الفترات" : `تقرير شهر ${selectedMonth}`}</p>
+        </div>
+        <Wallet size={32} />
+      </header>
+
+      <section className="finance-filter-panel">
+        <label>
+          <span>الفترة</span>
+          <select value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)}>
+            <option value="all">كل الفترات</option>
+            {monthOptions.map((month) => (
+              <option key={month} value={month}>{month}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>الفئة</span>
+          <select value={selectedGroupId} onChange={(event) => setSelectedGroupId(event.target.value)}>
+            <option value="all">كل الفئات</option>
+            {data.ageGroups.map((group) => (
+              <option key={group.id} value={group.id}>{group.name}</option>
+            ))}
+          </select>
+        </label>
+      </section>
+
+      <section className="finance-kpi-grid">
+        <article>
+          <CircleDollarSign size={18} />
+          <span>المحصّل</span>
+          <strong>{currency(collected)}</strong>
+        </article>
+        <article>
+          <Wallet size={18} />
+          <span>المتوقع</span>
+          <strong>{currency(expected)}</strong>
+        </article>
+        <article>
+          <Bell size={18} />
+          <span>المتبقي</span>
+          <strong>{currency(remaining)}</strong>
+        </article>
+        <article>
+          <CalendarCheck size={18} />
+          <span>الحضور</span>
+          <strong>{attendanceRate}%</strong>
+        </article>
+      </section>
+
+      <section className="finance-executive-panel">
+        <div className="finance-card-head">
+          <div>
+            <span>الملخص التنفيذي</span>
+            <strong>{riskLabel}</strong>
+          </div>
+          <ClipboardList size={20} />
+        </div>
+        <div className="finance-insight-grid">
+          <article>
+            <span>أكبر متأخر</span>
+            <strong>{largestDebt ? largestDebt.name : "لا يوجد"}</strong>
+            <small>{largestDebt ? currency(largestDebt.remaining) : "كل شيء مضبوط"}</small>
+          </article>
+          <article>
+            <span>متوسط الدفعة</span>
+            <strong>{currency(averagePayment)}</strong>
+            <small>{filteredPayments.length} عملية</small>
+          </article>
+          <article>
+            <span>أفضل فئة</span>
+            <strong>{topRevenueGroup?.name || "لا يوجد"}</strong>
+            <small>{topRevenueGroup ? currency(topRevenueGroup.value) : "لا توجد دفعات"}</small>
+          </article>
+        </div>
+        <div className="finance-report-actions">
+          <button type="button" onClick={printFinancialPdf}>
+            <CircleDollarSign size={16} />
+            PDF مالي
+          </button>
+          <button className="attendance-pdf-button" type="button" onClick={printAttendancePdf}>
+            <CalendarCheck size={16} />
+            PDF حضور
+          </button>
+          <button type="button" onClick={copyFinancialSummary}>
+            <ClipboardList size={16} />
+            نسخ الملخص
+          </button>
+          <button className="csv-export-button" type="button" onClick={downloadFinancialCsv}>
+            <Send size={16} />
+            تنزيل CSV
+          </button>
+        </div>
+        {reportNotice && <span className="finance-report-notice">{reportNotice}</span>}
+      </section>
+
+      <div className="finance-report-tabs">
+        {reportTabs.map((tab) => (
+          <button key={tab.id} className={activeReportTab === tab.id ? "active" : ""} type="button" onClick={() => setActiveReportTab(tab.id)}>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeReportTab === "overview" && (
+        <section className="finance-report-grid">
+          <article className="finance-chart-card collection-card">
+            <div className="finance-card-head">
+              <div>
+                <span>نسبة التحصيل</span>
+                <strong>{collectionRate}%</strong>
+              </div>
+              <BadgeCheck size={20} />
+            </div>
+            <div className="collection-ring" style={{ "--ring": `${collectionRate}%` }}>
+              <b>{collectionRate}%</b>
+              <small>محصّل</small>
+            </div>
+            <p>المتبقي: {currency(remaining)}</p>
+          </article>
+
+          <article className="finance-chart-card">
+            <div className="finance-card-head">
+              <div>
+                <span>آخر 6 أشهر</span>
+                <strong>تطور الإيراد</strong>
+              </div>
+              <Activity size={20} />
+            </div>
+            <div className="finance-bar-chart">
+              {monthSeries.map((month) => (
+                <div key={month.key}>
+                  <span style={{ "--bar": `${Math.max(8, Math.round((month.value / maxMonthValue) * 100))}%` }} />
+                  <small>{month.label}</small>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="finance-chart-card">
+            <div className="finance-card-head">
+              <div>
+                <span>توقع نهاية الشهر</span>
+                <strong>{isAllMonths ? "كل الفترات" : selectedMonth}</strong>
+              </div>
+              <Activity size={20} />
+            </div>
+            <div className="finance-forecast-card">
+              <div>
+                <span>المتوقع بنهاية الشهر</span>
+                <strong>{currency(projectedCollection)}</strong>
+              </div>
+              <div>
+                <span>متوسط يومي</span>
+                <strong>{currency(dailyAverage)}</strong>
+              </div>
+              <div>
+                <span>المطلوب يوميًا</span>
+                <strong>{currency(neededDailyCollection)}</strong>
+              </div>
+              <small>{remainingDays > 0 ? `${remainingDays} يوم متبقي لإغلاق الفجوة` : "الفترة مكتملة أو كل الفترات محددة"}</small>
+            </div>
+          </article>
+
+          <article className="finance-chart-card">
+            <div className="finance-card-head">
+              <div>
+                <span>حالة الاشتراكات</span>
+                <strong>{filteredPlayers.length} لاعب</strong>
+              </div>
+              <Users size={20} />
+            </div>
+            <div className="finance-status-list">
+              {statusSummary.map((item) => (
+                <div key={item.label}>
+                  <span>{item.label}</span>
+                  <b>{item.value}</b>
+                  <i style={{ "--fill": `${Math.round((item.value / Math.max(filteredPlayers.length, 1)) * 100)}%`, "--tone": item.color }} />
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="finance-chart-card">
+            <div className="finance-card-head">
+              <div>
+                <span>حسب الفئات</span>
+                <strong>مصادر التحصيل</strong>
+              </div>
+              <Layers size={20} />
+            </div>
+            <div className="finance-group-bars">
+              {groupRevenue.length === 0 && <p>لا توجد دفعات لهذه الفترة.</p>}
+              {groupRevenue.map((group) => (
+                <div key={group.name}>
+                  <span>{group.name}</span>
+                  <b>{currency(group.value)}</b>
+                  <i style={{ "--fill": `${Math.round((group.value / maxGroupRevenue) * 100)}%` }} />
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="finance-chart-card">
+            <div className="finance-card-head">
+              <div>
+                <span>طرق الدفع</span>
+                <strong>تحليل التحصيل</strong>
+              </div>
+              <Wallet size={20} />
+            </div>
+            <div className="finance-group-bars">
+              {methodSummary.length === 0 && <p>لا توجد طرق دفع مسجلة لهذه الفترة.</p>}
+              {methodSummary.map((method) => (
+                <div key={method.label}>
+                  <span>{method.label}</span>
+                  <b>{currency(method.value)}</b>
+                  <i style={{ "--fill": `${Math.round((method.value / maxMethodValue) * 100)}%` }} />
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="finance-chart-card">
+            <div className="finance-card-head">
+              <div>
+                <span>مصدر الدفعات</span>
+                <strong>تحضير أو تسجيل يدوي</strong>
+              </div>
+              <CalendarCheck size={20} />
+            </div>
+            <div className="finance-status-list">
+              {sourceSummary.length === 0 && <div className="finance-empty">لا توجد دفعات لهذه الفترة.</div>}
+              {sourceSummary.map((source) => (
+                <div key={source.label}>
+                  <span>{source.label}</span>
+                  <b>{currency(source.value)}</b>
+                  <i style={{ "--fill": `${Math.round((source.value / Math.max(collected, 1)) * 100)}%`, "--tone": source.color }} />
+                </div>
+              ))}
+            </div>
+          </article>
+        </section>
+      )}
+
+      {activeReportTab === "players" && (
+        <section className="finance-report-grid">
+          <article className="finance-chart-card wide">
+            <div className="finance-card-head">
+              <div>
+                <span>كشف حساب اللاعبين</span>
+                <strong>{playerFinanceRows.length} لاعب في الفترة المختارة</strong>
+              </div>
+              <Users size={20} />
+            </div>
+            <div className="finance-player-ledger">
+              {playerFinanceRows.length === 0 && <div className="finance-empty">لا يوجد لاعبون مطابقون للفلتر.</div>}
+              {playerFinanceRows.map((player) => {
+                const team = helpers.teamById[player.teamId];
+                const group = helpers.groupById[team?.ageGroupId];
+                const paymentRate = player.due === 0 ? 100 : Math.min(100, Math.round((player.paid / Math.max(player.due, 1)) * 100));
+                return (
+                  <article key={player.id}>
+                    <div className="finance-ledger-head">
+                      <div>
+                        <strong>{player.name}</strong>
+                        <span>{team?.name || "بدون فريق"} {group?.name ? `- ${group.name}` : ""}</span>
+                      </div>
+                      <b className={`ledger-status status-${player.status}`}>{player.status}</b>
+                    </div>
+                    <div className="finance-ledger-money">
+                      <span>المطلوب <b>{currency(player.due)}</b></span>
+                      <span>المدفوع <b>{currency(player.paid)}</b></span>
+                      <span>المتبقي <b>{currency(player.remaining)}</b></span>
+                    </div>
+                    <div className="finance-ledger-progress">
+                      <i style={{ "--fill": `${paymentRate}%` }} />
+                      <small>{paymentRate}% سداد</small>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </article>
+        </section>
+      )}
+
+      {activeReportTab === "debts" && (
+        <section className="finance-report-grid">
+          <article className="finance-chart-card wide">
+            <div className="finance-card-head">
+              <div>
+                <span>قائمة المتأخرات</span>
+                <strong>{latePlayers.length} لاعب يحتاج متابعة</strong>
+              </div>
+              <Bell size={20} />
+            </div>
+            <div className="finance-debt-list">
+              {latePlayers.length === 0 && <div className="finance-empty">لا توجد متأخرات في الفترة المختارة.</div>}
+              {latePlayers.map((player) => (
+                <div key={player.id}>
+                  <div>
+                    <strong>{player.name}</strong>
+                    <span>{helpers.teamById[player.teamId]?.name || "بدون فريق"} - {player.status}</span>
+                  </div>
+                  <b>{currency(player.remaining)}</b>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <PaymentForm players={filteredPlayers.length ? filteredPlayers : data.players} onAddPayment={addPayment} title="تسجيل دفعة مالية" />
+        </section>
+      )}
+
+      {activeReportTab === "payments" && (
+        <section className="finance-report-grid">
+          <article className="finance-chart-card wide">
+            <div className="finance-card-head">
+              <div>
+                <span>آخر الدفعات</span>
+                <strong>{filteredPayments.length} عملية</strong>
+              </div>
+              <ClipboardList size={20} />
+            </div>
+            <div className="finance-payment-list">
+              {recentPayments.length === 0 && <div className="finance-empty">لا توجد دفعات في الفترة المختارة.</div>}
+              {recentPayments.map((payment) => {
+                const player = helpers.playerById[payment.playerId];
+                return (
+                  <div key={payment.id}>
+                    <div>
+                      <strong>{player?.name || "لاعب غير معروف"}</strong>
+                      <span>{payment.date} - {payment.source === "attendance" ? "من التحضير" : payment.method}</span>
+                    </div>
+                    <b>{currency(payment.amount)}</b>
+                  </div>
+                );
+              })}
+            </div>
+          </article>
+
+          <article className="finance-chart-card">
+            <div className="finance-card-head">
+              <div>
+                <span>نوع الاشتراك</span>
+                <strong>{monthlyPlayers} شهري / {freePlayers} مجاني</strong>
+              </div>
+              <Medal size={20} />
+            </div>
+            <div className="subscription-split">
+              <span style={{ "--fill": `${Math.round((monthlyPlayers / Math.max(filteredPlayers.length, 1)) * 100)}%` }} />
+              <div>
+                <b>شهري</b>
+                <small>{monthlyPlayers} لاعب</small>
+              </div>
+              <div>
+                <b>مجاني</b>
+                <small>{freePlayers} لاعب</small>
+              </div>
+            </div>
+          </article>
+        </section>
+      )}
+    </section>
+  );
+}
+
+function Gamification({ data, addBadge }) {
+  const leaders = [...data.players].sort((a, b) => b.xp - a.xp);
+  return (
+    <section className="view-grid">
+      <form className="panel form-panel" onSubmit={addBadge}>
+        <FormTitle icon={Medal} title="إنشاء وسام" />
+        <input name="name" placeholder="اسم الوسام" required />
+        <input name="condition" placeholder="شرط الحصول عليه" required />
+        <input name="xp" type="number" min="0" placeholder="نقاط XP" required />
+        <button className="primary-button" type="submit">
+          <Plus size={18} />
+          إضافة الوسام
+        </button>
+      </form>
+      <section className="panel table-panel">
+        <PanelHead title="Leaderboard" text="ترتيب اللاعبين والأوسمة." icon={Trophy} />
+        <SimpleTable
+          headers={["الترتيب", "اللاعب", "المستوى", "XP", "الأوسمة"]}
+          rows={leaders.map((player, index) => [index + 1, player.name, player.level, player.xp, player.badges.join("، ") || "-"])}
+        />
+        <div className="badge-grid">
+          {data.badges.map((badge) => (
+            <div className="badge-item" key={badge.id}>
+              <strong>{badge.name}</strong>
+              <span>{badge.condition}</span>
+              <b>{badge.xp} XP</b>
+            </div>
+          ))}
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function Matches({ data, helpers, addMatch }) {
+  return (
+    <section className="view-grid">
+      <form className="panel form-panel" onSubmit={addMatch}>
+        <FormTitle icon={Swords} title="تسجيل نتيجة مباراة" />
+        <select name="teamAId" required>
+          {data.teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+        </select>
+        <select name="teamBId" required>
+          {data.teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+        </select>
+        <input name="date" type="date" defaultValue={today} required />
+        <div className="two-cols">
+          <input name="scoreA" type="number" min="0" placeholder="أهداف الأول" required />
+          <input name="scoreB" type="number" min="0" placeholder="أهداف الثاني" required />
+        </div>
+        <select name="mvpId" required>
+          {data.players.map((player) => <option key={player.id} value={player.id}>{player.name}</option>)}
+        </select>
+        <textarea name="evaluation" placeholder="تقييم اللاعب أو المباراة" />
+        <button className="primary-button" type="submit">
+          <Plus size={18} />
+          حفظ النتيجة
+        </button>
+      </form>
+      <section className="panel table-panel">
+        <PanelHead title="سجل المباريات" text="النتائج و MVP والتقييم." icon={Swords} />
+        <SimpleTable
+          headers={["التاريخ", "الفريق الأول", "الفريق الثاني", "النتيجة", "MVP", "التقييم"]}
+          rows={data.matches.map((match) => [
+            match.date,
+            helpers.teamById[match.teamAId]?.name,
+            helpers.teamById[match.teamBId]?.name,
+            `${match.scoreA} - ${match.scoreB}`,
+            helpers.playerById[match.mvpId]?.name,
+            match.evaluation || "-",
+          ])}
+        />
+      </section>
+    </section>
+  );
+}
+
+function Notifications({ data, addNotification }) {
+  return (
+    <section className="view-grid">
+      <form className="panel form-panel" onSubmit={addNotification}>
+        <FormTitle icon={Bell} title="إنشاء تنبيه" />
+        <select name="type" required>
+          <option>تأخر دفع</option>
+          <option>قرب انتهاء الاشتراك</option>
+          <option>غياب متكرر</option>
+          <option>رسالة إدارية</option>
+        </select>
+        <input name="target" placeholder="المستهدف" required />
+        <button className="primary-button" type="submit">
+          <Send size={18} />
+          إضافة التنبيه
+        </button>
+      </form>
+      <section className="panel table-panel">
+        <PanelHead title="التنبيهات" text="متابعة الحالات التي تحتاج إجراء." icon={Bell} />
+        <SimpleTable
+          headers={["النوع", "المستهدف", "التاريخ", "الحالة"]}
+          rows={data.notifications.map((item) => [item.type, item.target, item.date, item.status])}
+        />
+      </section>
+    </section>
+  );
+}
+
+function Community({ data, addPost }) {
+  return (
+    <section className="view-grid">
+      <form className="panel form-panel" onSubmit={addPost}>
+        <FormTitle icon={MessageSquare} title="إنشاء منشور" />
+        <input name="title" placeholder="عنوان اختياري" />
+        <textarea name="content" placeholder="محتوى المنشور" required />
+        <select name="type" required>
+          <option>إعلان</option>
+          <option>تدريب</option>
+          <option>مباراة</option>
+          <option>إنجاز</option>
+        </select>
+        <label className="checkbox-line">
+          <input name="pinned" type="checkbox" />
+          تثبيت المنشور
+        </label>
+        <button className="primary-button" type="submit">
+          <Plus size={18} />
+          نشر
+        </button>
+      </form>
+      <section className="post-list">
+        {data.posts.map((post) => (
+          <article className="post-card" key={post.id}>
+            <div className="team-card-head">
+              <h2>{post.title || post.type}</h2>
+              {post.pinned && <span className="pin">مثبت</span>}
+            </div>
+            <p>{post.content}</p>
+            <div className="team-stats">
+              <span>{post.type}</span>
+              <span>{post.likes} إعجاب</span>
+              <span>تعليقات: 0</span>
+            </div>
+          </article>
+        ))}
+      </section>
+    </section>
+  );
+}
+
+function PaymentForm({ players, onAddPayment, title }) {
+  return (
+    <form className="panel form-panel" onSubmit={onAddPayment}>
+      <FormTitle icon={CircleDollarSign} title={title} />
+      <select name="playerId" required>
+        {players.map((player) => (
+          <option key={player.id} value={player.id}>{player.name}</option>
+        ))}
+      </select>
+      <input name="amount" type="number" min="0" placeholder="المبلغ المدفوع" required />
+      <input name="date" type="date" defaultValue={today} required />
+      <select name="method" required>
+        <option>نقد</option>
+        <option>تحويل</option>
+      </select>
+      <select name="status" required>
+        <option>مدفوع</option>
+        <option>جزئي</option>
+        <option>متأخر</option>
+      </select>
+      <textarea name="note" placeholder="ملاحظة اختيارية" />
+      <button className="primary-button" type="submit">
+        <Plus size={18} />
+        حفظ الدفعة
+      </button>
+    </form>
+  );
+}
+
+function EmptyState({ icon: Icon, title, text }) {
+  return (
+    <section className="panel empty-state">
+      <Icon size={34} />
+      <h2>{title}</h2>
+      <p>{text}</p>
+    </section>
+  );
+}
+
+function Metric({ title, value, icon: Icon, tone }) {
+  return (
+    <section className={`metric ${tone}`}>
+      <div className="metric-icon">
+        <Icon size={21} />
+      </div>
+      <span>{title}</span>
+      <strong>{value}</strong>
+    </section>
+  );
+}
+
+function StatusPill({ label, value }) {
+  return (
+    <div className="status-pill">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function PanelHead({ title, text, icon: Icon }) {
+  return (
+    <div className="panel-head">
+      <div>
+        <h2>{title}</h2>
+        <p>{text}</p>
+      </div>
+      <Icon size={22} className="panel-icon" />
+    </div>
+  );
+}
+
+function FormTitle({ icon: Icon, title }) {
+  return (
+    <div className="form-title">
+      <Icon size={20} />
+      <h2>{title}</h2>
+    </div>
+  );
+}
+
+function Detail({ label, value }) {
+  return (
+    <div className="detail-item">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function Score({ label, value }) {
+  return (
+    <div className="score-row">
+      <div>
+        <span>{label}</span>
+        <strong>{value}%</strong>
+      </div>
+      <div className="progress-line">
+        <span style={{ width: `${value}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function PersonCell({ name, sub }) {
+  return (
+    <div className="person-cell">
+      <span>{name.slice(0, 1)}</span>
+      <div>
+        <strong>{name}</strong>
+        {sub && <small>{sub}</small>}
+      </div>
+    </div>
+  );
+}
+
+function SimpleTable({ headers, rows }) {
+  return (
+    <div className="table-scroll">
+      <table>
+        <thead>
+          <tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 ? (
+            <tr>
+              <td className="empty-table-cell" colSpan={headers.length}>لا توجد بيانات مسجلة بعد</td>
+            </tr>
+          ) : (
+            rows.map((row, index) => (
+              <tr key={index}>
+                {row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+createRoot(document.getElementById("root")).render(<App />);
+
