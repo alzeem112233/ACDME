@@ -902,7 +902,7 @@ function App() {
   const [onboardingState, setOnboardingState] = useLocalState("acdme-onboarding-v4", {});
   const [platformData, setPlatformData] = useLocalState("acdme-platform-data-v1", platformSeedData);
   const [academyDataById, setAcademyDataById] = useLocalState("acdme-academy-data-by-id-v1", {});
-  const [cloudSyncState, setCloudSyncState] = useState({ academyId: "", loaded: false, saving: false, error: "" });
+  const [cloudSyncState, setCloudSyncState] = useState({ academyId: "", loaded: false, saving: false, error: "", syncedAt: "" });
   const lastCloudPayloadRef = useRef("");
   const [query, setQuery] = useState("");
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
@@ -1064,6 +1064,76 @@ function App() {
     return platformRegistrationRequests || [];
   };
 
+  const syncAcademyPlatformAccounts = async (usersToSync = [], academySnapshot = data) => {
+    if (!isOnline || !currentAcademyId || isSuperAdmin) return [];
+
+    const academy = academySnapshot?.academy || data.academy || {};
+    const accounts = (usersToSync || [])
+      .filter((user) => user.academyId === currentAcademyId && normalizePhone(user.phone))
+      .map((user) => ({
+        ...user,
+        phone: normalizePhone(user.phone),
+        academyName: academy.name || user.academyName || session?.academyName || "",
+        academyNameEn: academy.nameEn || user.academyNameEn || session?.academyNameEn || "",
+        academyLogo: academy.logo || user.academyLogo || session?.academyLogo || "",
+      }));
+
+    const syncedAccounts = [];
+    for (const account of accounts) {
+      try {
+        const syncedAccount = await upsertPlatformAccount(account);
+        if (syncedAccount) syncedAccounts.push(syncedAccount);
+      } catch {
+        // Account metadata will sync again on the next automatic or manual sync.
+      }
+    }
+
+    return syncedAccounts;
+  };
+
+  const syncCurrentAcademyNow = async () => {
+    if (!currentAcademyId || isSuperAdmin) {
+      return { ok: false, message: "المزامنة متاحة داخل حساب الأكاديمية فقط." };
+    }
+
+    if (!isOnline) {
+      setCloudSyncState((prev) => ({
+        ...prev,
+        loaded: true,
+        saving: false,
+        error: "لا يوجد اتصال الآن. بياناتك محفوظة على الهاتف وستُرفع تلقائيًا عند عودة الإنترنت.",
+      }));
+      return { ok: false, message: "لا يوجد اتصال الآن. سيتم الرفع تلقائيًا عند عودة الإنترنت." };
+    }
+
+    const academyData = normalizeAcademyData(academyDataById[currentAcademyId], session);
+    const academyPayload = toCloudAcademyData(academyData, session);
+    if (!hasAcademyContent(academyPayload)) {
+      return { ok: false, message: "أكمل بيانات الأكاديمية أولًا ثم أعد المزامنة." };
+    }
+
+    const nextSignature = JSON.stringify(academyPayload);
+    setCloudSyncState((prev) => ({ ...prev, academyId: currentAcademyId, loaded: true, saving: true, error: "" }));
+
+    try {
+      await upsertRemoteAcademyData(currentAcademyId, academyPayload);
+      const syncedAccounts = await syncAcademyPlatformAccounts(platformData.users || [], academyData);
+      if (syncedAccounts.length) {
+        setPlatformData((prev) => ({
+          ...prev,
+          users: mergePlatformUsers(syncedAccounts, prev.users || []),
+        }));
+      }
+      lastCloudPayloadRef.current = nextSignature;
+      setCloudSyncState((prev) => ({ ...prev, saving: false, error: "", syncedAt: new Date().toISOString() }));
+      return { ok: true, message: "تم رفع بيانات الأكاديمية العامة إلى الإنترنت." };
+    } catch (error) {
+      const message = error.message || "تعذر رفع البيانات الآن. سيتم إعادة المحاولة تلقائيًا.";
+      setCloudSyncState((prev) => ({ ...prev, saving: false, error: message }));
+      return { ok: false, message };
+    }
+  };
+
   useEffect(() => {
     let isMounted = true;
 
@@ -1126,16 +1196,16 @@ function App() {
 
     if (!session?.verified) {
       lastCloudPayloadRef.current = "";
-      setCloudSyncState({ academyId: "", loaded: false, saving: false, error: "" });
+      setCloudSyncState({ academyId: "", loaded: false, saving: false, error: "", syncedAt: "" });
       return () => {
         isCancelled = true;
       };
     }
 
     if (isSuperAdmin) {
-      setCloudSyncState({ academyId: "platform", loaded: false, saving: false, error: "" });
+      setCloudSyncState({ academyId: "platform", loaded: false, saving: false, error: "", syncedAt: "" });
       if (!isOnline) {
-        setCloudSyncState({ academyId: "platform", loaded: true, saving: false, error: "أنت تعمل بدون إنترنت. سيتم تحديث بيانات السحابة عند عودة الاتصال." });
+        setCloudSyncState({ academyId: "platform", loaded: true, saving: false, error: "أنت تعمل بدون إنترنت. سيتم تحديث بيانات السحابة عند عودة الاتصال.", syncedAt: "" });
         return () => {
           isCancelled = true;
         };
@@ -1155,11 +1225,11 @@ function App() {
               return next;
             });
           }
-          setCloudSyncState({ academyId: "platform", loaded: true, saving: false, error: "" });
+          setCloudSyncState({ academyId: "platform", loaded: true, saving: false, error: "", syncedAt: new Date().toISOString() });
         })
         .catch((error) => {
           if (!isCancelled) {
-            setCloudSyncState({ academyId: "platform", loaded: true, saving: false, error: error.message || "تعذر تحميل بيانات السحابة." });
+            setCloudSyncState({ academyId: "platform", loaded: true, saving: false, error: error.message || "تعذر تحميل بيانات السحابة.", syncedAt: "" });
           }
         });
 
@@ -1172,10 +1242,10 @@ function App() {
       isCancelled = true;
     };
 
-    setCloudSyncState({ academyId: currentAcademyId, loaded: false, saving: false, error: "" });
+    setCloudSyncState({ academyId: currentAcademyId, loaded: false, saving: false, error: "", syncedAt: "" });
     if (!isOnline) {
       lastCloudPayloadRef.current = JSON.stringify(toCloudAcademyData(academyDataById[currentAcademyId], session));
-      setCloudSyncState({ academyId: currentAcademyId, loaded: true, saving: false, error: "أنت تعمل بدون إنترنت. بياناتك محفوظة على الهاتف وستتزامن عند عودة الاتصال." });
+      setCloudSyncState({ academyId: currentAcademyId, loaded: true, saving: false, error: "أنت تعمل بدون إنترنت. بياناتك محفوظة على الهاتف وستتزامن عند عودة الاتصال.", syncedAt: "" });
       return () => {
         isCancelled = true;
       };
@@ -1212,12 +1282,12 @@ function App() {
         }
 
         if (!isCancelled) {
-          setCloudSyncState({ academyId: currentAcademyId, loaded: true, saving: false, error: "" });
+          setCloudSyncState({ academyId: currentAcademyId, loaded: true, saving: false, error: "", syncedAt: new Date().toISOString() });
         }
       })
       .catch((error) => {
         if (!isCancelled) {
-          setCloudSyncState({ academyId: currentAcademyId, loaded: true, saving: false, error: error.message || "تعذر تحميل بيانات الأكاديمية من السحابة." });
+          setCloudSyncState({ academyId: currentAcademyId, loaded: true, saving: false, error: error.message || "تعذر تحميل بيانات الأكاديمية من السحابة.", syncedAt: "" });
         }
       });
 
@@ -1252,7 +1322,7 @@ function App() {
       upsertRemoteAcademyData(currentAcademyId, academyPayload)
         .then(() => {
           lastCloudPayloadRef.current = nextSignature;
-          setCloudSyncState((prev) => ({ ...prev, saving: false, error: "" }));
+          setCloudSyncState((prev) => ({ ...prev, saving: false, error: "", syncedAt: new Date().toISOString() }));
         })
         .catch((error) => {
           setCloudSyncState((prev) => ({ ...prev, saving: false, error: error.message || "تعذر حفظ بيانات الأكاديمية في السحابة." }));
@@ -1760,46 +1830,57 @@ function App() {
     const academyName = form.get("name");
     const academyNameEn = String(form.get("nameEn") || "").trim();
     const coachName = form.get("coachName");
+    const nextLogo = logo || data.academy.logo || "";
 
     if (isAcademyNameTaken(academyName, session?.academyId)) {
       window.alert("اسم الأكاديمية مستخدم مسبقًا. يرجى اختيار اسم مختلف قبل الحفظ.");
       return;
     }
 
-    setData((prev) => ({
-      ...prev,
+    const nextAcademyData = {
+      ...data,
       coach: {
-        ...(prev.coach || seedData.coach),
-        name: coachName || prev.coach?.name || seedData.coach.name,
+        ...(data.coach || seedData.coach),
+        name: coachName || data.coach?.name || seedData.coach.name,
       },
       academy: {
-        ...prev.academy,
+        ...data.academy,
         name: academyName,
         nameEn: academyNameEn,
-        field: coachName || form.get("field") || prev.academy.field,
+        field: coachName || form.get("field") || data.academy.field,
         location: form.get("location"),
-        gpsLocation: form.get("gpsLocation") || prev.academy.gpsLocation || "",
-        logo: logo || prev.academy.logo || "",
-        ownerPhone: form.get("ownerPhone") || prev.academy.ownerPhone,
-        plan: form.get("plan") || prev.academy.plan,
+        gpsLocation: form.get("gpsLocation") || data.academy.gpsLocation || "",
+        logo: nextLogo,
+        ownerPhone: form.get("ownerPhone") || data.academy.ownerPhone,
+        plan: form.get("plan") || data.academy.plan,
       },
-      users: (prev.users || []).map((user) => ({
+      users: (data.users || []).map((user) => ({
         ...user,
         academyName,
         academyNameEn,
-        academyLogo: logo || prev.academy.logo || "",
+        academyLogo: nextLogo,
       })),
-    }));
-
-    setPlatformData((prev) => ({
-      ...prev,
-      users: (prev.users || []).map((user) =>
+    };
+    const nextPlatformUsers = (platformData.users || []).map((user) =>
         user.academyId === session?.academyId
-          ? { ...user, academyName, academyNameEn, academyLogo: logo || data.academy.logo || "" }
+          ? { ...user, academyName, academyNameEn, academyLogo: nextLogo }
           : user,
-      ),
-    }));
-    setSession((prev) => (prev ? { ...prev, academyName, academyNameEn, academyLogo: logo || data.academy.logo || prev.academyLogo || "" } : prev));
+      );
+
+    setData(nextAcademyData);
+    setPlatformData((prev) => ({ ...prev, users: nextPlatformUsers }));
+    setSession((prev) => (prev ? { ...prev, academyName, academyNameEn, academyLogo: nextLogo || prev.academyLogo || "" } : prev));
+
+    if (isOnline) {
+      syncAcademyPlatformAccounts(nextPlatformUsers, nextAcademyData).then((syncedAccounts) => {
+        if (syncedAccounts.length) {
+          setPlatformData((prev) => ({
+            ...prev,
+            users: mergePlatformUsers(syncedAccounts, prev.users || []),
+          }));
+        }
+      });
+    }
 
     if (session?.isFirstLogin) {
       setActiveView("ageGroups");
@@ -2183,6 +2264,7 @@ function App() {
     updateAccountProfile,
     exportLocalBackup,
     importLocalBackup,
+    syncCurrentAcademyNow,
     updateRegistrationRequest,
     resetPlatformUserPassword,
     togglePlatformUserStatus,
@@ -3770,7 +3852,7 @@ function CoachesSettings({ data, addAcademyCoach, toggleAcademyCoachStatus }) {
   );
 }
 
-function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBackup }) {
+function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBackup, syncCurrentAcademyNow, cloudSyncState, isOnline }) {
   const [logoPreview, setLogoPreview] = useState(data.academy.logo || "");
   const [locationText, setLocationText] = useState(data.academy.location || "");
   const [gpsLocation, setGpsLocation] = useState(data.academy.gpsLocation || "");
@@ -3778,6 +3860,8 @@ function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBa
   const [formError, setFormError] = useState("");
   const [backupMessage, setBackupMessage] = useState("");
   const [isBackupBusy, setIsBackupBusy] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("");
+  const [isManualSyncing, setIsManualSyncing] = useState(false);
 
   const updateLogoPreview = (event) => {
     const file = event.target.files?.[0];
@@ -3841,6 +3925,22 @@ function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBa
     setIsBackupBusy(false);
     event.target.value = "";
   };
+  const handleManualSync = async () => {
+    setSyncMessage("");
+    setIsManualSyncing(true);
+    const result = await syncCurrentAcademyNow?.();
+    setSyncMessage(result?.message || "تم تنفيذ المزامنة.");
+    setIsManualSyncing(false);
+  };
+  const syncStatusText = !isOnline
+    ? "بدون إنترنت: سيتم الرفع تلقائيًا عند عودة الاتصال."
+    : cloudSyncState?.saving
+      ? "جاري رفع البيانات العامة..."
+      : cloudSyncState?.error
+        ? cloudSyncState.error
+        : cloudSyncState?.syncedAt
+          ? `آخر مزامنة: ${new Date(cloudSyncState.syncedAt).toLocaleTimeString("ar", { hour: "2-digit", minute: "2-digit" })}`
+          : "المزامنة التلقائية مفعلة.";
 
   return (
     <section className="setup-screen academy-setup-screen">
@@ -3902,6 +4002,26 @@ function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBa
         </button>
         <small className="setup-footnote">يمكنك تعديل هذه البيانات لاحقًا من قسم الإعدادات.</small>
       </form>
+
+      <section className="setup-card sync-card">
+        <section className="age-hero-card">
+          <span>مزامنة</span>
+          <h2>رفع الإعدادات إلى الإنترنت</h2>
+          <p>يتم رفع بيانات الأكاديمية العامة تلقائيًا عند توفر الاتصال. بيانات اللاعبين وصورهم تبقى محفوظة على الهاتف فقط.</p>
+        </section>
+
+        <div className={cloudSyncState?.error || !isOnline ? "sync-status warning" : "sync-status"}>
+          <RefreshCw size={18} className={cloudSyncState?.saving || isManualSyncing ? "spin-icon" : ""} />
+          <span>{syncStatusText}</span>
+        </div>
+
+        <button className="yellow-button" type="button" onClick={handleManualSync} disabled={!isOnline || isManualSyncing || cloudSyncState?.saving}>
+          <RefreshCw size={18} className={isManualSyncing || cloudSyncState?.saving ? "spin-icon" : ""} />
+          مزامنة الآن
+        </button>
+
+        {syncMessage && <p className={syncMessage.startsWith("تم") ? "setup-success" : "setup-error"}>{syncMessage}</p>}
+      </section>
 
       <section className="setup-card backup-card">
         <section className="age-hero-card">
