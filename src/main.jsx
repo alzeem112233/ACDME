@@ -1634,7 +1634,7 @@ function App() {
     }));
   };
 
-  const updatePlayerCard = (playerId, field, value) => {
+  const updatePlayerCard = (playerId, values = {}) => {
     setData((prev) => ({
       ...prev,
       players: (prev.players || []).map((player) =>
@@ -1643,7 +1643,7 @@ function App() {
               ...player,
               playerCard: {
                 ...(player.playerCard || {}),
-                [field]: value,
+                ...values,
               },
             }
           : player,
@@ -4825,6 +4825,7 @@ function PlayerProfile({ data, helpers, selectedPlayerId, setSelectedPlayerId, u
 
 function PlayerShowCard({ player, updatePlayerCard }) {
   const card = player.playerCard || {};
+  const [draft, setDraft] = useState(card);
   const stats = [
     ["pac", "PAC"],
     ["sho", "SHO"],
@@ -4833,33 +4834,100 @@ function PlayerShowCard({ player, updatePlayerCard }) {
     ["def", "DEF"],
     ["phy", "PHY"],
   ];
-  const updateField = (field, value) => updatePlayerCard?.(player.id, field, value);
+  const profileRows = [
+    ["nationality", "الجنسية"],
+    ["club", "النادي"],
+    ["age", "العمر"],
+    ["foot", "القدم"],
+  ];
+
+  useEffect(() => {
+    setDraft(card);
+  }, [player.id]);
+
+  const updateDraft = (field, value) => {
+    setDraft((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const saveCard = (event) => {
+    event.preventDefault();
+    updatePlayerCard?.(player.id, draft);
+  };
+
+  const valueOrDash = (value, fallback = "---") => String(value || "").trim() || fallback;
+  const cardPosition = valueOrDash(card.position || player.position, "--");
+  const cardRating = valueOrDash(card.rating, "--");
+  const overall = valueOrDash(card.overall || card.rating, "--");
 
   return (
     <section className="player-showcase-panel">
-      <div className="player-show-card" aria-label="بطاقة اللاعب">
-        <div className="player-show-card-top">
+      <form className="player-card-editor panel" onSubmit={saveCard}>
+        <PanelHead title="بيانات بطاقة اللاعب" text="عبئ الخانات ثم احفظها لتظهر على البطاقة." icon={ClipboardCheck} />
+        <div className="player-card-editor-grid">
           <label>
             <span>التقييم</span>
-            <input
-              value={card.rating || ""}
-              onChange={(event) => updateField("rating", event.target.value)}
-              inputMode="numeric"
-              maxLength="2"
-              placeholder="--"
-              aria-label="تقييم البطاقة"
-            />
+            <input value={draft.rating || ""} onChange={(event) => updateDraft("rating", event.target.value)} inputMode="numeric" maxLength="2" placeholder="99" />
           </label>
           <label>
             <span>المركز</span>
-            <input
-              value={card.position || player.position || ""}
-              onChange={(event) => updateField("position", event.target.value)}
-              maxLength="4"
-              placeholder="--"
-              aria-label="مركز اللاعب في البطاقة"
-            />
+            <input value={draft.position || ""} onChange={(event) => updateDraft("position", event.target.value)} maxLength="4" placeholder="RW" />
           </label>
+          <label>
+            <span>الجنسية</span>
+            <input value={draft.nationality || ""} onChange={(event) => updateDraft("nationality", event.target.value)} placeholder="مثال: يمني" />
+          </label>
+          <label>
+            <span>النادي</span>
+            <input value={draft.club || ""} onChange={(event) => updateDraft("club", event.target.value)} placeholder="اسم النادي" />
+          </label>
+          <label>
+            <span>العمر</span>
+            <input value={draft.age || ""} onChange={(event) => updateDraft("age", event.target.value)} inputMode="numeric" placeholder="العمر" />
+          </label>
+          <label>
+            <span>القدم</span>
+            <input value={draft.foot || ""} onChange={(event) => updateDraft("foot", event.target.value)} placeholder="يمين / يسار" />
+          </label>
+          <label>
+            <span>الطول</span>
+            <input value={draft.height || ""} onChange={(event) => updateDraft("height", event.target.value)} inputMode="numeric" placeholder="سم" />
+          </label>
+          <label>
+            <span>الوزن</span>
+            <input value={draft.weight || ""} onChange={(event) => updateDraft("weight", event.target.value)} inputMode="numeric" placeholder="كغ" />
+          </label>
+          <label>
+            <span>الرقم</span>
+            <input value={draft.number || ""} onChange={(event) => updateDraft("number", event.target.value)} inputMode="numeric" placeholder="رقم اللاعب" />
+          </label>
+          <label>
+            <span>مركز اللعب</span>
+            <input value={draft.playCenter || ""} onChange={(event) => updateDraft("playCenter", event.target.value)} placeholder="مثال: جناح" />
+          </label>
+          <label>
+            <span>التقييم الإجمالي</span>
+            <input value={draft.overall || ""} onChange={(event) => updateDraft("overall", event.target.value)} inputMode="numeric" maxLength="2" placeholder="99" />
+          </label>
+        </div>
+        <div className="player-card-stat-editor">
+          {stats.map(([field, label]) => (
+            <label key={field}>
+              <span>{label}</span>
+              <input value={draft[field] || ""} onChange={(event) => updateDraft(field, event.target.value)} inputMode="numeric" maxLength="2" placeholder="99" />
+            </label>
+          ))}
+        </div>
+        <button className="yellow-button" type="submit">
+          <CheckCircle2 size={18} />
+          حفظ البطاقة
+        </button>
+      </form>
+
+      <div className="player-show-card" aria-label="بطاقة اللاعب">
+        <div className="player-card-crest" aria-hidden="true">★ ★ ★</div>
+        <div className="player-show-card-top">
+          <strong>{cardRating}</strong>
+          <span>{cardPosition}</span>
         </div>
 
         <div className="player-card-gem" aria-hidden="true" />
@@ -4868,25 +4936,38 @@ function PlayerShowCard({ player, updatePlayerCard }) {
           {player.photo ? <img src={player.photo} alt={player.name} loading="lazy" decoding="async" /> : <UserCircle size={86} />}
         </div>
 
+        <div className="player-card-info-box">
+          {profileRows.map(([field, label]) => (
+            <div key={field}>
+              <b>{valueOrDash(card[field], "-")}</b>
+              <span>{label}</span>
+            </div>
+          ))}
+        </div>
+
         <strong className="player-show-name">{player.name || "اسم اللاعب"}</strong>
 
         <div className="player-show-stats">
           {stats.map(([field, label]) => (
-            <label key={field}>
+            <div key={field}>
               <span>{label}</span>
-              <input
-                value={card[field] || ""}
-                onChange={(event) => updateField(field, event.target.value)}
-                inputMode="numeric"
-                maxLength="2"
-                placeholder="--"
-                aria-label={label}
-              />
-            </label>
+              <strong>{valueOrDash(card[field], "--")}</strong>
+            </div>
           ))}
         </div>
+
+        <div className="player-card-extra-lines">
+          <span>الطول <b>{valueOrDash(card.height)}</b> سم</span>
+          <span>الرقم <b>{valueOrDash(card.number)}</b></span>
+          <span>الوزن <b>{valueOrDash(card.weight)}</b> كغ</span>
+          <span>مركز اللعب <b>{valueOrDash(card.playCenter)}</b></span>
+        </div>
+
+        <div className="player-card-overall">
+          <span>التقييم الإجمالي</span>
+          <strong>{overall}</strong>
+        </div>
       </div>
-      <p>اترك الخانات فارغة أو عبئها حسب تقييم المدرب.</p>
     </section>
   );
 }
