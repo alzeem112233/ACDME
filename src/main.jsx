@@ -3375,6 +3375,11 @@ function LoginPassword({
     }
   };
 
+  const touchAuthMode = (event, nextMode) => {
+    event.preventDefault();
+    switchAuthMode(nextMode);
+  };
+
   return (
     <main className="login-shell">
       <section className="login-hero">
@@ -3410,6 +3415,7 @@ function LoginPassword({
             className={mode === "login" ? "active" : ""}
             type="button"
             aria-pressed={mode === "login"}
+            onPointerDown={(event) => touchAuthMode(event, "login")}
             onClick={() => switchAuthMode("login")}
           >
             تسجيل الدخول
@@ -3418,6 +3424,7 @@ function LoginPassword({
             className={mode === "register" ? "active" : ""}
             type="button"
             aria-pressed={mode === "register"}
+            onPointerDown={(event) => touchAuthMode(event, "register")}
             onClick={() => switchAuthMode("register")}
           >
             إنشاء حساب
@@ -3444,6 +3451,9 @@ function LoginPassword({
             <button className="primary-button" type="submit" disabled={isLoading}>
               <KeyRound size={18} />
               {isLoading ? "جاري التحقق..." : "دخول"}
+            </button>
+            <button className="auth-inline-switch" type="button" onPointerDown={(event) => touchAuthMode(event, "register")} onClick={() => switchAuthMode("register")}>
+              إنشاء حساب جديد
             </button>
           </form>
         ) : (
@@ -3485,6 +3495,9 @@ function LoginPassword({
             <button className="primary-button" type="submit" disabled={isLoading}>
               <Send size={18} />
               {isLoading ? "جاري إرسال الطلب..." : "إرسال الطلب للموافقة"}
+            </button>
+            <button className="auth-inline-switch" type="button" onPointerDown={(event) => touchAuthMode(event, "login")} onClick={() => switchAuthMode("login")}>
+              لدي حساب، تسجيل الدخول
             </button>
           </form>
         )}

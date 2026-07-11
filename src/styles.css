@@ -467,6 +467,17 @@ button {
   animation: authPanelIn 0.08s ease;
 }
 
+.auth-inline-switch {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--primary-dark);
+  font-weight: 900;
+  cursor: pointer;
+}
+
 .login-message {
   margin: 16px 0 0;
   color: var(--primary-dark);
