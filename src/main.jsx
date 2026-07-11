@@ -70,6 +70,7 @@ const PERMISSION_TEAM_FOLLOW = "متابعة فريق محدد";
 const PERMISSION_READ_ONLY = "قراءة فقط";
 const MAX_ACADEMY_ACCOUNTS = 3;
 const LOCAL_ONLY_ACADEMY_KEYS = ["players", "attendance", "payments", "matches", "badges"];
+const DEFAULT_ATTENDANCE_PAYMENT = 500;
 const footballPositionOptions = [
   { value: "GK", label: "حارس مرمى" },
   { value: "CB", label: "قلب دفاع" },
@@ -5217,14 +5218,14 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
     setActivePaymentPlayerId(player.id);
     setPaymentDrafts((prev) => ({
       ...prev,
-      [player.id]: prev[player.id] ?? String(player.monthlyFee || ""),
+      [player.id]: prev[player.id] ?? String(DEFAULT_ATTENDANCE_PAYMENT),
     }));
   };
 
   const saveAttendancePayment = (event, player) => {
     event.preventDefault();
     if (!isScheduledTrainingDay) return;
-    const amount = Number(paymentDrafts[player.id] || 0);
+    const amount = Number(paymentDrafts[player.id] || DEFAULT_ATTENDANCE_PAYMENT);
     if (amount <= 0) return;
 
     addPayment({
@@ -5377,7 +5378,7 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
                     min="0"
                     placeholder="المبلغ المالي"
                     type="number"
-                    value={paymentDrafts[player.id] ?? ""}
+                    value={paymentDrafts[player.id] ?? String(DEFAULT_ATTENDANCE_PAYMENT)}
                     onChange={(event) =>
                       setPaymentDrafts((prev) => ({ ...prev, [player.id]: event.target.value }))
                     }
