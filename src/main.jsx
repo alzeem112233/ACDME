@@ -11,6 +11,7 @@ import {
   ClipboardCheck,
   ClipboardList,
   Clock,
+  Download,
   Dumbbell,
   Eye,
   EyeOff,
@@ -29,6 +30,7 @@ import {
   Star,
   Swords,
   Trophy,
+  Upload,
   UserCircle,
   UserRound,
   Users,
@@ -67,6 +69,7 @@ const PERMISSION_ATTENDANCE_PLAYERS = "الحضور واللاعبين";
 const PERMISSION_TEAM_FOLLOW = "متابعة فريق محدد";
 const PERMISSION_READ_ONLY = "قراءة فقط";
 const MAX_ACADEMY_ACCOUNTS = 3;
+const LOCAL_ONLY_ACADEMY_KEYS = ["players", "attendance", "payments", "matches", "badges"];
 const ageGroupPresets = [
   { key: "hope", name: "الأمل", years: "2014-now", from: 2014, to: new Date().getFullYear() },
   { key: "buds", name: "البراعم", years: "2012-2013", from: 2012, to: 2013 },
@@ -293,6 +296,7 @@ const seedData = {
   notifications: [],
   posts: [],
   registrationRequests: [],
+  cloudSummary: {},
 };
 
 const platformSeedData = {
@@ -404,7 +408,93 @@ function normalizeAcademyData(value = {}, account = {}) {
     notifications: Array.isArray(value.notifications) ? value.notifications : [],
     posts: Array.isArray(value.posts) ? value.posts : [],
     registrationRequests: [],
+    cloudSummary: value.cloudSummary || {},
   };
+}
+
+function buildAcademyCloudSummary(value = {}) {
+  const data = normalizeAcademyData(value);
+  const hasLocalPlayerDetails = data.players.length || data.payments.length || data.attendance.length;
+  if (!hasLocalPlayerDetails && data.cloudSummary?.dataMode) {
+    return {
+      ...data.cloudSummary,
+      updatedAt: data.cloudSummary.updatedAt || new Date().toISOString(),
+    };
+  }
+
+  const paidByPlayer = data.payments.reduce((map, payment) => {
+    map[payment.playerId] = (map[payment.playerId] || 0) + Number(payment.amount || 0);
+    return map;
+  }, {});
+  const activePlayers = data.players.filter((player) => player.status !== "منقطع");
+  const expectedRevenue = data.players.reduce((sum, player) => sum + Number(player.monthlyFee || 0), 0);
+  const collectedRevenue = data.payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  const remainingRevenue = data.players.reduce((sum, player) => {
+    const due = Number(player.monthlyFee || 0);
+    const paid = paidByPlayer[player.id] || 0;
+    return sum + Math.max(due - paid, 0);
+  }, 0);
+  const sortedPaymentDates = data.payments.map((payment) => payment.date).filter(Boolean).sort();
+
+  return {
+    dataMode: "local-player-details",
+    updatedAt: new Date().toISOString(),
+    playersCount: data.players.length,
+    activePlayers: activePlayers.length,
+    stoppedPlayers: data.players.length - activePlayers.length,
+    freePlayers: data.players.filter((player) => Number(player.monthlyFee || 0) === 0 || player.subscriptionType === "مجاني").length,
+    teamsCount: data.teams.length,
+    ageGroupsCount: data.ageGroups.length,
+    coachesCount: (data.coaches || []).length + (data.coach?.name || data.coach?.phone ? 1 : 0),
+    expectedRevenue,
+    collectedRevenue,
+    remainingRevenue,
+    paymentsCount: data.payments.length,
+    attendanceCount: data.attendance.length,
+    presentCount: data.attendance.filter((row) => row.status === "حاضر").length,
+    lateCount: data.attendance.filter((row) => row.status === "متأخر").length,
+    absentCount: data.attendance.filter((row) => row.status === "غائب").length,
+    lastPaymentDate: sortedPaymentDates[sortedPaymentDates.length - 1] || "",
+  };
+}
+
+function toCloudAcademyData(value = {}, account = {}) {
+  const data = normalizeAcademyData(value, account);
+  const cloudData = {
+    ...data,
+    cloudSummary: buildAcademyCloudSummary(data),
+  };
+
+  LOCAL_ONLY_ACADEMY_KEYS.forEach((key) => {
+    cloudData[key] = [];
+  });
+
+  return cloudData;
+}
+
+function mergeAcademyLocalAndRemote(localValue = {}, remoteValue = {}, account = {}) {
+  const localData = normalizeAcademyData(localValue, account);
+  const remoteData = normalizeAcademyData(remoteValue, account);
+  const merged = {
+    ...localData,
+    ...remoteData,
+    coach: {
+      ...localData.coach,
+      ...remoteData.coach,
+    },
+    academy: {
+      ...localData.academy,
+      ...remoteData.academy,
+    },
+  };
+
+  LOCAL_ONLY_ACADEMY_KEYS.forEach((key) => {
+    const localRows = Array.isArray(localData[key]) ? localData[key] : [];
+    const legacyRemoteRows = Array.isArray(remoteData[key]) ? remoteData[key] : [];
+    merged[key] = localRows.length ? localRows : legacyRemoteRows;
+  });
+
+  return normalizeAcademyData(merged, account);
 }
 
 function hasAcademyContent(value = {}) {
@@ -418,7 +508,8 @@ function hasAcademyContent(value = {}) {
       value.attendance?.length ||
       value.payments?.length ||
       value.coaches?.length ||
-      value.users?.length,
+      value.users?.length ||
+      value.cloudSummary?.playersCount,
   );
 }
 
@@ -715,6 +806,36 @@ function printReportHtml(html) {
     window.setTimeout(() => frame.remove(), 1200);
   }, 450);
   return true;
+}
+
+async function gzipText(text) {
+  if (!("CompressionStream" in window)) {
+    return new Blob([text], { type: "application/json" });
+  }
+
+  const stream = new Blob([text], { type: "application/json" }).stream().pipeThrough(new CompressionStream("gzip"));
+  return new Response(stream).blob();
+}
+
+async function readBackupText(file) {
+  if (!file) return "";
+  if ("DecompressionStream" in window && (file.name.endsWith(".gz") || file.type.includes("gzip"))) {
+    const stream = file.stream().pipeThrough(new DecompressionStream("gzip"));
+    return new Response(stream).text();
+  }
+
+  return file.text();
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function ageFromDate(date) {
@@ -1025,8 +1146,14 @@ function App() {
 
         if (row?.data && hasAcademyContent(row.data)) {
           const remoteData = normalizeAcademyData(row.data, session);
-          lastCloudPayloadRef.current = JSON.stringify(remoteData);
-          setAcademyDataById((prev) => ({ ...prev, [currentAcademyId]: remoteData }));
+          const mergedData = mergeAcademyLocalAndRemote(localData, remoteData, session);
+          const cloudPayload = toCloudAcademyData(mergedData, session);
+          lastCloudPayloadRef.current = JSON.stringify(cloudPayload);
+          setAcademyDataById((prev) => ({ ...prev, [currentAcademyId]: mergedData }));
+
+          if (JSON.stringify(toCloudAcademyData(remoteData, session)) !== lastCloudPayloadRef.current) {
+            await upsertRemoteAcademyData(currentAcademyId, cloudPayload);
+          }
 
           if (session?.isFirstLogin) {
             const onboardingKey = currentAcademyId || normalizePhone(session.phone);
@@ -1035,10 +1162,11 @@ function App() {
             setActiveView("home");
           }
         } else if (hasAcademyContent(localData)) {
-          lastCloudPayloadRef.current = JSON.stringify(localData);
-          await upsertRemoteAcademyData(currentAcademyId, localData);
+          const cloudPayload = toCloudAcademyData(localData, session);
+          lastCloudPayloadRef.current = JSON.stringify(cloudPayload);
+          await upsertRemoteAcademyData(currentAcademyId, cloudPayload);
         } else {
-          lastCloudPayloadRef.current = JSON.stringify(localData);
+          lastCloudPayloadRef.current = JSON.stringify(toCloudAcademyData(localData, session));
         }
 
         if (!isCancelled) {
@@ -1067,7 +1195,7 @@ function App() {
       return undefined;
     }
 
-    const academyPayload = normalizeAcademyData(academyDataById[currentAcademyId], session);
+    const academyPayload = toCloudAcademyData(academyDataById[currentAcademyId], session);
     if (!hasAcademyContent(academyPayload)) return undefined;
 
     const nextSignature = JSON.stringify(academyPayload);
@@ -1231,34 +1359,45 @@ function App() {
       passwordUpdatedAt: today,
       status: "نشط",
     };
-
-    setData((prev) => ({
-      ...prev,
-      coaches: [coach, ...(prev.coaches || []).filter((item) => item.id !== coach.id)],
-      users: [
-        { ...coachAccount, academyName: prev.academy.name || academyName },
-        ...(prev.users || []).filter((user) => normalizePhone(user.phone) !== coach.phone),
-      ],
-    }));
-
-    setPlatformData((prev) => ({
-      ...prev,
-      users: [
-        coachAccount,
-        ...(prev.users || []).filter((user) => normalizePhone(user.phone) !== coach.phone),
-      ],
-    }));
+    const nextAcademyData = normalizeAcademyData(
+      {
+        ...data,
+        coaches: [coach, ...(data.coaches || []).filter((item) => normalizePhone(item.phone) !== coach.phone)],
+        users: [
+          { ...coachAccount, academyName: data.academy.name || academyName },
+          ...(data.users || []).filter((user) => normalizePhone(user.phone) !== coach.phone),
+        ],
+      },
+      session,
+    );
 
     try {
       const syncedAccount = await upsertPlatformAccount(coachAccount);
+      if (!syncedAccount) {
+        throw new Error("تعذر الوصول إلى قاعدة الحسابات.");
+      }
+      setData(nextAcademyData);
+      setPlatformData((prev) => ({
+        ...prev,
+        users: [
+          syncedAccount || coachAccount,
+          ...(prev.users || []).filter((user) => normalizePhone(user.phone) !== coach.phone),
+        ],
+      }));
       if (syncedAccount) {
         setPlatformData((prev) => ({
           ...prev,
           users: mergePlatformUsers([syncedAccount], prev.users || []),
         }));
       }
-    } catch {
-      // The local account remains available and will retry syncing on a later visit.
+      upsertRemoteAcademyData(session.academyId, toCloudAcademyData(nextAcademyData, session)).catch(() => {
+        // The login account is ready; the public academy summary can sync on the next save.
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        message: error.message || "تعذر إنشاء حساب دخول المدرب في السحابة. تحقق من الاتصال ثم أعد المحاولة.",
+      };
     }
 
     if (!session?.isFirstLogin && activeView === "coaches") {
@@ -1920,6 +2059,50 @@ function App() {
     return { ok: true, message: passwordWasChanged ? "تم تحديث الاسم وكلمة السر." : "تم تحديث اسم المستخدم." };
   };
 
+  const exportLocalBackup = async () => {
+    if (!currentAcademyId || isSuperAdmin) {
+      return { ok: false, message: "النسخ الاحتياطي متاح داخل حساب الأكاديمية فقط." };
+    }
+
+    const academyData = normalizeAcademyData(academyDataById[currentAcademyId], session);
+    const backupPayload = {
+      app: "QZ Academy",
+      version: 2,
+      createdAt: new Date().toISOString(),
+      academyId: currentAcademyId,
+      academyName: academyData.academy.name || session?.academyName || "",
+      data: academyData,
+    };
+    const blob = await gzipText(JSON.stringify(backupPayload));
+    const safeName = (backupPayload.academyName || "academy").replace(/[^\w\u0600-\u06FF-]+/g, "-");
+    downloadBlob(blob, `${safeName}-${today}.acdme-backup.json.gz`);
+    return { ok: true, message: "تم إنشاء نسخة احتياطية مضغوطة على هذا الجهاز." };
+  };
+
+  const importLocalBackup = async (file) => {
+    if (!currentAcademyId || isSuperAdmin) {
+      return { ok: false, message: "استيراد النسخة الاحتياطية متاح داخل حساب الأكاديمية فقط." };
+    }
+
+    try {
+      const text = await readBackupText(file);
+      const backup = JSON.parse(text);
+      const importedData = backup.data || backup.academyData;
+      if (!importedData || typeof importedData !== "object") {
+        return { ok: false, message: "ملف النسخة الاحتياطية غير صالح." };
+      }
+
+      const restoredData = normalizeAcademyData(importedData, session);
+      setData(restoredData);
+      upsertRemoteAcademyData(currentAcademyId, toCloudAcademyData(restoredData, session)).catch(() => {
+        // Local restore succeeds even if the public cloud summary is updated later.
+      });
+      return { ok: true, message: "تم استيراد النسخة الاحتياطية واستعادة البيانات المحلية." };
+    } catch {
+      return { ok: false, message: "تعذر قراءة النسخة الاحتياطية. تأكد من اختيار الملف الصحيح." };
+    }
+  };
+
   const viewProps = {
     data,
     academyDataById,
@@ -1950,6 +2133,8 @@ function App() {
     updateCoach,
     updateAcademy,
     updateAccountProfile,
+    exportLocalBackup,
+    importLocalBackup,
     updateRegistrationRequest,
     resetPlatformUserPassword,
     togglePlatformUserStatus,
@@ -2526,19 +2711,29 @@ function PlatformReports({ academyDataById, platformUsers, registrationRequests 
     });
 
     const linkedAccounts = Array.from(accountsByPhone.values());
+    const summary = academyData.cloudSummary || {};
+    const hasDetailedPlayers = academyData.players.length > 0;
     const activePlayers = academyData.players.filter((player) => player.status !== "منقطع");
-    const stoppedPlayers = academyData.players.length - activePlayers.length;
+    const playerCount = hasDetailedPlayers ? academyData.players.length : Number(summary.playersCount || 0);
+    const activePlayerCount = hasDetailedPlayers ? activePlayers.length : Number(summary.activePlayers || 0);
+    const stoppedPlayers = hasDetailedPlayers ? academyData.players.length - activePlayers.length : Number(summary.stoppedPlayers || 0);
     const paidByPlayer = academyData.payments.reduce((map, payment) => {
       map[payment.playerId] = (map[payment.playerId] || 0) + Number(payment.amount || 0);
       return map;
     }, {});
-    const expected = academyData.players.reduce((sum, player) => sum + Number(player.monthlyFee || 0), 0);
-    const collected = academyData.payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
-    const remaining = academyData.players.reduce((sum, player) => {
-      const due = Number(player.monthlyFee || 0);
-      const paid = paidByPlayer[player.id] || 0;
-      return sum + Math.max(due - paid, 0);
-    }, 0);
+    const expected = hasDetailedPlayers
+      ? academyData.players.reduce((sum, player) => sum + Number(player.monthlyFee || 0), 0)
+      : Number(summary.expectedRevenue || 0);
+    const collected = academyData.payments.length
+      ? academyData.payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
+      : Number(summary.collectedRevenue || 0);
+    const remaining = hasDetailedPlayers
+      ? academyData.players.reduce((sum, player) => {
+          const due = Number(player.monthlyFee || 0);
+          const paid = paidByPlayer[player.id] || 0;
+          return sum + Math.max(due - paid, 0);
+        }, 0)
+      : Number(summary.remainingRevenue || 0);
     const storedCoaches = academyData.coaches || [];
     const accountCoaches = linkedAccounts.filter((user) => user.role !== ROLE_OWNER);
     const primaryCoach = academyData.coach?.name
@@ -2580,14 +2775,17 @@ function PlatformReports({ academyDataById, platformUsers, registrationRequests 
       accounts: linkedAccounts,
       coaches,
       players: academyData.players,
+      playerCount,
       activePlayers,
+      activePlayerCount,
       stoppedPlayers,
       teams: academyData.teams,
       collected,
       expected,
       remaining,
       debtPlayers,
-      hasLocalDetails: Boolean(academyDataById?.[academyId]),
+      hasLocalDetails: hasDetailedPlayers,
+      hasCloudSummary: Boolean(summary.playersCount || summary.collectedRevenue || summary.remainingRevenue),
     };
   });
 
@@ -2595,7 +2793,7 @@ function PlatformReports({ academyDataById, platformUsers, registrationRequests 
     (sum, academy) => ({
       academies: sum.academies + 1,
       coaches: sum.coaches + academy.coaches.length,
-      players: sum.players + academy.players.length,
+      players: sum.players + academy.playerCount,
       collected: sum.collected + academy.collected,
       remaining: sum.remaining + academy.remaining,
     }),
@@ -2644,14 +2842,14 @@ function PlatformReports({ academyDataById, platformUsers, registrationRequests 
                 <h2>{academy.name}</h2>
                 <small>{academy.phone}</small>
               </div>
-              <b>{academy.hasLocalDetails ? "بيانات متاحة" : "بيانات أساسية"}</b>
+              <b>{academy.hasLocalDetails ? "تفاصيل محلية" : academy.hasCloudSummary ? "ملخص عام" : "بيانات أساسية"}</b>
             </div>
 
             <div className="academy-report-kpis">
               <Detail label="المدربون" value={academy.coaches.length} />
               <Detail label="الحسابات" value={academy.accounts.length} />
-              <Detail label="اللاعبون" value={academy.players.length} />
-              <Detail label="النشطون" value={academy.activePlayers.length} />
+              <Detail label="اللاعبون" value={academy.playerCount} />
+              <Detail label="النشطون" value={academy.activePlayerCount} />
               <Detail label="المنقطعون" value={academy.stoppedPlayers} />
               <Detail label="المحصل" value={currency(academy.collected)} />
               <Detail label="المتبقي" value={currency(academy.remaining)} />
@@ -2678,6 +2876,7 @@ function PlatformReports({ academyDataById, platformUsers, registrationRequests 
               </div>
               <div>
                 <strong>أعلى المتبقيات</strong>
+                {!academy.hasLocalDetails && academy.hasCloudSummary && <span>تفاصيل اللاعبين محفوظة محليًا، ويظهر هنا الملخص المالي العام فقط.</span>}
                 {academy.debtPlayers.length === 0 && <span>لا توجد مبالغ متبقية مسجلة.</span>}
                 {academy.debtPlayers.slice(0, 3).map((player) => (
                   <span key={player.id}>{player.name}: {currency(player.remaining)}</span>
@@ -2713,10 +2912,10 @@ function PlatformReports({ academyDataById, platformUsers, registrationRequests 
                   <td>{academy.name}</td>
                   <td>{academy.accounts.length}</td>
                   <td>{academy.coaches.length}</td>
-                  <td>{academy.players.length}</td>
+                  <td>{academy.playerCount}</td>
                   <td>{currency(academy.collected)}</td>
                   <td>{currency(academy.remaining)}</td>
-                  <td>{academy.hasLocalDetails ? "تفصيلي" : "أساسي"}</td>
+                  <td>{academy.hasLocalDetails ? "تفصيلي محلي" : academy.hasCloudSummary ? "ملخص عام" : "أساسي"}</td>
                 </tr>
               ))}
             </tbody>
@@ -3026,6 +3225,14 @@ function LoginPassword({
   };
 
   const switchAuthMode = (nextMode) => {
+    if (nextMode === "register" && phone && !registration.phone) {
+      setRegistration((prev) => ({ ...prev, phone: normalizePhone(phone) }));
+    }
+
+    if (nextMode === "login" && registration.phone && !phone) {
+      setPhone(normalizePhone(registration.phone));
+    }
+
     setMode(nextMode);
     setMessage("");
     setIsLoading(false);
@@ -3083,7 +3290,7 @@ function LoginPassword({
         </div>
 
         {mode === "login" ? (
-          <form className="form-panel" onSubmit={submitLogin} aria-busy={isLoading}>
+          <form className="form-panel" key="login-form" onSubmit={submitLogin} aria-busy={isLoading}>
             <FormTitle icon={LockKeyhole} title="تسجيل الدخول" />
             <input
               value={phone}
@@ -3106,7 +3313,7 @@ function LoginPassword({
             </button>
           </form>
         ) : (
-          <form className="form-panel" onSubmit={submitRegistration} aria-busy={isLoading}>
+          <form className="form-panel" key="register-form" onSubmit={submitRegistration} aria-busy={isLoading}>
             <FormTitle icon={Plus} title="إنشاء حساب أكاديمية" />
             <input
               value={registration.academyName}
@@ -3509,12 +3716,14 @@ function CoachesSettings({ data, addAcademyCoach, toggleAcademyCoachStatus }) {
   );
 }
 
-function AcademySettings({ data, updateAcademy }) {
+function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBackup }) {
   const [logoPreview, setLogoPreview] = useState(data.academy.logo || "");
   const [locationText, setLocationText] = useState(data.academy.location || "");
   const [gpsLocation, setGpsLocation] = useState(data.academy.gpsLocation || "");
   const [gpsMessage, setGpsMessage] = useState("");
   const [formError, setFormError] = useState("");
+  const [backupMessage, setBackupMessage] = useState("");
+  const [isBackupBusy, setIsBackupBusy] = useState(false);
 
   const updateLogoPreview = (event) => {
     const file = event.target.files?.[0];
@@ -3559,6 +3768,24 @@ function AcademySettings({ data, updateAcademy }) {
     }
 
     updateAcademy(event);
+  };
+  const handleBackupExport = async () => {
+    setBackupMessage("");
+    setIsBackupBusy(true);
+    const result = await exportLocalBackup?.();
+    setBackupMessage(result?.message || "تم تنفيذ العملية.");
+    setIsBackupBusy(false);
+  };
+  const handleBackupImport = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setBackupMessage("");
+    setIsBackupBusy(true);
+    const result = await importLocalBackup?.(file);
+    setBackupMessage(result?.message || "تم تنفيذ العملية.");
+    setIsBackupBusy(false);
+    event.target.value = "";
   };
 
   return (
@@ -3621,6 +3848,28 @@ function AcademySettings({ data, updateAcademy }) {
         </button>
         <small className="setup-footnote">يمكنك تعديل هذه البيانات لاحقًا من قسم الإعدادات.</small>
       </form>
+
+      <section className="setup-card backup-card">
+        <section className="age-hero-card">
+          <span>نسخة محلية</span>
+          <h2>حفظ بيانات اللاعبين على الهاتف</h2>
+          <p>اللاعبون وصورهم والحضور والمدفوعات التفصيلية تبقى على هذا الجهاز. أنشئ نسخة احتياطية مضغوطة لاستعادتها لاحقًا.</p>
+        </section>
+
+        <div className="backup-actions">
+          <button className="yellow-button" type="button" onClick={handleBackupExport} disabled={isBackupBusy}>
+            <Download size={18} />
+            إنشاء نسخة احتياطية
+          </button>
+          <label className={isBackupBusy ? "backup-import-button disabled" : "backup-import-button"}>
+            <Upload size={18} />
+            استيراد نسخة احتياطية
+            <input type="file" accept=".gz,.json,application/gzip,application/json" onChange={handleBackupImport} disabled={isBackupBusy} />
+          </label>
+        </div>
+
+        {backupMessage && <p className={backupMessage.startsWith("تم") ? "setup-success" : "setup-error"}>{backupMessage}</p>}
+      </section>
     </section>
   );
 }

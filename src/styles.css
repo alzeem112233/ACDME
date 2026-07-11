@@ -477,6 +477,39 @@ button {
   gap: 8px;
 }
 
+.backup-card {
+  margin-top: 16px;
+}
+
+.backup-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.backup-import-button {
+  min-height: 46px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  color: var(--primary-dark);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.backup-import-button input {
+  display: none;
+}
+
+.backup-import-button.disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .join-form {
   margin-top: 18px;
   padding-top: 18px;
