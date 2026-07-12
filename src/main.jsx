@@ -5541,6 +5541,7 @@ function Reports({ data, helpers, addPayment }) {
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const [selectedGroupId, setSelectedGroupId] = useState("all");
   const [activeReportTab, setActiveReportTab] = useState("overview");
+  const [selectedDailyDate, setSelectedDailyDate] = useState(today);
   const [reportNotice, setReportNotice] = useState("");
   const monthOptions = Array.from(
     new Set([currentMonth, ...data.payments.map((payment) => String(payment.date || "").slice(0, 7)).filter(Boolean)]),
@@ -5671,8 +5672,62 @@ function Reports({ data, helpers, addPayment }) {
   const dailyAverage = Math.round(collected / Math.max(elapsedDays, 1));
   const projectedCollection = isAllMonths ? collected : Math.min(expected, Math.round(dailyAverage * forecastDaysInMonth));
   const neededDailyCollection = remainingDays > 0 ? Math.ceil(remaining / remainingDays) : remaining;
+  const paymentsByPlayerDate = filteredPayments.reduce((map, payment) => {
+    const key = `${payment.playerId}-${payment.date}`;
+    map[key] = (map[key] || 0) + Number(payment.amount || 0);
+    return map;
+  }, {});
+  const buildDailyCollectionRows = (date) => {
+    const presentPlayerIds = new Set(
+      filteredAttendance
+        .filter((row) => row.date === date && row.status === "حاضر")
+        .map((row) => row.playerId),
+    );
+    return Array.from(presentPlayerIds)
+      .map((playerId) => {
+        const player = helpers.playerById[playerId];
+        if (!player || player.subscriptionPaidFull || Number(player.monthlyFee || 0) <= 0) return null;
+        const team = helpers.teamById[player.teamId];
+        const group = helpers.groupById[team?.ageGroupId];
+        const dailyDue = Math.round(Number(player.monthlyFee || 0) / 8);
+        const paid = paymentsByPlayerDate[`${player.id}-${date}`] || 0;
+        const remainingAmount = Math.max(dailyDue - paid, 0);
+        const status = remainingAmount === 0 ? "مدفوع" : paid > 0 ? "جزئي" : "متأخر";
+        return {
+          ...player,
+          teamName: team?.name || "بدون فريق",
+          groupName: group?.name || "-",
+          dailyDue,
+          paid,
+          remaining: remainingAmount,
+          status,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.remaining - a.remaining || a.name.localeCompare(b.name, "ar"));
+  };
+  const selectedDailyRows = buildDailyCollectionRows(selectedDailyDate);
+  const selectedDailyExpected = selectedDailyRows.reduce((sum, player) => sum + player.dailyDue, 0);
+  const selectedDailyPaid = selectedDailyRows.reduce((sum, player) => sum + player.paid, 0);
+  const selectedDailyRemaining = Math.max(selectedDailyExpected - selectedDailyPaid, 0);
+  const selectedDailyMissingRows = selectedDailyRows.filter((player) => player.remaining > 0);
+  const dailyCollectionRows = Array.from(new Set(filteredAttendance.map((row) => row.date).filter(Boolean)))
+    .sort((a, b) => String(b).localeCompare(String(a)))
+    .map((date) => {
+      const rows = buildDailyCollectionRows(date);
+      const dailyExpected = rows.reduce((sum, player) => sum + player.dailyDue, 0);
+      const dailyPaid = rows.reduce((sum, player) => sum + player.paid, 0);
+      return {
+        date,
+        count: rows.length,
+        expected: dailyExpected,
+        paid: dailyPaid,
+        remaining: Math.max(dailyExpected - dailyPaid, 0),
+      };
+    });
   const reportTabs = [
     { id: "overview", label: "الملخص" },
+    { id: "daily", label: "التقرير اليومي" },
     { id: "players", label: "كشف اللاعبين" },
     { id: "debts", label: "المتأخرات" },
     { id: "payments", label: "الدفعات" },
@@ -5846,6 +5901,40 @@ function Reports({ data, helpers, addPayment }) {
     }));
     showReportNotice(ok ? "تم فتح تقرير الحضور للطباعة PDF" : "تعذر فتح نافذة الطباعة");
   };
+  const printDailyPdf = () => {
+    const playerRows = selectedDailyRows.map((player) => [
+      player.name,
+      player.teamName,
+      player.groupName,
+      currency(player.monthlyFee),
+      currency(player.dailyDue),
+      currency(player.paid),
+      currency(player.remaining),
+      player.status,
+    ]);
+    const ok = printReportHtml(buildPrintReportHtml({
+      title: "التقرير المالي اليومي",
+      subtitle: `${selectedDailyDate} - ${reportGroupLabel}`,
+      academyName: data.academy.name,
+      logo: data.academy.logo,
+      cards: [
+        { label: "اللاعبون المحتسبون", value: selectedDailyRows.length },
+        { label: "المفترض اليوم", value: currency(selectedDailyExpected) },
+        { label: "المدفوع", value: currency(selectedDailyPaid) },
+        { label: "المتبقي", value: currency(selectedDailyRemaining) },
+      ],
+      sections: [
+        reportTable(
+          "تحصيل اللاعبين الحاضرين غير المسددين بالكامل",
+          ["اللاعب", "الفريق", "الفئة", "الاشتراك", "حصة اليوم", "المدفوع", "المتبقي", "الحالة"],
+          playerRows,
+          "لا توجد سجلات حضور محتسبة لهذا اليوم.",
+        ),
+      ],
+      note: "حصة اليوم = قيمة الاشتراك الشهري مقسومة على 8، ولا يتم احتساب من فعّل خيار دفع الاشتراك كامل.",
+    }));
+    showReportNotice(ok ? "تم فتح التقرير اليومي للطباعة PDF" : "تعذر فتح نافذة الطباعة");
+  };
   const printKitPdf = () => {
     const rows = kitRows.map((player) => [
       player.name,
@@ -5961,6 +6050,10 @@ function Reports({ data, helpers, addPayment }) {
           <button className="attendance-pdf-button" type="button" onClick={printAttendancePdf}>
             <CalendarCheck size={16} />
             PDF حضور
+          </button>
+          <button className="attendance-pdf-button" type="button" onClick={printDailyPdf}>
+            <CalendarCheck size={16} />
+            PDF يومي
           </button>
           <button type="button" onClick={printKitPdf}>
             <Trophy size={16} />
@@ -6120,6 +6213,104 @@ function Reports({ data, helpers, addPayment }) {
                   <span>{source.label}</span>
                   <b>{currency(source.value)}</b>
                   <i style={{ "--fill": `${Math.round((source.value / Math.max(collected, 1)) * 100)}%`, "--tone": source.color }} />
+                </div>
+              ))}
+            </div>
+          </article>
+        </section>
+      )}
+
+      {activeReportTab === "daily" && (
+        <section className="finance-report-grid">
+          <article className="finance-chart-card wide">
+            <div className="finance-card-head">
+              <div>
+                <span>التقرير اليومي</span>
+                <strong>{selectedDailyDate}</strong>
+              </div>
+              <CalendarCheck size={20} />
+            </div>
+            <label className="daily-report-date">
+              <span>اختر اليوم</span>
+              <input type="date" value={selectedDailyDate} onChange={(event) => setSelectedDailyDate(event.target.value)} />
+            </label>
+            <div className="finance-ledger-money">
+              <span>عدد اللاعبين <b>{selectedDailyRows.length}</b></span>
+              <span>المفترض اليوم <b>{currency(selectedDailyExpected)}</b></span>
+              <span>المدفوع <b>{currency(selectedDailyPaid)}</b></span>
+              <span>المتبقي <b>{currency(selectedDailyRemaining)}</b></span>
+            </div>
+            <div className="daily-report-note">
+              يتم احتساب اللاعب إذا كان حاضرًا ولم يدفع الاشتراك كاملًا. حصة اليوم = الاشتراك الشهري ÷ 8.
+            </div>
+            <div className="finance-player-ledger">
+              {selectedDailyRows.length === 0 && <div className="finance-empty">لا توجد سجلات حضور محتسبة لهذا اليوم.</div>}
+              {selectedDailyRows.map((player) => {
+                const paymentRate = player.dailyDue === 0 ? 100 : Math.min(100, Math.round((player.paid / Math.max(player.dailyDue, 1)) * 100));
+                return (
+                  <article key={player.id}>
+                    <div className="finance-ledger-head">
+                      <div>
+                        <strong>{player.name}</strong>
+                        <span>{player.teamName} {player.groupName ? `- ${player.groupName}` : ""}</span>
+                      </div>
+                      <b className={`ledger-status status-${player.status}`}>{player.status}</b>
+                    </div>
+                    <div className="finance-ledger-money">
+                      <span>الاشتراك <b>{currency(player.monthlyFee)}</b></span>
+                      <span>حصة اليوم <b>{currency(player.dailyDue)}</b></span>
+                      <span>المدفوع <b>{currency(player.paid)}</b></span>
+                      <span>المتبقي <b>{currency(player.remaining)}</b></span>
+                    </div>
+                    <div className="finance-ledger-progress">
+                      <i style={{ "--fill": `${paymentRate}%` }} />
+                      <small>{paymentRate}% سداد اليوم</small>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </article>
+
+          <article className="finance-chart-card wide">
+            <div className="finance-card-head">
+              <div>
+                <span>تحصيل كل يوم على حدة</span>
+                <strong>{dailyCollectionRows.length} يوم</strong>
+              </div>
+              <ClipboardList size={20} />
+            </div>
+            <div className="daily-collection-list">
+              {dailyCollectionRows.length === 0 && <div className="finance-empty">لا توجد أيام حضور ضمن الفلتر الحالي.</div>}
+              {dailyCollectionRows.map((day) => (
+                <button key={day.date} type="button" className={selectedDailyDate === day.date ? "active" : ""} onClick={() => setSelectedDailyDate(day.date)}>
+                  <span>{day.date}</span>
+                  <b>{day.count} لاعب</b>
+                  <small>المفترض {currency(day.expected)}</small>
+                  <small>المدفوع {currency(day.paid)}</small>
+                  <strong>المتبقي {currency(day.remaining)}</strong>
+                </button>
+              ))}
+            </div>
+          </article>
+
+          <article className="finance-chart-card wide">
+            <div className="finance-card-head">
+              <div>
+                <span>عند من النقص</span>
+                <strong>{selectedDailyMissingRows.length} لاعب</strong>
+              </div>
+              <Bell size={20} />
+            </div>
+            <div className="finance-debt-list">
+              {selectedDailyMissingRows.length === 0 && <div className="finance-empty">لا يوجد نقص في اليوم المحدد.</div>}
+              {selectedDailyMissingRows.map((player) => (
+                <div key={player.id}>
+                  <div>
+                    <strong>{player.name}</strong>
+                    <span>{player.teamName} - حصة اليوم {currency(player.dailyDue)} - دفع {currency(player.paid)}</span>
+                  </div>
+                  <b>{currency(player.remaining)}</b>
                 </div>
               ))}
             </div>
