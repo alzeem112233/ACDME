@@ -59,7 +59,11 @@ import "./styles.css";
 
 registerServiceWorker();
 
-const today = new Date().toISOString().slice(0, 10);
+function currentDateKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+const today = currentDateKey();
 const SUPER_ADMIN_PHONE = "+967772227092";
 const SUPER_ADMIN_PASSWORD = "772227092";
 const STATUS_PENDING = "قيد المراجعة";
@@ -298,6 +302,8 @@ const seedData = {
     gpsLocation: "",
     renewalLastAt: today,
     renewalExpiresAt: addDays(today, RENEWAL_PERIOD_DAYS),
+    renewalStartedAtIso: new Date().toISOString(),
+    renewalExpiresAtIso: addDaysIso(new Date(), RENEWAL_PERIOD_DAYS),
   },
   users: [],
   ageGroups: [],
@@ -879,10 +885,17 @@ function ageFromDate(date) {
 }
 
 function addDays(date, days) {
-  const parsedDate = new Date(`${date || today}T00:00:00`);
-  if (Number.isNaN(parsedDate.getTime())) return today;
+  const parsedDate = new Date(`${date || currentDateKey()}T00:00:00`);
+  if (Number.isNaN(parsedDate.getTime())) return currentDateKey();
   parsedDate.setDate(parsedDate.getDate() + days);
   return parsedDate.toISOString().slice(0, 10);
+}
+
+function addDaysIso(date = new Date(), days = 0) {
+  const parsedDate = date instanceof Date ? new Date(date) : new Date(date);
+  if (Number.isNaN(parsedDate.getTime())) return new Date().toISOString();
+  parsedDate.setDate(parsedDate.getDate() + days);
+  return parsedDate.toISOString();
 }
 
 function daysBetween(startDate, endDate) {
@@ -892,15 +905,20 @@ function daysBetween(startDate, endDate) {
   return Math.ceil((end.getTime() - start.getTime()) / 86400000);
 }
 
-function academyRenewalInfo(academy = {}) {
-  const lastRenewedAt = academy.renewalLastAt || today;
-  const expiresAt = academy.renewalExpiresAt || addDays(lastRenewedAt, RENEWAL_PERIOD_DAYS);
-  const remainingDays = daysBetween(today, expiresAt);
+function academyRenewalInfo(academy = {}, localTimer = {}) {
+  const now = new Date();
+  const lastRenewedAt = localTimer.renewalLastAt || academy.renewalLastAt || currentDateKey();
+  const expiresAt = localTimer.renewalExpiresAt || academy.renewalExpiresAt || addDays(lastRenewedAt, RENEWAL_PERIOD_DAYS);
+  const expiresAtMs =
+    Date.parse(localTimer.renewalExpiresAtIso || "") ||
+    Date.parse(`${expiresAt}T23:59:59`);
+  const remainingMs = Number.isFinite(expiresAtMs) ? expiresAtMs - now.getTime() : 0;
+  const remainingDays = Math.ceil(remainingMs / 86400000);
   return {
     lastRenewedAt,
     expiresAt,
     remainingDays: Math.max(remainingDays, 0),
-    isExpired: remainingDays <= 0,
+    isExpired: remainingMs <= 0,
   };
 }
 
@@ -1071,12 +1089,14 @@ function App() {
   const [onboardingState, setOnboardingState] = useLocalState("acdme-onboarding-v4", {});
   const [platformData, setPlatformData] = useLocalState("acdme-platform-data-v1", platformSeedData);
   const [academyDataById, setAcademyDataById] = useLocalState("acdme-academy-data-by-id-v1", {});
+  const [renewalTimers, setRenewalTimers] = useLocalState("acdme-renewal-timers-v1", {});
   const [cloudSyncState, setCloudSyncState] = useState({ academyId: "", loaded: false, saving: false, error: "", syncedAt: "" });
   const lastCloudPayloadRef = useRef("");
   const [query, setQuery] = useState("");
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [isOnline, setIsOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
   const [onlineSyncTick, setOnlineSyncTick] = useState(0);
+  const [renewalClockTick, setRenewalClockTick] = useState(() => Date.now());
   const isSuperAdmin = isSuperAdminSession(session);
   const currentAcademyId = session?.academyId || "";
   const data = useMemo(() => {
@@ -1164,6 +1184,54 @@ function App() {
   });
 
   const registrationRequests = platformRegistrationRequests;
+
+  useEffect(() => {
+    const renewalTimer = window.setInterval(() => {
+      setRenewalClockTick(Date.now());
+    }, 30000);
+
+    return () => window.clearInterval(renewalTimer);
+  }, []);
+
+  useEffect(() => {
+    if (!session?.verified || isSuperAdmin || !currentAcademyId) return;
+
+    const localTimer = renewalTimers[currentAcademyId];
+    if (localTimer?.renewalExpiresAt) return;
+
+    const rawAcademy = academyDataById[currentAcademyId]?.academy || {};
+    const renewalLastAt = rawAcademy.renewalLastAt || currentDateKey();
+    const renewalExpiresAt = rawAcademy.renewalExpiresAt || addDays(renewalLastAt, RENEWAL_PERIOD_DAYS);
+    const renewalExpiresAtIso = rawAcademy.renewalExpiresAtIso || addDaysIso(new Date(`${renewalLastAt}T00:00:00`), RENEWAL_PERIOD_DAYS);
+
+    setRenewalTimers((prev) => ({
+      ...prev,
+      [currentAcademyId]: {
+        renewalLastAt,
+        renewalExpiresAt,
+        renewalExpiresAtIso,
+        createdAt: new Date().toISOString(),
+      },
+    }));
+
+    if (!rawAcademy.renewalLastAt || !rawAcademy.renewalExpiresAt) {
+      setAcademyDataById((prev) => {
+        const currentData = normalizeAcademyData(prev[currentAcademyId], session);
+        return {
+          ...prev,
+          [currentAcademyId]: {
+            ...currentData,
+            academy: {
+              ...currentData.academy,
+              renewalLastAt,
+              renewalExpiresAt,
+              renewalExpiresAtIso,
+            },
+          },
+        };
+      });
+    }
+  }, [academyDataById, currentAcademyId, isSuperAdmin, renewalTimers, session?.verified]);
 
   useEffect(() => {
     const updateConnectionState = () => {
@@ -1312,8 +1380,10 @@ function App() {
       return { ok: false, message: "يجب التجديد من الحساب الرئيسي للأكاديمية." };
     }
 
-    const renewalLastAt = today;
-    const renewalExpiresAt = addDays(today, RENEWAL_PERIOD_DAYS);
+    const renewalStartedAtIso = new Date().toISOString();
+    const renewalLastAt = currentDateKey();
+    const renewalExpiresAt = addDays(renewalLastAt, RENEWAL_PERIOD_DAYS);
+    const renewalExpiresAtIso = addDaysIso(renewalStartedAtIso, RENEWAL_PERIOD_DAYS);
     const nextAcademyData = normalizeAcademyData(
       {
         ...data,
@@ -1321,6 +1391,8 @@ function App() {
           ...data.academy,
           renewalLastAt,
           renewalExpiresAt,
+          renewalStartedAtIso,
+          renewalExpiresAtIso,
         },
       },
       session,
@@ -1329,6 +1401,16 @@ function App() {
     setAcademyDataById((prev) => ({
       ...prev,
       [currentAcademyId]: nextAcademyData,
+    }));
+    setRenewalTimers((prev) => ({
+      ...prev,
+      [currentAcademyId]: {
+        renewalLastAt,
+        renewalExpiresAt,
+        renewalStartedAtIso,
+        renewalExpiresAtIso,
+        renewedAt: new Date().toISOString(),
+      },
     }));
 
     if (isOnline) {
@@ -2513,6 +2595,7 @@ function App() {
         onboardingState,
         platformData,
         academyDataById: allAcademies,
+        renewalTimers,
       },
       localStorage: {
         ...readAppLocalSnapshot(),
@@ -2521,6 +2604,7 @@ function App() {
         "acdme-onboarding-v4": onboardingState,
         "acdme-platform-data-v1": platformData,
         "acdme-academy-data-by-id-v1": allAcademies,
+        "acdme-renewal-timers-v1": renewalTimers,
       },
     };
     const blob = await gzipText(JSON.stringify(backupPayload));
@@ -2553,6 +2637,7 @@ function App() {
       };
       const nextPlatformData = backup.appState?.platformData || platformData;
       const nextOnboardingState = backup.appState?.onboardingState || onboardingState;
+      const nextRenewalTimers = backup.appState?.renewalTimers || renewalTimers;
       const nextSession = backup.appState?.session || session;
       const nextActiveView = backup.appState?.activeView || activeView;
 
@@ -2562,11 +2647,13 @@ function App() {
       writeLocalData("acdme-onboarding-v4", nextOnboardingState);
       writeLocalData("acdme-platform-data-v1", nextPlatformData);
       writeLocalData("acdme-academy-data-by-id-v1", restoredAcademies);
+      writeLocalData("acdme-renewal-timers-v1", nextRenewalTimers);
 
       setData(restoredData);
       setAcademyDataById(restoredAcademies);
       setPlatformData(nextPlatformData);
       setOnboardingState(nextOnboardingState);
+      setRenewalTimers(nextRenewalTimers);
       setSession(nextSession);
       setActiveView(nextActiveView);
       upsertRemoteAcademyData(restoredAcademyId, toCloudAcademyData(restoredData, nextSession)).catch(() => {
@@ -2627,7 +2714,7 @@ function App() {
   };
 
   const fallbackView = isSuperAdmin ? "platformDashboard" : session?.isFirstLogin ? "coachSetup" : "home";
-  const renewalInfo = academyRenewalInfo(data.academy);
+  const renewalInfo = academyRenewalInfo(data.academy, renewalTimers[currentAcademyId]);
   const isRenewalExpired = !isSuperAdmin && session?.verified && !session?.isFirstLogin && renewalInfo.isExpired;
   const visibleNavItems = isSuperAdmin
     ? navItems
