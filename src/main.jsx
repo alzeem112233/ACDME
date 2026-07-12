@@ -75,6 +75,7 @@ const PERMISSION_READ_ONLY = "قراءة فقط";
 const MAX_ACADEMY_ACCOUNTS = 3;
 const LOCAL_ONLY_ACADEMY_KEYS = ["players", "attendance", "payments", "matches", "badges"];
 const DEFAULT_ATTENDANCE_PAYMENT = 500;
+const RENEWAL_PERIOD_DAYS = 29;
 const footballPositionOptions = [
   { value: "حارس", label: "حارس" },
   { value: "مدافع", label: "مدافع" },
@@ -295,6 +296,8 @@ const seedData = {
     plan: "",
     ownerPhone: "",
     gpsLocation: "",
+    renewalLastAt: today,
+    renewalExpiresAt: addDays(today, RENEWAL_PERIOD_DAYS),
   },
   users: [],
   ageGroups: [],
@@ -875,6 +878,32 @@ function ageFromDate(date) {
   return Math.abs(new Date(diff).getUTCFullYear() - 1970);
 }
 
+function addDays(date, days) {
+  const parsedDate = new Date(`${date || today}T00:00:00`);
+  if (Number.isNaN(parsedDate.getTime())) return today;
+  parsedDate.setDate(parsedDate.getDate() + days);
+  return parsedDate.toISOString().slice(0, 10);
+}
+
+function daysBetween(startDate, endDate) {
+  const start = new Date(`${startDate || today}T00:00:00`);
+  const end = new Date(`${endDate || today}T00:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 0;
+  return Math.ceil((end.getTime() - start.getTime()) / 86400000);
+}
+
+function academyRenewalInfo(academy = {}) {
+  const lastRenewedAt = academy.renewalLastAt || today;
+  const expiresAt = academy.renewalExpiresAt || addDays(lastRenewedAt, RENEWAL_PERIOD_DAYS);
+  const remainingDays = daysBetween(today, expiresAt);
+  return {
+    lastRenewedAt,
+    expiresAt,
+    remainingDays: Math.max(remainingDays, 0),
+    isExpired: remainingDays <= 0,
+  };
+}
+
 function comparePlayersBySortMode(firstPlayer, secondPlayer, sortMode) {
   if (sortMode === "name") {
     return String(firstPlayer.name || "").localeCompare(String(secondPlayer.name || ""), "ar");
@@ -1272,6 +1301,53 @@ function App() {
       setCloudSyncState((prev) => ({ ...prev, saving: false, error: message }));
       return { ok: false, message };
     }
+  };
+
+  const renewAcademyAccess = async () => {
+    if (!currentAcademyId || isSuperAdmin) {
+      return { ok: false, message: "التجديد متاح داخل حساب الأكاديمية فقط." };
+    }
+
+    if (session?.role !== ROLE_OWNER) {
+      return { ok: false, message: "يجب التجديد من الحساب الرئيسي للأكاديمية." };
+    }
+
+    const renewalLastAt = today;
+    const renewalExpiresAt = addDays(today, RENEWAL_PERIOD_DAYS);
+    const nextAcademyData = normalizeAcademyData(
+      {
+        ...data,
+        academy: {
+          ...data.academy,
+          renewalLastAt,
+          renewalExpiresAt,
+        },
+      },
+      session,
+    );
+
+    setAcademyDataById((prev) => ({
+      ...prev,
+      [currentAcademyId]: nextAcademyData,
+    }));
+
+    if (isOnline) {
+      try {
+        await upsertRemoteAcademyData(currentAcademyId, toCloudAcademyData(nextAcademyData, session));
+        lastCloudPayloadRef.current = JSON.stringify(toCloudAcademyData(nextAcademyData, session));
+        setCloudSyncState((prev) => ({ ...prev, academyId: currentAcademyId, loaded: true, saving: false, error: "", syncedAt: new Date().toISOString() }));
+      } catch (error) {
+        setCloudSyncState((prev) => ({
+          ...prev,
+          academyId: currentAcademyId,
+          loaded: true,
+          saving: false,
+          error: error.message || "تم التجديد على هذا الجهاز، وسيُرفع عند عودة الاتصال.",
+        }));
+      }
+    }
+
+    return { ok: true, message: `تم التجديد حتى ${renewalExpiresAt}.` };
   };
 
   useEffect(() => {
@@ -2537,6 +2613,7 @@ function App() {
     exportLocalBackup,
     importLocalBackup,
     syncCurrentAcademyNow,
+    renewAcademyAccess,
     updateRegistrationRequest,
     resetPlatformUserPassword,
     togglePlatformUserStatus,
@@ -2550,6 +2627,8 @@ function App() {
   };
 
   const fallbackView = isSuperAdmin ? "platformDashboard" : session?.isFirstLogin ? "coachSetup" : "home";
+  const renewalInfo = academyRenewalInfo(data.academy);
+  const isRenewalExpired = !isSuperAdmin && session?.verified && !session?.isFirstLogin && renewalInfo.isExpired;
   const visibleNavItems = isSuperAdmin
     ? navItems
     : navItems.filter((item) => canAccessView(item.id, session));
@@ -2619,6 +2698,19 @@ function App() {
           setSession({ ...nextSession, verified: true, isFirstLogin: shouldCompleteSetup });
           setActiveView(nextView);
         }}
+      />
+    );
+  }
+
+  if (isRenewalExpired) {
+    return (
+      <RenewalGate
+        academyName={session.academyName || data.academy.name || "الأكاديمية"}
+        renewalInfo={renewalInfo}
+        canRenew={session?.role === ROLE_OWNER}
+        isOnline={isOnline}
+        onRenew={renewAcademyAccess}
+        onLogout={handleLogout}
       />
     );
   }
@@ -2749,6 +2841,67 @@ function App() {
         </div>
       </nav>}
     </div>
+  );
+}
+
+function RenewalGate({ academyName, renewalInfo, canRenew, isOnline, onRenew, onLogout }) {
+  const [message, setMessage] = useState("");
+  const [isRenewing, setIsRenewing] = useState(false);
+
+  const handleRenew = async () => {
+    setIsRenewing(true);
+    const result = await onRenew();
+    setMessage(result.message);
+    setIsRenewing(false);
+  };
+
+  return (
+    <main className="renewal-lock-screen">
+      <section className="renewal-lock-card">
+        <div className="renewal-lock-icon">
+          <LockKeyhole size={34} />
+        </div>
+        <span>انتهت مدة التجديد</span>
+        <h1>{academyName}</h1>
+        <p>
+          يعمل التطبيق لمدة {RENEWAL_PERIOD_DAYS} يومًا. انتهت المدة في {renewalInfo.expiresAt} ويجب التجديد من الحساب الرئيسي للأكاديمية.
+        </p>
+
+        <div className="renewal-lock-details">
+          <div>
+            <small>آخر تجديد</small>
+            <strong>{renewalInfo.lastRenewedAt}</strong>
+          </div>
+          <div>
+            <small>تاريخ الإغلاق</small>
+            <strong>{renewalInfo.expiresAt}</strong>
+          </div>
+        </div>
+
+        {canRenew ? (
+          <button className="renewal-primary-button" type="button" onClick={handleRenew} disabled={isRenewing}>
+            <RefreshCw size={18} />
+            {isRenewing ? "جاري التجديد..." : `تجديد ${RENEWAL_PERIOD_DAYS} يوم`}
+          </button>
+        ) : (
+          <div className="renewal-owner-note">
+            سجّل الدخول بالحساب الرئيسي للأكاديمية لتجديد التطبيق.
+          </div>
+        )}
+
+        {!isOnline && (
+          <div className="renewal-offline-note">
+            لا يوجد اتصال الآن. يمكن للمالك التجديد على هذا الجهاز، وستتم المزامنة عند عودة الإنترنت.
+          </div>
+        )}
+
+        {message && <p className="renewal-message">{message}</p>}
+
+        <button className="renewal-logout-button" type="button" onClick={onLogout}>
+          تسجيل الخروج
+        </button>
+      </section>
+    </main>
   );
 }
 

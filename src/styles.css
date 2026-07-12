@@ -4315,6 +4315,137 @@ th {
   line-height: 1.7;
 }
 
+.renewal-lock-screen {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(189, 139, 4, 0.16), transparent 34%),
+    linear-gradient(180deg, #f7f8fb, #eef1f5);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.renewal-lock-card {
+  width: min(440px, 100%);
+  border: 1px solid #e4e8ee;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 20px 46px rgba(16, 24, 40, 0.12);
+  padding: 20px;
+  display: grid;
+  gap: 14px;
+  text-align: center;
+}
+
+.renewal-lock-icon {
+  width: 70px;
+  height: 70px;
+  border-radius: 999px;
+  background: #fff4d8;
+  color: #946500;
+  display: grid;
+  place-items: center;
+  justify-self: center;
+}
+
+.renewal-lock-card span {
+  color: #b94a48;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.renewal-lock-card h1 {
+  margin: 0;
+  color: #111a4f;
+  font-size: 24px;
+}
+
+.renewal-lock-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.8;
+}
+
+.renewal-lock-details {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.renewal-lock-details div {
+  border-radius: 13px;
+  background: #f8fafb;
+  border: 1px solid #eef1f5;
+  padding: 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.renewal-lock-details small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.renewal-lock-details strong {
+  color: #111a79;
+  font-size: 13px;
+}
+
+.renewal-primary-button,
+.renewal-logout-button {
+  min-height: 44px;
+  border: 0;
+  border-radius: 13px;
+  font-size: 13px;
+  font-weight: 900;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.renewal-primary-button {
+  background: #111a79;
+  color: #fff;
+}
+
+.renewal-primary-button:disabled {
+  opacity: 0.72;
+}
+
+.renewal-logout-button {
+  background: #eef1f5;
+  color: #111a4f;
+}
+
+.renewal-owner-note,
+.renewal-offline-note,
+.renewal-message {
+  border-radius: 12px;
+  padding: 10px;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.7;
+}
+
+.renewal-owner-note {
+  background: #fff4d8;
+  color: #946500;
+}
+
+.renewal-offline-note {
+  background: #eef1ff;
+  color: #111a79;
+}
+
+.renewal-message {
+  background: #e8f7ef;
+  color: #157347;
+}
+
 .finance-report-screen {
   width: min(100%, 430px);
   margin: 0 auto;
