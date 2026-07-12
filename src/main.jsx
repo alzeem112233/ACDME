@@ -72,25 +72,10 @@ const MAX_ACADEMY_ACCOUNTS = 3;
 const LOCAL_ONLY_ACADEMY_KEYS = ["players", "attendance", "payments", "matches", "badges"];
 const DEFAULT_ATTENDANCE_PAYMENT = 500;
 const footballPositionOptions = [
-  { value: "GK", label: "حارس مرمى" },
-  { value: "CB", label: "قلب دفاع" },
-  { value: "LCB", label: "قلب دفاع أيسر" },
-  { value: "RCB", label: "قلب دفاع أيمن" },
-  { value: "LB", label: "ظهير أيسر" },
-  { value: "RB", label: "ظهير أيمن" },
-  { value: "LWB", label: "جناح خلفي أيسر" },
-  { value: "RWB", label: "جناح خلفي أيمن" },
-  { value: "CDM", label: "محور دفاعي" },
-  { value: "CM", label: "وسط" },
-  { value: "LCM", label: "وسط أيسر" },
-  { value: "RCM", label: "وسط أيمن" },
-  { value: "CAM", label: "صانع لعب" },
-  { value: "LM", label: "وسط أيسر" },
-  { value: "RM", label: "وسط أيمن" },
-  { value: "LW", label: "جناح أيسر" },
-  { value: "RW", label: "جناح أيمن" },
-  { value: "CF", label: "مهاجم ثان" },
-  { value: "ST", label: "رأس حربة" },
+  { value: "حارس", label: "حارس" },
+  { value: "مدافع", label: "مدافع" },
+  { value: "وسط", label: "وسط" },
+  { value: "مهاجم", label: "مهاجم" },
 ];
 const ageGroupPresets = [
   { key: "hope", name: "الأمل", years: "2014-now", from: 2014, to: new Date().getFullYear() },
@@ -937,6 +922,18 @@ function trainingDaysForGroup(group) {
   return trainingDayOptions.filter((day) => (group?.days || "").includes(day));
 }
 
+function positionListFromValue(value = "") {
+  if (Array.isArray(value)) return value.filter(Boolean);
+  return String(value || "")
+    .split(/[،,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function positionTextFromForm(form) {
+  return form.getAll("position").filter(Boolean).join("، ");
+}
+
 function App() {
   const [activeView, setActiveView] = useLocalState("acdme-active-view-v1", "platformDashboard");
   const [session, setSession] = useLocalState("acdme-session-v5", null);
@@ -1699,8 +1696,9 @@ function App() {
       name: form.get("name"),
       photo,
       birthDate: form.get("birthDate"),
-      position: form.get("position"),
+      position: positionTextFromForm(form),
       jersey: form.get("jersey"),
+      playerNumber: form.get("playerNumber"),
       guardianPhone: form.get("guardianPhone"),
       teamId: form.get("teamId"),
       ageGroupPreset: form.get("ageGroupPreset") || "",
@@ -4669,18 +4667,22 @@ function Players({ data, helpers, addPlayer, togglePlayerStatus, setSelectedPlay
           <div className="two-cols">
             <label>
               <span>المركز</span>
-              <select name="position" required>
-                <option value="">اختر المركز</option>
+              <select name="position" multiple required>
                 {footballPositionOptions.map((position) => (
-                  <option key={position.value} value={position.value}>{position.value} - {position.label}</option>
+                  <option key={position.value} value={position.value}>{position.label}</option>
                 ))}
               </select>
+              <small>يمكن اختيار أكثر من مركز</small>
             </label>
             <label>
               <span>رقم القميص</span>
               <input name="jersey" placeholder="مثال: 10" required />
             </label>
           </div>
+          <label>
+            <span>رقم اللاعب إن وجد</span>
+            <input name="playerNumber" inputMode="numeric" placeholder="اختياري" />
+          </label>
           <label>
             <span>رقم ولي الأمر</span>
             <input name="guardianPhone" inputMode="tel" placeholder="رقم ولي الأمر" required />
@@ -4853,7 +4855,7 @@ function PlayerProfile({ data, helpers, selectedPlayerId, setSelectedPlayerId, u
         <div>
           <h2>{player.name}</h2>
           <p>{helpers.teamById[player.teamId]?.name || "بدون فريق"} - {player.position} #{player.jersey}</p>
-          <span>{player.guardianPhone}</span>
+          <span>{player.guardianPhone}{player.playerNumber ? ` - رقم اللاعب ${player.playerNumber}` : ""}</span>
         </div>
       </div>
       <PlayerDetailsEditor key={player.id} data={data} helpers={helpers} player={player} updatePlayerDetails={updatePlayerDetails} />
@@ -4896,6 +4898,7 @@ function PlayerProfile({ data, helpers, selectedPlayerId, setSelectedPlayerId, u
 function PlayerDetailsEditor({ data, helpers, player, updatePlayerDetails }) {
   const [photoPreview, setPhotoPreview] = useState(player.photo || "");
   const [message, setMessage] = useState("");
+  const playerPositions = positionListFromValue(player.position);
 
   useEffect(() => {
     setPhotoPreview(player.photo || "");
@@ -4917,8 +4920,9 @@ function PlayerDetailsEditor({ data, helpers, player, updatePlayerDetails }) {
       name: form.get("name"),
       photo: photo || player.photo || "",
       birthDate: form.get("birthDate"),
-      position: form.get("position"),
+      position: positionTextFromForm(form),
       jersey: form.get("jersey"),
+      playerNumber: form.get("playerNumber"),
       guardianPhone: form.get("guardianPhone"),
       teamId,
       monthlyFee: Number(form.get("monthlyFee") || 0),
@@ -4948,16 +4952,20 @@ function PlayerDetailsEditor({ data, helpers, player, updatePlayerDetails }) {
         </label>
         <label>
           <span>المركز</span>
-          <select name="position" defaultValue={player.position || ""} required>
-            <option value="">اختر المركز</option>
+          <select name="position" multiple defaultValue={playerPositions} required>
             {footballPositionOptions.map((position) => (
-              <option key={position.value} value={position.value}>{position.value} - {position.label}</option>
+              <option key={position.value} value={position.value}>{position.label}</option>
             ))}
           </select>
+          <small>يمكن اختيار أكثر من مركز</small>
         </label>
         <label>
           <span>رقم القميص</span>
           <input name="jersey" defaultValue={player.jersey || ""} required />
+        </label>
+        <label>
+          <span>رقم اللاعب إن وجد</span>
+          <input name="playerNumber" inputMode="numeric" defaultValue={player.playerNumber || ""} placeholder="اختياري" />
         </label>
         <label>
           <span>رقم ولي الأمر</span>
@@ -5031,6 +5039,10 @@ function PlayerShowCard({ player, updatePlayerCard }) {
   const updateDraft = (field, value) => {
     setDraft((prev) => ({ ...prev, [field]: value }));
   };
+  const updateDraftPositions = (event) => {
+    const selected = Array.from(event.currentTarget.selectedOptions).map((option) => option.value);
+    updateDraft("position", selected.join("، "));
+  };
 
   const saveCard = (event) => {
     event.preventDefault();
@@ -5053,12 +5065,12 @@ function PlayerShowCard({ player, updatePlayerCard }) {
           </label>
           <label>
             <span>المركز</span>
-            <select value={draft.position || ""} onChange={(event) => updateDraft("position", event.target.value)}>
-              <option value="">اختر المركز</option>
+            <select multiple value={positionListFromValue(draft.position)} onChange={updateDraftPositions}>
               {footballPositionOptions.map((position) => (
-                <option key={position.value} value={position.value}>{position.value} - {position.label}</option>
+                <option key={position.value} value={position.value}>{position.label}</option>
               ))}
             </select>
+            <small>يمكن اختيار أكثر من مركز</small>
           </label>
           <label>
             <span>الجنسية</span>
@@ -5086,7 +5098,7 @@ function PlayerShowCard({ player, updatePlayerCard }) {
           </label>
           <label>
             <span>الرقم</span>
-            <input value={draft.number || ""} onChange={(event) => updateDraft("number", event.target.value)} inputMode="numeric" placeholder="رقم اللاعب" />
+            <input value={draft.number || player.playerNumber || ""} onChange={(event) => updateDraft("number", event.target.value)} inputMode="numeric" placeholder="رقم اللاعب" />
           </label>
           <label>
             <span>مركز اللعب</span>
@@ -5146,7 +5158,7 @@ function PlayerShowCard({ player, updatePlayerCard }) {
 
         <div className="player-card-extra-lines">
           <span>الطول <b>{valueOrDash(card.height)}</b> سم</span>
-          <span>الرقم <b>{valueOrDash(card.number)}</b></span>
+          <span>الرقم <b>{valueOrDash(card.number || player.playerNumber)}</b></span>
           <span>الوزن <b>{valueOrDash(card.weight)}</b> كغ</span>
           <span>مركز اللعب <b>{valueOrDash(card.playCenter)}</b></span>
         </div>

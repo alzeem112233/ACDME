@@ -3363,6 +3363,13 @@ th {
   font-weight: 900;
 }
 
+.player-details-grid select[multiple],
+.player-card-editor select[multiple],
+.player-add-card select[multiple] {
+  min-height: 108px;
+  padding: 8px;
+}
+
 .player-details-flags {
   display: grid;
   gap: 8px;
