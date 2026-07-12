@@ -2,6 +2,7 @@
 import { createRoot } from "react-dom/client";
 import {
   Activity,
+  ArrowDownAZ,
   BadgeCheck,
   Bell,
   CalendarCheck,
@@ -872,6 +873,39 @@ function ageFromDate(date) {
   const birth = new Date(date);
   const diff = Date.now() - birth.getTime();
   return Math.abs(new Date(diff).getUTCFullYear() - 1970);
+}
+
+function comparePlayersBySortMode(firstPlayer, secondPlayer, sortMode) {
+  if (sortMode === "name") {
+    return String(firstPlayer.name || "").localeCompare(String(secondPlayer.name || ""), "ar");
+  }
+
+  const firstBirth = firstPlayer.birthDate ? new Date(`${firstPlayer.birthDate}T00:00:00`).getTime() : Number.NaN;
+  const secondBirth = secondPlayer.birthDate ? new Date(`${secondPlayer.birthDate}T00:00:00`).getTime() : Number.NaN;
+  const firstHasBirth = Number.isFinite(firstBirth);
+  const secondHasBirth = Number.isFinite(secondBirth);
+
+  if (firstHasBirth && secondHasBirth && firstBirth !== secondBirth) {
+    return secondBirth - firstBirth;
+  }
+
+  if (firstHasBirth !== secondHasBirth) return firstHasBirth ? -1 : 1;
+  return String(firstPlayer.name || "").localeCompare(String(secondPlayer.name || ""), "ar");
+}
+
+function SortModeButton({ sortMode, onToggle }) {
+  return (
+    <button
+      className="list-sort-toggle"
+      type="button"
+      onClick={onToggle}
+      aria-label={sortMode === "age" ? "الترتيب من الأصغر إلى الأكبر" : "الترتيب الأبجدي"}
+      title={sortMode === "age" ? "الأصغر للأكبر" : "أبجدي"}
+    >
+      <ArrowDownAZ size={17} />
+      <span>{sortMode === "age" ? "العمر" : "أبجدي"}</span>
+    </button>
+  );
 }
 
 function exactAgeFromDate(date) {
@@ -4631,6 +4665,7 @@ function Players({ data, helpers, addPlayer, togglePlayerStatus, setSelectedPlay
   const [birthDateValue, setBirthDateValue] = useState("");
   const [subscriptionChoice, setSubscriptionChoice] = useState("اشتراك شهري");
   const [monthlyFeeValue, setMonthlyFeeValue] = useState("");
+  const [playerSortMode, setPlayerSortMode] = useState("age");
   const groupFilters = data.ageGroups.length ? data.ageGroups : ageGroupPresets;
   const selectedBirthYear = birthDateValue ? new Date(`${birthDateValue}T00:00:00`).getFullYear() : null;
   const selectedAgeGroupPreset = ageGroupPresetFromBirthDate(birthDateValue);
@@ -4654,19 +4689,21 @@ function Players({ data, helpers, addPlayer, togglePlayerStatus, setSelectedPlay
   const paidRevenue = data.payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
   const activePlayersCount = data.players.filter((player) => player.status !== "منقطع").length;
   const stoppedPlayersCount = data.players.length - activePlayersCount;
-  const visiblePlayers = data.players.filter((player) => {
-    const team = helpers.teamById[player.teamId];
-    const group = helpers.groupById[team?.ageGroupId];
-    const searchTarget = `${player.name} ${player.position} ${player.guardianPhone} ${team?.name || ""} ${group?.name || ""}`.toLowerCase();
-    const matchesSearch = searchTarget.includes(playerSearch.toLowerCase());
-    const matchesGroup =
-      activeGroupFilter === "all" ||
-      team?.ageGroupId === activeGroupFilter ||
-      group?.presetKey === activeGroupFilter ||
-      group?.name === activeGroupFilter;
+  const visiblePlayers = data.players
+    .filter((player) => {
+      const team = helpers.teamById[player.teamId];
+      const group = helpers.groupById[team?.ageGroupId];
+      const searchTarget = `${player.name} ${player.position} ${player.guardianPhone} ${team?.name || ""} ${group?.name || ""}`.toLowerCase();
+      const matchesSearch = searchTarget.includes(playerSearch.toLowerCase());
+      const matchesGroup =
+        activeGroupFilter === "all" ||
+        team?.ageGroupId === activeGroupFilter ||
+        group?.presetKey === activeGroupFilter ||
+        group?.name === activeGroupFilter;
 
-    return matchesSearch && matchesGroup;
-  });
+      return matchesSearch && matchesGroup;
+    })
+    .sort((firstPlayer, secondPlayer) => comparePlayersBySortMode(firstPlayer, secondPlayer, playerSortMode));
   const updatePlayerPhotoPreview = (event) => {
     const file = event.target.files?.[0];
     setPlayerPhotoPreview(file ? URL.createObjectURL(file) : "");
@@ -4722,6 +4759,7 @@ function Players({ data, helpers, addPlayer, togglePlayerStatus, setSelectedPlay
           <Search size={16} />
           <input value={playerSearch} onChange={(event) => setPlayerSearch(event.target.value)} placeholder="ابحث عن لاعب أو ولي أمر" />
         </label>
+        <SortModeButton sortMode={playerSortMode} onToggle={() => setPlayerSortMode((mode) => (mode === "age" ? "name" : "age"))} />
         <button type="button" className={isAddingPlayer ? "active" : ""} onClick={() => setIsAddingPlayer((value) => !value)}>
           <Plus size={17} />
         </button>
@@ -5304,6 +5342,7 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
   const [selectedGroupId, setSelectedGroupId] = useState(groupOptions[0]?.id || "");
   const [activePaymentPlayerId, setActivePaymentPlayerId] = useState("");
   const [paymentDrafts, setPaymentDrafts] = useState({});
+  const [attendanceSortMode, setAttendanceSortMode] = useState("age");
 
   useEffect(() => {
     if (!groupOptions.length) {
@@ -5331,9 +5370,9 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
   const selectedTrainingDays = trainingDaysForGroup(selectedGroup);
   const hasTrainingDays = selectedTrainingDays.length > 0;
   const isScheduledTrainingDay = Boolean(selectedGroup && hasTrainingDays && selectedTrainingDays.includes(selectedDateDay));
-  const groupPlayers = data.players.filter(
-    (player) => player.status !== "منقطع" && helpers.teamById[player.teamId]?.ageGroupId === selectedGroupId,
-  );
+  const groupPlayers = data.players
+    .filter((player) => player.status !== "منقطع" && helpers.teamById[player.teamId]?.ageGroupId === selectedGroupId)
+    .sort((firstPlayer, secondPlayer) => comparePlayersBySortMode(firstPlayer, secondPlayer, attendanceSortMode));
   const countablePlayers = isScheduledTrainingDay ? groupPlayers : [];
   const presentCount = countablePlayers.filter((player) => attendanceRows[player.id]?.status === "حاضر").length;
   const lateCount = countablePlayers.filter((player) => attendanceRows[player.id]?.status === "متأخر").length;
@@ -5460,7 +5499,7 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
             <h2>{selectedGroup?.name || "الفئة"}</h2>
             <p>{isScheduledTrainingDay ? `${groupPlayers.length} لاعب في التحضير` : "التحضير مغلق لهذا اليوم"}</p>
           </div>
-          <BadgeCheck size={21} />
+          <SortModeButton sortMode={attendanceSortMode} onToggle={() => setAttendanceSortMode((mode) => (mode === "age" ? "name" : "age"))} />
         </div>
 
         {!isScheduledTrainingDay && selectedGroup && (

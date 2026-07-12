@@ -2167,7 +2167,7 @@ button {
 
 .players-toolbar {
   display: grid;
-  grid-template-columns: 1fr 42px;
+  grid-template-columns: 1fr 64px 42px;
   gap: 8px;
 }
 
@@ -2200,6 +2200,31 @@ button {
 .players-toolbar > button.active {
   background: #111a79;
   color: #fff;
+}
+
+.list-sort-toggle {
+  min-width: 60px;
+  height: 42px;
+  border: 1px solid #eef1f5;
+  border-radius: 12px;
+  background: #fff;
+  color: #111a79;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 7px;
+  font-size: 10px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.list-sort-toggle span {
+  line-height: 1;
+}
+
+.players-toolbar > .list-sort-toggle {
+  width: 64px;
 }
 
 .players-filter-row {
@@ -4114,6 +4139,10 @@ th {
 
 .attendance-list-head svg {
   color: #bd8b04;
+}
+
+.attendance-list-head .list-sort-toggle svg {
+  color: currentColor;
 }
 
 .attendance-player-card {
