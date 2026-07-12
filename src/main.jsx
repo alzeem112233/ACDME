@@ -11,6 +11,7 @@ import {
   ClipboardCheck,
   ClipboardList,
   Clock,
+  Trash2,
   Download,
   Dumbbell,
   Eye,
@@ -40,6 +41,8 @@ import { registerServiceWorker } from "./registerServiceWorker";
 import { readLocalData, writeLocalData } from "./services/localRepository";
 import {
   createRegistrationRequest,
+  deleteRemotePlatformAccount,
+  deleteRemoteRegistrationRequestsByPhone,
   getRemoteAcademyData,
   listRemoteAcademyData,
   listPlatformAccounts,
@@ -1703,6 +1706,47 @@ function App() {
     });
   };
 
+  const deletePlatformUser = (targetUser) => {
+    if (!isSuperAdmin) {
+      window.alert("هذا الإجراء مخصص للحساب الرئيسي فقط.");
+      return;
+    }
+
+    const normalizedPhone = normalizePhone(targetUser?.phone);
+    if (!normalizedPhone) return;
+
+    const ok = window.confirm(`هل تريد حذف حساب ${targetUser?.name || normalizedPhone} نهائيًا من لوحة المنصة؟`);
+    if (!ok) return;
+
+    setPlatformData((prev) => ({
+      ...prev,
+      users: (prev.users || []).filter((user) => normalizePhone(user.phone) !== normalizedPhone),
+      registrationRequests: (prev.registrationRequests || []).filter(
+        (request) => normalizePhone(request.phone || request.contact) !== normalizedPhone,
+      ),
+    }));
+
+    setAcademyDataById((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((academyId) => {
+        const academyData = normalizeAcademyData(next[academyId]);
+        next[academyId] = {
+          ...academyData,
+          users: (academyData.users || []).filter((user) => normalizePhone(user.phone) !== normalizedPhone),
+          coaches: (academyData.coaches || []).filter((coach) => normalizePhone(coach.phone) !== normalizedPhone),
+        };
+      });
+      return next;
+    });
+
+    Promise.allSettled([
+      deleteRemotePlatformAccount(normalizedPhone),
+      deleteRemoteRegistrationRequestsByPhone(normalizedPhone),
+    ]).catch(() => {
+      // The local cleanup stays visible; remote cleanup can be retried manually if the network is unavailable.
+    });
+  };
+
   const togglePlayerStatus = (playerId) => {
     setData((prev) => ({
       ...prev,
@@ -2462,6 +2506,7 @@ function App() {
     updateRegistrationRequest,
     resetPlatformUserPassword,
     togglePlatformUserStatus,
+    deletePlatformUser,
     togglePlayerStatus,
     updatePlayerCard,
     updatePlayerDetails,
@@ -2786,6 +2831,7 @@ function PlatformDashboard({
   updateRegistrationRequest,
   resetPlatformUserPassword,
   togglePlatformUserStatus,
+  deletePlatformUser,
 }) {
   const [visiblePasswordRows, setVisiblePasswordRows] = useState({});
   const [temporaryPasswords, setTemporaryPasswords] = useState({});
@@ -2817,6 +2863,15 @@ function PlatformDashboard({
 
   return (
     <section className="view-stack">
+      <header className="platform-admin-hero">
+        <div>
+          <span>الحساب الرئيسي</span>
+          <h1>إدارة الحسابات والطلبات</h1>
+          <p>تحكم في الحسابات المعتمدة، كلمات السر، طلبات التسجيل، وتنظيف بيانات التجربة.</p>
+        </div>
+        <ShieldCheck size={34} />
+      </header>
+
       <div className="metric-grid">
         <Metric title="طلبات بانتظار الموافقة" value={pending} icon={ClipboardCheck} tone="amber" />
         <Metric title="حسابات معتمدة" value={approvedAccounts.length} icon={BadgeCheck} tone="green" />
@@ -2858,59 +2913,10 @@ function PlatformDashboard({
         </section>
       </div>
 
-      <section className="panel table-panel">
-        <PanelHead
-          title="طلبات تسجيل الأكاديميات"
-          text="وافق على الأكاديميات الجديدة أو ارفض الطلبات غير المكتملة."
-          icon={Users}
-        />
-        <div className="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>الأكاديمية</th>
-                <th>المسؤول</th>
-                <th>التواصل</th>
-                <th>المدينة</th>
-                <th>التاريخ</th>
-                <th>الحالة</th>
-                <th>الإجراء</th>
-              </tr>
-            </thead>
-            <tbody>
-              {registrationRequests.map((request) => (
-                <tr key={request.id}>
-                  <td>{request.academyName}</td>
-                  <td>{request.ownerName}</td>
-                  <td>{request.contact}</td>
-                  <td>{request.city}</td>
-                  <td>{request.createdAt}</td>
-                  <td>
-                    <span className={`status-badge ${request.status === "مقبول" ? "ok" : request.status === "مرفوض" ? "danger" : ""}`}>
-                      {request.status}
-                    </span>
-                  </td>
-                  <td>
-                    <div className="action-row">
-                      <button className="mini-button approve" onClick={() => updateRegistrationRequest(request.id, "مقبول")}>
-                        موافقة
-                      </button>
-                      <button className="mini-button reject" onClick={() => updateRegistrationRequest(request.id, "مرفوض")}>
-                        رفض
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="panel table-panel">
+      <section className="panel table-panel platform-table-card">
         <PanelHead
           title="الحسابات المعتمدة"
-          text={`كل أكاديمية يمكن ربطها بحد أقصى ${MAX_ACADEMY_ACCOUNTS} حسابات. كلمة السر الأصلية لا تُحفظ كنص، ويمكن للحساب الرئيسي تعيين كلمة جديدة ثم عرضها مباشرة.`}
+          text={`كل أكاديمية يمكن ربطها بحد أقصى ${MAX_ACADEMY_ACCOUNTS} حسابات. يمكنك حذف حسابات التجربة من هنا.`}
           icon={LockKeyhole}
         />
         <div className="table-scroll">
@@ -2924,12 +2930,13 @@ function PlatformDashboard({
                 <th>الدور</th>
                 <th>الصلاحية</th>
                 <th>الحالة</th>
+                <th>الإجراء</th>
               </tr>
             </thead>
             <tbody>
               {approvedAccounts.length === 0 && (
                 <tr>
-                  <td className="empty-table-cell" colSpan="7">لا توجد حسابات معتمدة بعد</td>
+                  <td className="empty-table-cell" colSpan="8">لا توجد حسابات معتمدة بعد</td>
                 </tr>
               )}
               {approvedAccounts.map((user) => {
@@ -2987,9 +2994,70 @@ function PlatformDashboard({
                       </button>
                     </div>
                   </td>
+                  <td>
+                    <div className="platform-account-actions">
+                      <button
+                        className="mini-button danger"
+                        type="button"
+                        onClick={() => deletePlatformUser(user)}
+                      >
+                        <Trash2 size={14} />
+                        حذف
+                      </button>
+                    </div>
+                  </td>
                 </tr>
                 );
               })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="panel table-panel platform-table-card">
+        <PanelHead
+          title="طلبات تسجيل الأكاديميات"
+          text="وافق على الأكاديميات الجديدة أو ارفض الطلبات غير المكتملة."
+          icon={Users}
+        />
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>الأكاديمية</th>
+                <th>المسؤول</th>
+                <th>التواصل</th>
+                <th>المدينة</th>
+                <th>التاريخ</th>
+                <th>الحالة</th>
+                <th>الإجراء</th>
+              </tr>
+            </thead>
+            <tbody>
+              {registrationRequests.map((request) => (
+                <tr key={request.id}>
+                  <td>{request.academyName}</td>
+                  <td>{request.ownerName}</td>
+                  <td>{request.contact}</td>
+                  <td>{request.city}</td>
+                  <td>{request.createdAt}</td>
+                  <td>
+                    <span className={`status-badge ${request.status === "مقبول" ? "ok" : request.status === "مرفوض" ? "danger" : ""}`}>
+                      {request.status}
+                    </span>
+                  </td>
+                  <td>
+                    <div className="action-row">
+                      <button className="mini-button approve" onClick={() => updateRegistrationRequest(request.id, "مقبول")}>
+                        موافقة
+                      </button>
+                      <button className="mini-button reject" onClick={() => updateRegistrationRequest(request.id, "مرفوض")}>
+                        رفض
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

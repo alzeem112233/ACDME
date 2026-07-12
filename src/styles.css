@@ -3059,6 +3059,15 @@ th {
   background: #fff0f0;
 }
 
+.mini-button.danger {
+  color: #8f1d1d;
+  background: #fff0f0;
+  border-color: rgba(185, 74, 72, 0.28);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .status-badge {
   display: inline-flex;
   align-items: center;
@@ -3083,6 +3092,51 @@ th {
 
 .platform-note {
   margin: 16px 0 0;
+}
+
+.platform-admin-hero {
+  min-height: 150px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #111a79, #2430a0);
+  color: #fff;
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  box-shadow: var(--shadow);
+}
+
+.platform-admin-hero span {
+  color: #ffd75f;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.platform-admin-hero h1 {
+  margin: 6px 0;
+  font-size: 26px;
+}
+
+.platform-admin-hero p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.78);
+  line-height: 1.7;
+}
+
+.platform-admin-hero svg {
+  color: #ffd75f;
+  flex: 0 0 auto;
+}
+
+.platform-table-card {
+  border-color: rgba(17, 26, 121, 0.12);
+}
+
+.platform-account-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .platform-report-screen {

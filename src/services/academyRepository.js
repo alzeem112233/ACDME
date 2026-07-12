@@ -209,6 +209,18 @@ export async function upsertPlatformAccount(account) {
   return mapPlatformAccount(data);
 }
 
+export async function deleteRemotePlatformAccount(phone) {
+  if (!isSupabaseConfigured || isOffline() || !phone) return null;
+
+  const { error } = await supabase
+    .from("platform_accounts")
+    .delete()
+    .eq("phone", phone);
+
+  if (error) throw error;
+  return true;
+}
+
 export async function createRegistrationRequest(request) {
   if (!isSupabaseConfigured || isOffline()) return null;
 
@@ -263,6 +275,26 @@ export async function updateRemoteRegistrationRequest(requestId, status) {
 
   if (error) throw error;
   return mapRegistrationRequest(data);
+}
+
+export async function deleteRemoteRegistrationRequestsByPhone(phone) {
+  if (!isSupabaseConfigured || isOffline() || !phone) return null;
+
+  let { error } = await supabase
+    .from("registration_requests")
+    .delete()
+    .eq("phone", phone);
+
+  if (error && String(error.message || "").includes("column")) {
+    const fallback = await supabase
+      .from("registration_requests")
+      .delete()
+      .eq("contact", phone);
+    error = fallback.error;
+  }
+
+  if (error) throw error;
+  return true;
 }
 
 export async function updateRemoteRegistrationPassword(phone, passwordHash) {
