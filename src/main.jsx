@@ -918,6 +918,28 @@ function weekdayFromDate(date) {
   return ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"][parsedDate.getDay()];
 }
 
+function normalizeManualDate(value = "") {
+  const cleaned = String(value).trim().replace(/[٠-٩]/g, (digit) => "٠١٢٣٤٥٦٧٨٩".indexOf(digit));
+  if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) return cleaned;
+
+  const parts = cleaned.split(/[/-]/).filter(Boolean);
+  if (parts.length === 3) {
+    const [first, second, third] = parts;
+    if (first.length === 4) return `${first.padStart(4, "0")}-${second.padStart(2, "0")}-${third.padStart(2, "0")}`;
+    return `${third.padStart(4, "0")}-${second.padStart(2, "0")}-${first.padStart(2, "0")}`;
+  }
+
+  const digits = cleaned.replace(/\D/g, "");
+  if (digits.length === 8) {
+    const startsWithYear = Number(digits.slice(0, 4)) > 1900;
+    return startsWithYear
+      ? `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`
+      : `${digits.slice(4, 8)}-${digits.slice(2, 4)}-${digits.slice(0, 2)}`;
+  }
+
+  return "";
+}
+
 function trainingDaysForGroup(group) {
   return trainingDayOptions.filter((day) => (group?.days || "").includes(day));
 }
@@ -932,6 +954,49 @@ function positionListFromValue(value = "") {
 
 function positionTextFromForm(form) {
   return form.getAll("position").filter(Boolean).join("، ");
+}
+
+function BirthDateFields({ value, onChange, required = false }) {
+  const [manualValue, setManualValue] = useState(value || "");
+
+  useEffect(() => {
+    setManualValue(value || "");
+  }, [value]);
+
+  const updateManualDate = (event) => {
+    const normalized = normalizeManualDate(event.target.value);
+    if (normalized) {
+      setManualValue(normalized);
+      onChange(normalized);
+    }
+  };
+  const updateCalendarDate = (nextValue) => {
+    setManualValue(nextValue);
+    onChange(nextValue);
+  };
+
+  return (
+    <div className="birth-date-fields">
+      <input name="birthDate" type="hidden" value={value || ""} />
+      <div className="field-with-icon">
+        <CalendarCheck size={17} />
+        <input
+          type="date"
+          value={value || ""}
+          onChange={(event) => updateCalendarDate(event.target.value)}
+          required={required}
+        />
+      </div>
+      <input
+        dir="ltr"
+        inputMode="numeric"
+        placeholder="اكتب التاريخ: 20052012"
+        value={manualValue}
+        onChange={(event) => setManualValue(event.target.value)}
+        onBlur={updateManualDate}
+      />
+    </div>
+  );
 }
 
 function App() {
@@ -4637,16 +4702,7 @@ function Players({ data, helpers, addPlayer, togglePlayerStatus, setSelectedPlay
           </label>
           <label>
             <span>تاريخ الميلاد</span>
-            <div className="field-with-icon">
-              <CalendarCheck size={17} />
-              <input
-                name="birthDate"
-                type="date"
-                value={birthDateValue}
-                onChange={(event) => setBirthDateValue(event.target.value)}
-                required
-              />
-            </div>
+            <BirthDateFields value={birthDateValue} onChange={setBirthDateValue} required />
           </label>
           {birthDateValue && (
             <div className="player-age-result">
@@ -4897,13 +4953,15 @@ function PlayerProfile({ data, helpers, selectedPlayerId, setSelectedPlayerId, u
 
 function PlayerDetailsEditor({ data, helpers, player, updatePlayerDetails }) {
   const [photoPreview, setPhotoPreview] = useState(player.photo || "");
+  const [birthDateValue, setBirthDateValue] = useState(player.birthDate || "");
   const [message, setMessage] = useState("");
   const playerPositions = positionListFromValue(player.position);
 
   useEffect(() => {
     setPhotoPreview(player.photo || "");
+    setBirthDateValue(player.birthDate || "");
     setMessage("");
-  }, [player.id, player.photo]);
+  }, [player.id, player.photo, player.birthDate]);
 
   const updatePhotoPreview = (event) => {
     const file = event.target.files?.[0];
@@ -4919,7 +4977,7 @@ function PlayerDetailsEditor({ data, helpers, player, updatePlayerDetails }) {
     updatePlayerDetails?.(player.id, {
       name: form.get("name"),
       photo: photo || player.photo || "",
-      birthDate: form.get("birthDate"),
+      birthDate: birthDateValue,
       position: positionTextFromForm(form),
       jersey: form.get("jersey"),
       playerNumber: form.get("playerNumber"),
@@ -4948,7 +5006,7 @@ function PlayerDetailsEditor({ data, helpers, player, updatePlayerDetails }) {
         </label>
         <label>
           <span>تاريخ الميلاد</span>
-          <input name="birthDate" type="date" defaultValue={player.birthDate || ""} required />
+          <BirthDateFields value={birthDateValue} onChange={setBirthDateValue} required />
         </label>
         <label>
           <span>المركز</span>

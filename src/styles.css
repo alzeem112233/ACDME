@@ -3370,6 +3370,16 @@ th {
   padding: 8px;
 }
 
+.birth-date-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(130px, 0.8fr);
+  gap: 8px;
+}
+
+.birth-date-fields > input {
+  min-width: 0;
+}
+
 .player-details-flags {
   display: grid;
   gap: 8px;
@@ -3654,6 +3664,10 @@ th {
 }
 
 @media (max-width: 520px) {
+  .birth-date-fields {
+    grid-template-columns: 1fr;
+  }
+
   .player-details-grid {
     grid-template-columns: 1fr;
   }
