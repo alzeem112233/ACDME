@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import {
   Activity,
   ArrowDownAZ,
+  ArrowRight,
   BadgeCheck,
   Bell,
   CalendarCheck,
@@ -12,24 +13,31 @@ import {
   ClipboardCheck,
   ClipboardList,
   Clock,
+  Copy,
   Trash2,
   Download,
   Dumbbell,
   Eye,
   EyeOff,
+  FileCheck2,
+  FolderOpen,
+  ImageDown,
   KeyRound,
   Layers,
   LockKeyhole,
   MapPin,
   Medal,
   MessageSquare,
+  Moon,
   Plus,
   RefreshCw,
   Search,
   Send,
   Settings,
+  Share2,
   ShieldCheck,
   Star,
+  Sun,
   Swords,
   Trophy,
   Upload,
@@ -37,6 +45,7 @@ import {
   UserRound,
   Users,
   Wallet,
+  X,
 } from "lucide-react";
 import { registerServiceWorker } from "./registerServiceWorker";
 import { readLocalData, writeLocalData } from "./services/localRepository";
@@ -77,7 +86,7 @@ const PERMISSION_ATTENDANCE_PLAYERS = "الحضور واللاعبين";
 const PERMISSION_TEAM_FOLLOW = "متابعة فريق محدد";
 const PERMISSION_READ_ONLY = "قراءة فقط";
 const MAX_ACADEMY_ACCOUNTS = 3;
-const LOCAL_ONLY_ACADEMY_KEYS = ["players", "attendance", "payments", "matches", "badges"];
+const LOCAL_ONLY_ACADEMY_KEYS = ["players", "attendance", "payments", "expenses", "matches", "badges"];
 const DEFAULT_ATTENDANCE_PAYMENT = 500;
 const RENEWAL_PERIOD_DAYS = 29;
 const footballPositionOptions = [
@@ -311,6 +320,7 @@ const seedData = {
   players: [],
   attendance: [],
   payments: [],
+  expenses: [],
   matches: [],
   badges: [],
   notifications: [],
@@ -423,6 +433,7 @@ function normalizeAcademyData(value = {}, account = {}) {
     players: Array.isArray(value.players) ? value.players : [],
     attendance: Array.isArray(value.attendance) ? value.attendance : [],
     payments: Array.isArray(value.payments) ? value.payments : [],
+    expenses: Array.isArray(value.expenses) ? value.expenses : [],
     matches: Array.isArray(value.matches) ? value.matches : [],
     badges: Array.isArray(value.badges) ? value.badges : [],
     notifications: Array.isArray(value.notifications) ? value.notifications : [],
@@ -434,7 +445,7 @@ function normalizeAcademyData(value = {}, account = {}) {
 
 function buildAcademyCloudSummary(value = {}) {
   const data = normalizeAcademyData(value);
-  const hasLocalPlayerDetails = data.players.length || data.payments.length || data.attendance.length;
+  const hasLocalPlayerDetails = data.players.length || data.payments.length || data.attendance.length || data.expenses.length;
   if (!hasLocalPlayerDetails && data.cloudSummary?.dataMode) {
     return {
       ...data.cloudSummary,
@@ -449,6 +460,7 @@ function buildAcademyCloudSummary(value = {}) {
   const activePlayers = data.players.filter((player) => player.status !== "منقطع");
   const expectedRevenue = data.players.reduce((sum, player) => sum + Number(player.monthlyFee || 0), 0);
   const collectedRevenue = data.payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  const totalExpenses = data.expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
   const remainingRevenue = data.players.reduce((sum, player) => {
     const due = Number(player.monthlyFee || 0);
     const paid = paidByPlayer[player.id] || 0;
@@ -468,8 +480,11 @@ function buildAcademyCloudSummary(value = {}) {
     coachesCount: (data.coaches || []).length + (data.coach?.name || data.coach?.phone ? 1 : 0),
     expectedRevenue,
     collectedRevenue,
+    totalExpenses,
+    netRevenue: collectedRevenue - totalExpenses,
     remainingRevenue,
     paymentsCount: data.payments.length,
+    expensesCount: data.expenses.length,
     attendanceCount: data.attendance.length,
     presentCount: data.attendance.filter((row) => row.status === "حاضر").length,
     lateCount: data.attendance.filter((row) => row.status === "متأخر").length,
@@ -527,6 +542,7 @@ function hasAcademyContent(value = {}) {
       value.players?.length ||
       value.attendance?.length ||
       value.payments?.length ||
+      value.expenses?.length ||
       value.coaches?.length ||
       value.users?.length ||
       value.cloudSummary?.playersCount,
@@ -577,6 +593,79 @@ const navItems = [
   { id: "notifications", label: "التنبيهات", icon: Bell },
 ];
 const setupNavIds = new Set(["coachSetup", "coaches", "settings", "ageGroups", "teams", "accountProfile"]);
+
+const pageGuides = {
+  platformDashboard: {
+    title: "لوحة التحكم",
+    text: "راجع الحسابات والطلبات، ثم وافق أو عطّل المستخدمين من نفس المكان.",
+    primaryView: "platformReports",
+    primaryLabel: "تقارير الأكاديميات",
+  },
+  platformReports: {
+    title: "التقارير العامة",
+    text: "ملخص سريع للأكاديميات والمدربين واللاعبين والتحصيل المالي.",
+    primaryView: "platformDashboard",
+    primaryLabel: "الحسابات",
+  },
+  home: {
+    title: "الرئيسية",
+    text: "ابدأ من إضافة لاعب، التحضير، أو مراجعة الوضع المالي. البحث والفلاتر هنا تعمل مباشرة.",
+    primaryView: "players",
+    primaryLabel: "إضافة لاعب",
+    secondaryView: "attendance",
+    secondaryLabel: "التحضير",
+  },
+  players: {
+    title: "إدارة اللاعبين",
+    text: "ابحث، صف حسب الفئة، أضف لاعبًا، ثم افتح ملفه بضغطة واحدة من البطاقة.",
+    primaryView: "attendance",
+    primaryLabel: "التحضير",
+    secondaryView: "playerProfile",
+    secondaryLabel: "ملف اللاعب",
+  },
+  attendance: {
+    title: "التحضير",
+    text: "اختر التاريخ والفئة. الحضور أو التأخر يفتح الدفع، والغياب يحفظ مباشرة.",
+    primaryView: "reports",
+    primaryLabel: "التقارير",
+    secondaryView: "players",
+    secondaryLabel: "اللاعبون",
+  },
+  playerProfile: {
+    title: "ملف اللاعب",
+    text: "عدّل البيانات، راجع الحضور والمدفوعات، واحفظ بطاقة اللاعب أو شاركها.",
+    primaryView: "players",
+    primaryLabel: "إدارة اللاعبين",
+    secondaryView: "reports",
+    secondaryLabel: "المالية",
+  },
+  teamProfile: {
+    title: "ملف الفريق",
+    text: "تابع لاعبي الفريق وبياناته المختصرة من صفحة واحدة.",
+    primaryView: "players",
+    primaryLabel: "اللاعبون",
+  },
+  reports: {
+    title: "التقارير المالية",
+    text: "راجع التحصيل والمصروفات والمتأخرات، ثم اطبع التقارير عند الحاجة.",
+    primaryView: "attendance",
+    primaryLabel: "التحضير",
+    secondaryView: "players",
+    secondaryLabel: "اللاعبون",
+  },
+  notifications: {
+    title: "التنبيهات",
+    text: "تابع الحالات التي تحتاج إجراء، ثم ارجع للصفحة المناسبة للمعالجة.",
+    primaryView: "reports",
+    primaryLabel: "التقارير",
+  },
+  accountProfile: {
+    title: "الملف الشخصي",
+    text: "حدّث صورتك واسمك وكلمة السر، ثم ارجع للقائمة الرئيسية.",
+    primaryView: "home",
+    primaryLabel: "الرئيسية",
+  },
+};
 
 function useLocalState(key, initialValue) {
   const [value, setValue] = useState(() => readLocalData(key, initialValue));
@@ -866,6 +955,43 @@ async function readBackupText(file) {
   return file.text();
 }
 
+async function sha256Text(text) {
+  const encoded = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest("SHA-256", encoded);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function saveBlobFile(blob, filename, description = "ملف") {
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: filename,
+        types: [
+          {
+            description,
+            accept: {
+              [blob.type || "application/octet-stream"]: [`.${filename.split(".").pop()}`],
+            },
+          },
+        ],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return { ok: true, method: "picker", filename: handle.name || filename, location: "المسار الذي اخترته من نافذة الحفظ" };
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        return { ok: false, cancelled: true, filename };
+      }
+    }
+  }
+
+  downloadBlob(blob, filename);
+  return { ok: true, method: "download", filename, location: "مجلد التنزيلات في الجهاز أو المسار الافتراضي للمتصفح" };
+}
+
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -875,6 +1001,55 @@ function downloadBlob(blob, filename) {
   link.click();
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function applyInlineStyles(source, target) {
+  const computed = window.getComputedStyle(source);
+  target.setAttribute("style", Array.from(computed).map((key) => `${key}:${computed.getPropertyValue(key)};`).join(""));
+
+  Array.from(source.children).forEach((child, index) => {
+    if (target.children[index]) {
+      applyInlineStyles(child, target.children[index]);
+    }
+  });
+}
+
+async function elementToPngBlob(element, scale = 2) {
+  if (!element) return null;
+  const rect = element.getBoundingClientRect();
+  const width = Math.ceil(rect.width);
+  const height = Math.ceil(rect.height);
+  if (!width || !height) return null;
+
+  const clone = element.cloneNode(true);
+  applyInlineStyles(element, clone);
+  clone.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+  const serialized = new XMLSerializer().serializeToString(clone);
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+      <foreignObject width="100%" height="100%">${serialized}</foreignObject>
+    </svg>
+  `;
+  const svgUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
+
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = svgUrl;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = width * scale;
+    canvas.height = height * scale;
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    context.scale(scale, scale);
+    context.drawImage(image, 0, 0, width, height);
+    return await new Promise((resolve) => canvas.toBlob(resolve, "image/png", 0.95));
+  } finally {
+    URL.revokeObjectURL(svgUrl);
+  }
 }
 
 function ageFromDate(date) {
@@ -1090,13 +1265,16 @@ function App() {
   const [platformData, setPlatformData] = useLocalState("acdme-platform-data-v1", platformSeedData);
   const [academyDataById, setAcademyDataById] = useLocalState("acdme-academy-data-by-id-v1", {});
   const [renewalTimers, setRenewalTimers] = useLocalState("acdme-renewal-timers-v1", {});
+  const [themeMode, setThemeMode] = useLocalState("acdme-theme-v1", "light");
   const [cloudSyncState, setCloudSyncState] = useState({ academyId: "", loaded: false, saving: false, error: "", syncedAt: "" });
   const lastCloudPayloadRef = useRef("");
+  const bottomNavRef = useRef(null);
   const [query, setQuery] = useState("");
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [isOnline, setIsOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
   const [onlineSyncTick, setOnlineSyncTick] = useState(0);
   const [renewalClockTick, setRenewalClockTick] = useState(() => Date.now());
+  const [lastView, setLastView] = useState("");
   const isSuperAdmin = isSuperAdminSession(session);
   const currentAcademyId = session?.academyId || "";
   const data = useMemo(() => {
@@ -1119,6 +1297,27 @@ function App() {
   const [selectedTeamId, setSelectedTeamId] = useState(data.teams[0]?.id);
   const platformUsers = platformData.users || [];
   const platformRegistrationRequests = platformData.registrationRequests || platformSeedData.registrationRequests;
+
+  useEffect(() => {
+    const nextTheme = themeMode === "dark" ? "dark" : "light";
+    document.documentElement.setAttribute("data-theme", nextTheme);
+    document.documentElement.style.colorScheme = nextTheme;
+    const themeColor = nextTheme === "dark" ? "#071020" : "#111a4f";
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", themeColor);
+  }, [themeMode]);
+
+  const toggleThemeMode = () => {
+    setThemeMode((mode) => (mode === "dark" ? "light" : "dark"));
+  };
+
+  const navigateToView = (viewId, options = {}) => {
+    if (!viewId || viewId === activeView) return;
+    if (!options.replace) {
+      setLastView(activeView);
+    }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    setActiveView(viewId);
+  };
 
   const isPhoneRegisteredAnywhere = (phone, excludedPhone = "") => {
     const normalizedPhone = normalizePhone(phone);
@@ -2114,6 +2313,31 @@ function App() {
     }));
   };
 
+  const addExpense = (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const expense = {
+      id: crypto.randomUUID(),
+      title: form.get("title"),
+      category: form.get("category"),
+      amount: Number(form.get("amount") || 0),
+      date: form.get("date") || today,
+      method: form.get("method"),
+      vendor: form.get("vendor"),
+      note: form.get("note"),
+      createdAt: new Date().toISOString(),
+    };
+    setData((prev) => ({ ...prev, expenses: [expense, ...(prev.expenses || [])] }));
+    event.currentTarget.reset();
+  };
+
+  const deleteExpense = (expenseId) => {
+    setData((prev) => ({
+      ...prev,
+      expenses: (prev.expenses || []).filter((expense) => expense.id !== expenseId),
+    }));
+  };
+
   const addMatch = (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -2581,13 +2805,14 @@ function App() {
       ...academyDataById,
       [currentAcademyId]: academyData,
     };
-    const backupPayload = {
+    const coreBackupPayload = {
       app: "QZ Academy",
-      version: 3,
+      version: 4,
       backupType: "full-app",
       createdAt: new Date().toISOString(),
       academyId: currentAcademyId,
       academyName: academyData.academy.name || session?.academyName || "",
+      ownerPhone: normalizePhone(session?.phone || academyData.academy.ownerPhone),
       data: academyData,
       appState: {
         activeView,
@@ -2607,10 +2832,28 @@ function App() {
         "acdme-renewal-timers-v1": renewalTimers,
       },
     };
+    const checksum = await sha256Text(JSON.stringify(coreBackupPayload));
+    const backupPayload = {
+      ...coreBackupPayload,
+      security: {
+        checksum,
+        checksumAlgorithm: "SHA-256",
+        lockedAcademyId: currentAcademyId,
+        createdByPhone: normalizePhone(session?.phone || ""),
+        note: "تستخدم هذه البصمة لاكتشاف تلف أو تعديل ملف النسخة الاحتياطية قبل الاسترداد.",
+      },
+    };
     const blob = await gzipText(JSON.stringify(backupPayload));
     const safeName = (backupPayload.academyName || "academy").replace(/[^\w\u0600-\u06FF-]+/g, "-");
-    downloadBlob(blob, `${safeName}-${today}.acdme-backup.json.gz`);
-    return { ok: true, message: "تم إنشاء نسخة احتياطية كاملة ومضغوطة لكل بيانات التطبيق." };
+    const filename = `${safeName}-${today}.secure-acdme-backup.json.gz`;
+    const saveResult = await saveBlobFile(blob, filename, "نسخة احتياطية آمنة");
+    if (saveResult.cancelled) {
+      return { ok: false, message: "تم إلغاء حفظ النسخة الاحتياطية." };
+    }
+    return {
+      ok: true,
+      message: `تم حفظ نسخة احتياطية آمنة: ${saveResult.filename}. المسار: ${saveResult.location}.`,
+    };
   };
 
   const importLocalBackup = async (file) => {
@@ -2621,6 +2864,19 @@ function App() {
     try {
       const text = await readBackupText(file);
       const backup = JSON.parse(text);
+      if (backup.security?.checksum) {
+        const { security, ...coreBackupPayload } = backup;
+        const checksum = await sha256Text(JSON.stringify(coreBackupPayload));
+        if (checksum !== backup.security.checksum) {
+          return { ok: false, message: "تم رفض الاستيراد: بصمة النسخة الاحتياطية غير مطابقة، وقد يكون الملف تالفًا أو معدلًا." };
+        }
+      }
+
+      const restoredAcademyId = backup.academyId || currentAcademyId;
+      if (restoredAcademyId && restoredAcademyId !== currentAcademyId) {
+        return { ok: false, message: "تم رفض الاستيراد: هذه النسخة الاحتياطية تخص أكاديمية مختلفة عن الحساب الحالي." };
+      }
+
       const importedData =
         backup.data ||
         backup.academyData ||
@@ -2630,15 +2886,19 @@ function App() {
       }
 
       const restoredData = normalizeAcademyData(importedData, session);
-      const restoredAcademyId = backup.academyId || currentAcademyId;
       const restoredAcademies = {
-        ...(backup.appState?.academyDataById || {}),
-        [restoredAcademyId]: restoredData,
+        ...academyDataById,
+        [currentAcademyId]: restoredData,
       };
-      const nextPlatformData = backup.appState?.platformData || platformData;
+      const backupPlatformUsers = backup.appState?.platformData?.users || [];
+      const academyBackupUsers = backupPlatformUsers.filter((user) => user.academyId === currentAcademyId);
+      const nextPlatformData = {
+        ...platformData,
+        users: mergePlatformUsers(academyBackupUsers, platformData.users || []),
+      };
       const nextOnboardingState = backup.appState?.onboardingState || onboardingState;
       const nextRenewalTimers = backup.appState?.renewalTimers || renewalTimers;
-      const nextSession = backup.appState?.session || session;
+      const nextSession = session;
       const nextActiveView = backup.appState?.activeView || activeView;
 
       restoreAppLocalSnapshot(backup.localStorage);
@@ -2659,7 +2919,12 @@ function App() {
       upsertRemoteAcademyData(restoredAcademyId, toCloudAcademyData(restoredData, nextSession)).catch(() => {
         // Local restore succeeds even if the public cloud summary is updated later.
       });
-      return { ok: true, message: "تم استيراد النسخة الاحتياطية الكاملة واستعادة بيانات التطبيق." };
+      return {
+        ok: true,
+        message: backup.security?.checksum
+          ? "تم التحقق من بصمة النسخة واستعادة بيانات التطبيق بأمان."
+          : "تم استيراد نسخة قديمة بدون بصمة تحقق. يفضل إنشاء نسخة احتياطية جديدة الآن.",
+      };
     } catch {
       return { ok: false, message: "تعذر قراءة النسخة الاحتياطية. تأكد من اختيار الملف الصحيح." };
     }
@@ -2675,7 +2940,7 @@ function App() {
     filteredPlayers,
     platformUsers,
     registrationRequests,
-    setActiveView,
+    setActiveView: navigateToView,
     selectedPlayerId,
     setSelectedPlayerId,
     selectedTeamId,
@@ -2690,6 +2955,8 @@ function App() {
     addTeam,
     recordAttendance,
     addPayment,
+    addExpense,
+    deleteExpense,
     addMatch,
     addBadge,
     addNotification,
@@ -2725,6 +2992,18 @@ function App() {
   const showGlobalHeader = !customScreenViews.has(displayedView);
   const showScreenTitle = !customScreenViews.has(displayedView);
   const showBottomNav = !session?.isFirstLogin && !setupNavIds.has(displayedView);
+  const currentPageGuide = pageGuides[displayedView];
+  const canGoBack = Boolean(lastView && visibleNavItems.some((item) => item.id === lastView));
+  const goBackToPreviousView = () => {
+    navigateToView(canGoBack ? lastView : fallbackView, { replace: true });
+  };
+
+  useEffect(() => {
+    if (!showBottomNav) return;
+    const activeItem = bottomNavRef.current?.querySelector(".bottom-nav-item.active");
+    activeItem?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
+  }, [displayedView, showBottomNav]);
+
   const handlePageRefresh = () => {
     writeLocalData("acdme-active-view-v1", displayedView);
     window.location.reload();
@@ -2755,7 +3034,7 @@ function App() {
     setActiveView("platformDashboard");
   };
   const handleProfileHome = () => {
-    setActiveView(isSuperAdmin ? "platformDashboard" : "home");
+    navigateToView(isSuperAdmin ? "platformDashboard" : "home");
     setIsProfileMenuOpen(false);
   };
 
@@ -2783,7 +3062,7 @@ function App() {
           }
 
           setSession({ ...nextSession, verified: true, isFirstLogin: shouldCompleteSetup });
-          setActiveView(nextView);
+          navigateToView(nextView);
         }}
       />
     );
@@ -2806,6 +3085,9 @@ function App() {
     <div className={`${showBottomNav ? "app-shell" : "app-shell setup-mode"} ${displayedView === "home" ? "home-view" : ""}`}>
       <button className="global-refresh-button" type="button" onClick={handlePageRefresh} aria-label="تحديث الصفحة">
         <RefreshCw size={18} />
+      </button>
+      <button className="theme-toggle-button" type="button" onClick={toggleThemeMode} aria-label={themeMode === "dark" ? "تفعيل الوضع النهاري" : "تفعيل الوضع الليلي"}>
+        {themeMode === "dark" ? <Sun size={18} /> : <Moon size={18} />}
       </button>
 
       {!isOnline && (
@@ -2844,7 +3126,7 @@ function App() {
                   key={item.id}
                   type="button"
                   onClick={() => {
-                    setActiveView(item.id);
+                    navigateToView(item.id);
                     setIsProfileMenuOpen(false);
                   }}
                 >
@@ -2874,50 +3156,62 @@ function App() {
       </header>}
 
       <main className="main-panel">
-        {showScreenTitle && <header className="screen-titlebar">
-          <div>
-            <p className="eyebrow">لوحة الإدارة</p>
-            <h1>{visibleNavItems.find((item) => item.id === displayedView)?.label}</h1>
-          </div>
-          <div className="search-box">
-            <Search size={18} />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="بحث عن لاعب أو فريق"
+        <div className="view-transition" key={displayedView}>
+          {!session?.isFirstLogin && currentPageGuide && (
+            <PageContextBar
+              guide={currentPageGuide}
+              canGoBack={canGoBack}
+              canAccessView={(viewId) => visibleNavItems.some((item) => item.id === viewId)}
+              onBack={goBackToPreviousView}
+              onNavigate={navigateToView}
             />
-          </div>
-        </header>}
+          )}
 
-        {displayedView === "home" && <Dashboard {...viewProps} />}
-        {displayedView === "coachSetup" && <CoachSetup {...viewProps} />}
-        {displayedView === "coaches" && <CoachesSettings {...viewProps} />}
-        {displayedView === "platformDashboard" && <PlatformDashboard {...viewProps} />}
-        {displayedView === "platformReports" && <PlatformReports {...viewProps} />}
-        {displayedView === "settings" && <AcademySettings {...viewProps} />}
-        {displayedView === "ageGroups" && <AgeGroups {...viewProps} />}
-        {displayedView === "teams" && <Teams {...viewProps} />}
-        {displayedView === "teamProfile" && <TeamProfile {...viewProps} />}
-        {displayedView === "players" && <Players {...viewProps} />}
-        {displayedView === "playerProfile" && <PlayerProfile {...viewProps} />}
-        {displayedView === "attendance" && <Attendance {...viewProps} />}
-        {displayedView === "reports" && <Reports {...viewProps} />}
-        {displayedView === "accountProfile" && <AccountProfile {...viewProps} />}
-        {displayedView === "gamification" && <Gamification {...viewProps} />}
-        {displayedView === "matches" && <Matches {...viewProps} />}
-        {displayedView === "notifications" && <Notifications {...viewProps} />}
-        {displayedView === "community" && <Community {...viewProps} />}
+          {showScreenTitle && <header className="screen-titlebar">
+            <div>
+              <p className="eyebrow">لوحة الإدارة</p>
+              <h1>{visibleNavItems.find((item) => item.id === displayedView)?.label}</h1>
+            </div>
+            <div className="search-box">
+              <Search size={18} />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="بحث عن لاعب أو فريق"
+              />
+            </div>
+          </header>}
+
+          {displayedView === "home" && <Dashboard {...viewProps} />}
+          {displayedView === "coachSetup" && <CoachSetup {...viewProps} />}
+          {displayedView === "coaches" && <CoachesSettings {...viewProps} />}
+          {displayedView === "platformDashboard" && <PlatformDashboard {...viewProps} />}
+          {displayedView === "platformReports" && <PlatformReports {...viewProps} />}
+          {displayedView === "settings" && <AcademySettings {...viewProps} />}
+          {displayedView === "ageGroups" && <AgeGroups {...viewProps} />}
+          {displayedView === "teams" && <Teams {...viewProps} />}
+          {displayedView === "teamProfile" && <TeamProfile {...viewProps} />}
+          {displayedView === "players" && <Players {...viewProps} />}
+          {displayedView === "playerProfile" && <PlayerProfile {...viewProps} />}
+          {displayedView === "attendance" && <Attendance {...viewProps} />}
+          {displayedView === "reports" && <Reports {...viewProps} />}
+          {displayedView === "accountProfile" && <AccountProfile {...viewProps} />}
+          {displayedView === "gamification" && <Gamification {...viewProps} />}
+          {displayedView === "matches" && <Matches {...viewProps} />}
+          {displayedView === "notifications" && <Notifications {...viewProps} />}
+          {displayedView === "community" && <Community {...viewProps} />}
+        </div>
       </main>
 
       {showBottomNav && <nav className="bottom-nav" aria-label="التنقل السفلي">
-        <div className="bottom-nav-track">
+        <div className="bottom-nav-track" ref={bottomNavRef}>
           {bottomNavItems.map((item) => {
             const Icon = item.icon;
             return (
               <button
                 className={displayedView === item.id ? "bottom-nav-item active" : "bottom-nav-item"}
                 key={item.id}
-                onClick={() => setActiveView(item.id)}
+                onClick={() => navigateToView(item.id)}
                 title={item.label}
               >
                 <Icon size={20} />
@@ -2928,6 +3222,40 @@ function App() {
         </div>
       </nav>}
     </div>
+  );
+}
+
+function PageContextBar({ guide, canGoBack, canAccessView, onBack, onNavigate }) {
+  const quickActions = [
+    guide.primaryView && { viewId: guide.primaryView, label: guide.primaryLabel },
+    guide.secondaryView && { viewId: guide.secondaryView, label: guide.secondaryLabel },
+  ].filter(Boolean).filter((action) => canAccessView(action.viewId));
+
+  return (
+    <section className="page-context-bar" aria-label="إرشاد الصفحة">
+      <button
+        className="page-context-back"
+        type="button"
+        onClick={onBack}
+        disabled={!canGoBack}
+        aria-label="العودة للصفحة السابقة"
+      >
+        <ArrowRight size={16} />
+      </button>
+      <div className="page-context-copy">
+        <strong>{guide.title}</strong>
+        <span>{guide.text}</span>
+      </div>
+      {quickActions.length > 0 && (
+        <div className="page-context-actions">
+          {quickActions.map((action) => (
+            <button key={action.viewId} type="button" onClick={() => onNavigate(action.viewId)}>
+              {action.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -2992,13 +3320,30 @@ function RenewalGate({ academyName, renewalInfo, canRenew, isOnline, onRenew, on
   );
 }
 
-function Dashboard({ data, stats, helpers, setActiveView, session }) {
-  const leaders = [...data.players].sort((a, b) => b.xp - a.xp).slice(0, 4);
+function Dashboard({ data, stats, helpers, setActiveView, setSelectedPlayerId, session }) {
+  const [homeSearch, setHomeSearch] = useState("");
+  const [activeHomeGroup, setActiveHomeGroup] = useState("all");
   const academyLogo = data.academy.logo || session?.academyLogo || "";
   const academyName = data.academy.name || session?.academyName || "اسم الأكاديمية";
   const academyNameEn = data.academy.nameEn || session?.academyNameEn || "Official Sports Academy";
   const activeAlerts = stats.absent + stats.late;
   const ageFilters = data.ageGroups.length ? data.ageGroups.slice(0, 4) : ageGroupPresets.slice(0, 3);
+  const homePlayers = data.players
+    .filter((player) => {
+      const team = helpers.teamById[player.teamId];
+      const group = helpers.groupById[team?.ageGroupId];
+      const searchTarget = `${player.name} ${team?.name || ""} ${group?.name || ""} ${player.guardianPhone || ""}`.toLowerCase();
+      const matchesSearch = searchTarget.includes(homeSearch.toLowerCase());
+      const matchesGroup =
+        activeHomeGroup === "all" ||
+        team?.ageGroupId === activeHomeGroup ||
+        group?.presetKey === activeHomeGroup ||
+        group?.name === activeHomeGroup;
+
+      return matchesSearch && matchesGroup;
+    })
+    .sort((a, b) => b.xp - a.xp)
+    .slice(0, 8);
 
   return (
     <section className="mobile-home">
@@ -3048,8 +3393,9 @@ function Dashboard({ data, stats, helpers, setActiveView, session }) {
       </section>
 
       <div className="home-actions">
-        <button type="button" onClick={() => setActiveView("home")} aria-label="تحديث">
-          <Activity size={17} />
+        <button type="button" onClick={() => setActiveView("reports")} aria-label="المالية">
+          <Wallet size={17} />
+          المالية
         </button>
         <button type="button" onClick={() => setActiveView("attendance")}>
           <CalendarCheck size={16} />
@@ -3063,25 +3409,44 @@ function Dashboard({ data, stats, helpers, setActiveView, session }) {
 
       <label className="home-search">
         <Search size={16} />
-        <input placeholder="ابحث باسم لاعب، ولي أمر، أو فريق" />
+        <input
+          value={homeSearch}
+          onChange={(event) => setHomeSearch(event.target.value)}
+          placeholder="ابحث باسم لاعب، ولي أمر، أو فريق"
+        />
       </label>
 
       <div className="home-chips">
-        <button className="active">الكل</button>
+        <button className={activeHomeGroup === "all" ? "active" : ""} type="button" onClick={() => setActiveHomeGroup("all")}>الكل</button>
         {ageFilters.map((group) => (
-          <button key={group.id || group.key}>{group.name}</button>
+          <button
+            className={activeHomeGroup === (group.id || group.key) ? "active" : ""}
+            key={group.id || group.key}
+            type="button"
+            onClick={() => setActiveHomeGroup(group.id || group.key)}
+          >
+            {group.name}
+          </button>
         ))}
       </div>
 
       <section className="home-player-list">
-        <h2>قائمة اللاعبين</h2>
-        {leaders.length === 0 && (
+        <h2>قائمة اللاعبين <span>{homePlayers.length}</span></h2>
+        {homePlayers.length === 0 && (
           <div className="home-empty-list">
-            لا يوجد لاعبون بعد. أضف أول لاعب لتظهر القائمة هنا.
+            لا توجد نتائج مطابقة. غيّر البحث أو الفئة، أو أضف لاعبًا جديدًا.
           </div>
         )}
-        {leaders.map((player) => (
-          <article className="home-player-card" key={player.id}>
+        {homePlayers.map((player) => (
+          <button
+            className="home-player-card"
+            key={player.id}
+            type="button"
+            onClick={() => {
+              setSelectedPlayerId(player.id);
+              setActiveView("playerProfile");
+            }}
+          >
             <div className="home-player-avatar">
               {player.photo ? <img src={player.photo} alt={player.name} loading="lazy" decoding="async" /> : <UserCircle size={28} />}
             </div>
@@ -3090,7 +3455,7 @@ function Dashboard({ data, stats, helpers, setActiveView, session }) {
               <span>{helpers.teamById[player.teamId]?.name || "بدون فريق"}</span>
             </div>
             <b>{player.xp} XP</b>
-          </article>
+          </button>
         ))}
       </section>
     </section>
@@ -3402,6 +3767,9 @@ function PlatformReports({ academyDataById, platformUsers, registrationRequests 
     const collected = academyData.payments.length
       ? academyData.payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
       : Number(summary.collectedRevenue || 0);
+    const expensesTotal = academyData.expenses.length
+      ? academyData.expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0)
+      : Number(summary.totalExpenses || 0);
     const remaining = hasDetailedPlayers
       ? academyData.players.reduce((sum, player) => {
           const due = Number(player.monthlyFee || 0);
@@ -3456,6 +3824,8 @@ function PlatformReports({ academyDataById, platformUsers, registrationRequests 
       stoppedPlayers,
       teams: academyData.teams,
       collected,
+      expensesTotal,
+      netRevenue: collected - expensesTotal,
       expected,
       remaining,
       debtPlayers,
@@ -3470,9 +3840,11 @@ function PlatformReports({ academyDataById, platformUsers, registrationRequests 
       coaches: sum.coaches + academy.coaches.length,
       players: sum.players + academy.playerCount,
       collected: sum.collected + academy.collected,
+      expenses: sum.expenses + academy.expensesTotal,
+      net: sum.net + academy.netRevenue,
       remaining: sum.remaining + academy.remaining,
     }),
-    { academies: 0, coaches: 0, players: 0, collected: 0, remaining: 0 },
+    { academies: 0, coaches: 0, players: 0, collected: 0, expenses: 0, net: 0, remaining: 0 },
   );
 
   return (
@@ -3497,6 +3869,14 @@ function PlatformReports({ academyDataById, platformUsers, registrationRequests 
         <div>
           <span>إجمالي المحصل</span>
           <strong>{currency(totals.collected)}</strong>
+        </div>
+        <div>
+          <span>إجمالي المصروفات</span>
+          <strong>{currency(totals.expenses)}</strong>
+        </div>
+        <div>
+          <span>صافي الأكاديميات</span>
+          <strong>{currency(totals.net)}</strong>
         </div>
         <div>
           <span>إجمالي المتبقي</span>
@@ -3527,6 +3907,8 @@ function PlatformReports({ academyDataById, platformUsers, registrationRequests 
               <Detail label="النشطون" value={academy.activePlayerCount} />
               <Detail label="المنقطعون" value={academy.stoppedPlayers} />
               <Detail label="المحصل" value={currency(academy.collected)} />
+              <Detail label="المصروفات" value={currency(academy.expensesTotal)} />
+              <Detail label="الصافي" value={currency(academy.netRevenue)} />
               <Detail label="المتبقي" value={currency(academy.remaining)} />
             </div>
 
@@ -4502,9 +4884,15 @@ function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBa
       <section className="setup-card backup-card backup-card-prominent">
         <section className="age-hero-card">
           <span>نسخة احتياطية</span>
-          <h2>حفظ كل بيانات التطبيق</h2>
-          <p>تحفظ النسخة الأكاديمية، اللاعبين، الصور، الحضور، المدفوعات، الإعدادات، والحسابات المحلية في ملف مضغوط يمكن استيراده لاحقًا.</p>
+          <h2>حفظ آمن لكل بيانات التطبيق</h2>
+          <p>تنشئ ملفًا مضغوطًا وموقّعًا ببصمة تحقق، مع منع استرداد نسخة تخص أكاديمية مختلفة عن الحساب الحالي.</p>
         </section>
+
+        <div className="backup-security-grid">
+          <span><ShieldCheck size={16} /> بصمة تحقق SHA-256</span>
+          <span><FolderOpen size={16} /> اختيار مسار الحفظ عند دعم الجهاز</span>
+          <span><FileCheck2 size={16} /> فحص الملف قبل الاسترداد</span>
+        </div>
 
         <div className="backup-actions">
           <button className="yellow-button" type="button" onClick={handleBackupExport} disabled={isBackupBusy}>
@@ -4517,6 +4905,10 @@ function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBa
             <input type="file" accept=".gz,.json,application/gzip,application/json" onChange={handleBackupImport} disabled={isBackupBusy} />
           </label>
         </div>
+
+        <small className="backup-path-note">
+          على الهاتف يتم الحفظ غالبًا في التنزيلات. على المتصفحات الداعمة سيظهر اختيار مسار الحفظ مباشرة.
+        </small>
 
         {backupMessage && <p className={backupMessage.startsWith("تم") ? "setup-success" : "setup-error"}>{backupMessage}</p>}
       </section>
@@ -4906,6 +5298,7 @@ function Players({ data, helpers, addPlayer, togglePlayerStatus, setSelectedPlay
   const [subscriptionChoice, setSubscriptionChoice] = useState("اشتراك شهري");
   const [monthlyFeeValue, setMonthlyFeeValue] = useState("");
   const [playerSortMode, setPlayerSortMode] = useState("age");
+  const [playerFormMessage, setPlayerFormMessage] = useState("");
   const groupFilters = data.ageGroups.length ? data.ageGroups : ageGroupPresets;
   const selectedBirthYear = birthDateValue ? new Date(`${birthDateValue}T00:00:00`).getFullYear() : null;
   const selectedAgeGroupPreset = ageGroupPresetFromBirthDate(birthDateValue);
@@ -4955,6 +5348,7 @@ function Players({ data, helpers, addPlayer, togglePlayerStatus, setSelectedPlay
     setBirthDateValue("");
     setSubscriptionChoice("اشتراك شهري");
     setMonthlyFeeValue("");
+    setPlayerFormMessage(submitAction === "save-add" ? "تم حفظ اللاعب. النموذج جاهز لإضافة لاعب جديد." : "تم حفظ اللاعب بنجاح.");
     setIsAddingPlayer(submitAction === "save-add");
   };
 
@@ -5026,9 +5420,10 @@ function Players({ data, helpers, addPlayer, togglePlayerStatus, setSelectedPlay
           <div className="player-add-card-header">
             <span>إضافة لاعب جديد</span>
             <button type="button" onClick={() => setIsAddingPlayer(false)} aria-label="إغلاق النموذج">
-              ?
+              <X size={17} />
             </button>
           </div>
+          {playerFormMessage && <p className="player-form-message">{playerFormMessage}</p>}
 
           <div className="player-photo-uploader">
             {playerPhotoPreview ? <img src={playerPhotoPreview} alt="صورة اللاعب" decoding="async" /> : <UserCircle size={54} />}
@@ -5104,6 +5499,13 @@ function Players({ data, helpers, addPlayer, togglePlayerStatus, setSelectedPlay
               ))}
             </select>
           </label>
+          {selectedAgeGroupPreset && !teamsForSelectedGroup.length && (
+            <div className="player-form-guidance">
+              <Layers size={17} />
+              <span>لا يوجد فريق مرتبط بفئة {selectedAgeGroupPreset.name}. أنشئ الفريق أولًا ثم ارجع لإضافة اللاعب.</span>
+              <button type="button" onClick={() => setActiveView("teams")}>إدارة الفرق</button>
+            </div>
+          )}
           <div className="player-subscription-section">
             <span>نوع الاشتراك</span>
             <div className="player-subscription-cards" role="radiogroup" aria-label="نوع الاشتراك">
@@ -5420,7 +5822,9 @@ function PlayerDetailsEditor({ data, helpers, player, updatePlayerDetails }) {
 
 function PlayerShowCard({ player, updatePlayerCard }) {
   const card = player.playerCard || {};
+  const cardRef = useRef(null);
   const [draft, setDraft] = useState(card);
+  const [cardMessage, setCardMessage] = useState("");
   const stats = [
     ["pac", "PAC"],
     ["sho", "SHO"],
@@ -5438,6 +5842,7 @@ function PlayerShowCard({ player, updatePlayerCard }) {
 
   useEffect(() => {
     setDraft(card);
+    setCardMessage("");
   }, [player.id]);
 
   const updateDraft = (field, value) => {
@@ -5451,12 +5856,66 @@ function PlayerShowCard({ player, updatePlayerCard }) {
   const saveCard = (event) => {
     event.preventDefault();
     updatePlayerCard?.(player.id, draft);
+    setCardMessage("تم حفظ بيانات البطاقة.");
+  };
+
+  const exportCardImage = async () => {
+    setCardMessage("جاري تجهيز صورة البطاقة...");
+    try {
+      const blob = await elementToPngBlob(cardRef.current, 2.4);
+      if (!blob) {
+        setCardMessage("تعذر تجهيز الصورة على هذا الجهاز.");
+        return null;
+      }
+      return blob;
+    } catch {
+      setCardMessage("تعذر تجهيز صورة البطاقة.");
+      return null;
+    }
+  };
+
+  const saveCardImage = async () => {
+    const blob = await exportCardImage();
+    if (!blob) return;
+    const safeName = (player.name || "player").replace(/[^\w\u0600-\u06FF-]+/g, "-");
+    const result = await saveBlobFile(blob, `${safeName}-player-card.png`, "صورة بطاقة اللاعب");
+    setCardMessage(result.cancelled ? "تم إلغاء حفظ البطاقة." : `تم حفظ بطاقة اللاعب: ${result.filename}. المسار: ${result.location}.`);
+  };
+
+  const shareCard = async () => {
+    const safeName = (player.name || "player").replace(/[^\w\u0600-\u06FF-]+/g, "-");
+    const blob = await exportCardImage();
+    const shareText = `بطاقة اللاعب ${player.name} - ${cardView.overall || cardView.rating || player.rating || "--"} OVR`;
+    try {
+      if (blob && navigator.canShare) {
+        const file = new File([blob], `${safeName}-player-card.png`, { type: "image/png" });
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({ title: `بطاقة ${player.name}`, text: shareText, files: [file] });
+          setCardMessage("تم فتح نافذة مشاركة البطاقة.");
+          return;
+        }
+      }
+      if (navigator.share) {
+        await navigator.share({ title: `بطاقة ${player.name}`, text: shareText });
+        setCardMessage("تم فتح نافذة المشاركة.");
+        return;
+      }
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareText);
+        setCardMessage("تم نسخ نص البطاقة للمشاركة.");
+        return;
+      }
+      setCardMessage("المشاركة غير مدعومة في هذا الجهاز.");
+    } catch {
+      setCardMessage("تم إلغاء المشاركة أو تعذر تنفيذها.");
+    }
   };
 
   const valueOrDash = (value, fallback = "---") => String(value || "").trim() || fallback;
-  const cardPosition = valueOrDash(card.position || player.position, "--");
-  const cardRating = valueOrDash(card.rating, "--");
-  const overall = valueOrDash(card.overall || card.rating, "--");
+  const cardView = { ...card, ...draft };
+  const cardPosition = valueOrDash(cardView.position || player.position, "--");
+  const cardRating = valueOrDash(cardView.rating || player.rating, "--");
+  const overall = valueOrDash(cardView.overall || cardView.rating || player.rating, "--");
 
   return (
     <section className="player-showcase-panel">
@@ -5525,9 +5984,25 @@ function PlayerShowCard({ player, updatePlayerCard }) {
           <CheckCircle2 size={18} />
           حفظ البطاقة
         </button>
+        {cardMessage && <p className={cardMessage.startsWith("تم") ? "setup-success" : "setup-error"}>{cardMessage}</p>}
       </form>
 
-      <div className="player-show-card" aria-label="بطاقة اللاعب">
+      <div className="player-card-actions">
+        <button type="button" onClick={saveCardImage}>
+          <ImageDown size={17} />
+          حفظ البطاقة
+        </button>
+        <button type="button" onClick={shareCard}>
+          <Share2 size={17} />
+          مشاركة
+        </button>
+        <button type="button" onClick={() => navigator.clipboard?.writeText?.(`${player.name} - ${overall} OVR`)}>
+          <Copy size={17} />
+          نسخ مختصر
+        </button>
+      </div>
+
+      <div className="player-show-card professional" ref={cardRef} aria-label="بطاقة اللاعب">
         <div className="player-card-crest" aria-hidden="true">★ ★ ★</div>
         <div className="player-show-card-top">
           <strong>{cardRating}</strong>
@@ -5543,7 +6018,7 @@ function PlayerShowCard({ player, updatePlayerCard }) {
         <div className="player-card-info-box">
           {profileRows.map(([field, label]) => (
             <div key={field}>
-              <b>{valueOrDash(card[field], "-")}</b>
+              <b>{valueOrDash(cardView[field], "-")}</b>
               <span>{label}</span>
             </div>
           ))}
@@ -5555,16 +6030,16 @@ function PlayerShowCard({ player, updatePlayerCard }) {
           {stats.map(([field, label]) => (
             <div key={field}>
               <span>{label}</span>
-              <strong>{valueOrDash(card[field], "--")}</strong>
+              <strong>{valueOrDash(cardView[field], "--")}</strong>
             </div>
           ))}
         </div>
 
         <div className="player-card-extra-lines">
-          <span>الطول <b>{valueOrDash(card.height)}</b> سم</span>
-          <span>الرقم <b>{valueOrDash(card.number || player.playerNumber)}</b></span>
-          <span>الوزن <b>{valueOrDash(card.weight)}</b> كغ</span>
-          <span>مركز اللعب <b>{valueOrDash(card.playCenter)}</b></span>
+          <span>الطول <b>{valueOrDash(cardView.height)}</b> سم</span>
+          <span>الرقم <b>{valueOrDash(cardView.number || player.playerNumber)}</b></span>
+          <span>الوزن <b>{valueOrDash(cardView.weight)}</b> كغ</span>
+          <span>مركز اللعب <b>{valueOrDash(cardView.playCenter)}</b></span>
         </div>
 
         <div className="player-card-overall">
@@ -5583,6 +6058,8 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
   const [activePaymentPlayerId, setActivePaymentPlayerId] = useState("");
   const [paymentDrafts, setPaymentDrafts] = useState({});
   const [attendanceSortMode, setAttendanceSortMode] = useState("age");
+  const [attendanceSearch, setAttendanceSearch] = useState("");
+  const [lastAttendanceAction, setLastAttendanceAction] = useState("");
 
   useEffect(() => {
     if (!groupOptions.length) {
@@ -5610,10 +6087,15 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
   const selectedTrainingDays = trainingDaysForGroup(selectedGroup);
   const hasTrainingDays = selectedTrainingDays.length > 0;
   const isScheduledTrainingDay = Boolean(selectedGroup && hasTrainingDays && selectedTrainingDays.includes(selectedDateDay));
-  const groupPlayers = data.players
+  const selectedGroupPlayers = data.players
     .filter((player) => player.status !== "منقطع" && helpers.teamById[player.teamId]?.ageGroupId === selectedGroupId)
     .sort((firstPlayer, secondPlayer) => comparePlayersBySortMode(firstPlayer, secondPlayer, attendanceSortMode));
-  const countablePlayers = isScheduledTrainingDay ? groupPlayers : [];
+  const groupPlayers = selectedGroupPlayers.filter((player) => {
+    const team = helpers.teamById[player.teamId];
+    const searchTarget = `${player.name} ${team?.name || ""} ${player.position || ""} ${player.guardianPhone || ""}`.toLowerCase();
+    return searchTarget.includes(attendanceSearch.toLowerCase());
+  });
+  const countablePlayers = isScheduledTrainingDay ? selectedGroupPlayers : [];
   const presentCount = countablePlayers.filter((player) => attendanceRows[player.id]?.status === "حاضر").length;
   const lateCount = countablePlayers.filter((player) => attendanceRows[player.id]?.status === "متأخر").length;
   const absentCount = countablePlayers.filter((player) => attendanceRows[player.id]?.status === "غائب").length;
@@ -5621,6 +6103,7 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
   const updatePlayerStatus = (player, status) => {
     if (!isScheduledTrainingDay) return;
     recordAttendance(player.id, status, attendanceDate);
+    setLastAttendanceAction(`تم حفظ ${status} للاعب ${player.name}`);
 
     if (status === "غائب") {
       setActivePaymentPlayerId((current) => (current === player.id ? "" : current));
@@ -5655,6 +6138,7 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
       note: `دفعة ${attendanceRows[player.id]?.status || "حضور"} من صفحة التحضير`,
     });
     setActivePaymentPlayerId("");
+    setLastAttendanceAction(`تم حفظ دفعة ${currency(amount)} للاعب ${player.name}`);
   };
 
   return (
@@ -5718,6 +6202,13 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
         </section>
       )}
 
+      {lastAttendanceAction && (
+        <div className="attendance-save-note" role="status">
+          <CheckCircle2 size={16} />
+          <span>{lastAttendanceAction}</span>
+        </div>
+      )}
+
       <div className="attendance-summary-row">
         <article>
           <span>حاضر</span>
@@ -5737,10 +6228,19 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
         <div className="attendance-list-head">
           <div>
             <h2>{selectedGroup?.name || "الفئة"}</h2>
-            <p>{isScheduledTrainingDay ? `${groupPlayers.length} لاعب في التحضير` : "التحضير مغلق لهذا اليوم"}</p>
+            <p>{isScheduledTrainingDay ? `${groupPlayers.length} من ${selectedGroupPlayers.length} لاعب` : "التحضير مغلق لهذا اليوم"}</p>
           </div>
           <SortModeButton sortMode={attendanceSortMode} onToggle={() => setAttendanceSortMode((mode) => (mode === "age" ? "name" : "age"))} />
         </div>
+
+        <label className="attendance-search">
+          <Search size={16} />
+          <input
+            value={attendanceSearch}
+            onChange={(event) => setAttendanceSearch(event.target.value)}
+            placeholder="بحث داخل لاعبي الفئة"
+          />
+        </label>
 
         {!isScheduledTrainingDay && selectedGroup && (
           <div className="attendance-empty">اختر تاريخًا يوافق أحد أيام تدريب هذه الفئة حتى يتم احتساب التحضير.</div>
@@ -5815,7 +6315,7 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
   );
 }
 
-function Reports({ data, helpers, addPayment }) {
+function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
   const currentMonth = today.slice(0, 7);
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const [selectedGroupId, setSelectedGroupId] = useState("all");
@@ -5840,8 +6340,13 @@ function Reports({ data, helpers, addPayment }) {
     const rowMonth = String(row.date || "").slice(0, 7);
     return filteredPlayerIds.has(row.playerId) && (isAllMonths || rowMonth === selectedMonth);
   });
+  const filteredExpenses = (data.expenses || []).filter((expense) => {
+    const expenseMonth = String(expense.date || "").slice(0, 7);
+    return isAllMonths || expenseMonth === selectedMonth;
+  });
   const expected = filteredPlayers.reduce((sum, player) => sum + Number(player.monthlyFee || 0), 0);
   const rawCollected = filteredPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  const totalExpenses = filteredExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
   const paidByPlayer = filteredPayments.reduce((map, payment) => {
     map[payment.playerId] = (map[payment.playerId] || 0) + Number(payment.amount || 0);
     return map;
@@ -5851,6 +6356,7 @@ function Reports({ data, helpers, addPayment }) {
     return sum + Math.max(Number(player.monthlyFee || 0) - Number(paidByPlayer[player.id] || 0), 0);
   }, 0);
   const collected = rawCollected + fullSubscriptionCredit;
+  const netRevenue = collected - totalExpenses;
   const remaining = Math.max(expected - collected, 0);
   const collectionRate = Math.min(100, Math.round((collected / Math.max(expected, 1)) * 100));
   const freePlayers = filteredPlayers.filter((player) => Number(player.monthlyFee || 0) === 0 || player.subscriptionType === "مجاني").length;
@@ -5933,6 +6439,14 @@ function Reports({ data, helpers, addPayment }) {
       color: "#17207c",
     },
   ].filter((item) => item.value > 0);
+  const expenseCategorySummary = Object.values(filteredExpenses.reduce((map, expense) => {
+    const category = expense.category || "أخرى";
+    map[category] = map[category] || { label: category, value: 0 };
+    map[category].value += Number(expense.amount || 0);
+    return map;
+  }, {})).sort((a, b) => b.value - a.value);
+  const maxExpenseCategoryValue = Math.max(...expenseCategorySummary.map((item) => item.value), 1);
+  const recentExpenses = [...filteredExpenses].sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 8);
   const recentPayments = [...filteredPayments].sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 6);
   const latePlayers = playerFinanceRows.filter((row) => row.status === "متأخر" || row.status === "جزئي").slice(0, 6);
   const forecastDate = isAllMonths ? new Date() : new Date(`${selectedMonth}-01T00:00:00`);
@@ -6010,6 +6524,7 @@ function Reports({ data, helpers, addPayment }) {
     { id: "players", label: "كشف اللاعبين" },
     { id: "debts", label: "المتأخرات" },
     { id: "payments", label: "الدفعات" },
+    { id: "expenses", label: "المصروفات" },
     { id: "kits", label: "الطقم الرياضي" },
   ];
   const largestDebt = playerFinanceRows.find((player) => player.remaining > 0);
@@ -6033,6 +6548,8 @@ function Reports({ data, helpers, addPayment }) {
     `الفترة: ${reportPeriodLabel}`,
     `الفئة: ${reportGroupLabel}`,
     `المحصّل: ${currency(collected)}`,
+    `المصروفات: ${currency(totalExpenses)}`,
+    `الصافي: ${currency(netRevenue)}`,
     `المتوقع: ${currency(expected)}`,
     `المتبقي: ${currency(remaining)}`,
     `نسبة التحصيل: ${collectionRate}%`,
@@ -6077,6 +6594,19 @@ function Reports({ data, helpers, addPayment }) {
         ];
       }),
     ];
+    csvRows.push([]);
+    csvRows.push(["المصروف", "التصنيف", "المبلغ", "التاريخ", "طريقة الدفع", "المورد", "ملاحظة"]);
+    filteredExpenses.forEach((expense) => {
+      csvRows.push([
+        expense.title,
+        expense.category,
+        expense.amount,
+        expense.date,
+        expense.method,
+        expense.vendor || "-",
+        expense.note || "-",
+      ]);
+    });
     const csvText = `\ufeff${csvRows
       .map((row) => row.map((value) => `"${String(value ?? "").replace(/"/g, '""')}"`).join(","))
       .join("\n")}`;
@@ -6123,6 +6653,17 @@ function Reports({ data, helpers, addPayment }) {
         payment.source === "attendance" ? "من التحضير" : payment.method || "-",
         payment.note || "-",
       ]);
+    const expenseRows = [...filteredExpenses]
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+      .map((expense) => [
+        expense.date || "-",
+        expense.title || "-",
+        expense.category || "-",
+        currency(expense.amount),
+        expense.method || "-",
+        expense.vendor || "-",
+        expense.note || "-",
+      ]);
     const ok = printReportHtml(buildPrintReportHtml({
       title: "التقرير المالي",
       subtitle: `${reportPeriodLabel} - ${reportGroupLabel}`,
@@ -6130,6 +6671,8 @@ function Reports({ data, helpers, addPayment }) {
       logo: data.academy.logo,
       cards: [
         { label: "المحصّل", value: currency(collected) },
+        { label: "المصروفات", value: currency(totalExpenses) },
+        { label: "الصافي", value: currency(netRevenue) },
         { label: "المتوقع", value: currency(expected) },
         { label: "المتبقي", value: currency(remaining) },
         { label: "نسبة التحصيل", value: `${collectionRate}%` },
@@ -6138,6 +6681,7 @@ function Reports({ data, helpers, addPayment }) {
         reportTable("كشف حساب اللاعبين", ["اللاعب", "الفريق", "الفئة", "الاشتراك", "المطلوب", "المدفوع", "المتبقي", "الحالة"], playerRows),
         reportTable("المتأخرات", ["اللاعب", "الفريق", "المبلغ المتبقي", "الحالة"], debtRows, "لا توجد متأخرات في الفترة المحددة."),
         reportTable("سجل الدفعات", ["التاريخ", "اللاعب", "المبلغ", "المصدر", "الملاحظة"], paymentRows, "لا توجد دفعات في الفترة المحددة."),
+        reportTable("سجل المصروفات", ["التاريخ", "المصروف", "التصنيف", "المبلغ", "الطريقة", "المورد", "الملاحظة"], expenseRows, "لا توجد مصروفات في الفترة المحددة."),
       ],
       note: riskLabel,
     }));
@@ -6290,6 +6834,16 @@ function Reports({ data, helpers, addPayment }) {
           <strong>{currency(remaining)}</strong>
         </article>
         <article>
+          <Trash2 size={18} />
+          <span>المصروفات</span>
+          <strong>{currency(totalExpenses)}</strong>
+        </article>
+        <article>
+          <ShieldCheck size={18} />
+          <span>الصافي</span>
+          <strong>{currency(netRevenue)}</strong>
+        </article>
+        <article>
           <CalendarCheck size={18} />
           <span>الحضور</span>
           <strong>{attendanceRate}%</strong>
@@ -6314,6 +6868,11 @@ function Reports({ data, helpers, addPayment }) {
             <span>متوسط الدفعة</span>
             <strong>{currency(averagePayment)}</strong>
             <small>{filteredPayments.length} عملية</small>
+          </article>
+          <article>
+            <span>صافي الفترة</span>
+            <strong>{currency(netRevenue)}</strong>
+            <small>بعد خصم {currency(totalExpenses)}</small>
           </article>
           <article>
             <span>أفضل فئة</span>
@@ -6492,6 +7051,26 @@ function Reports({ data, helpers, addPayment }) {
                   <span>{source.label}</span>
                   <b>{currency(source.value)}</b>
                   <i style={{ "--fill": `${Math.round((source.value / Math.max(collected, 1)) * 100)}%`, "--tone": source.color }} />
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="finance-chart-card">
+            <div className="finance-card-head">
+              <div>
+                <span>المصروفات</span>
+                <strong>{currency(totalExpenses)}</strong>
+              </div>
+              <Trash2 size={20} />
+            </div>
+            <div className="finance-group-bars">
+              {expenseCategorySummary.length === 0 && <p>لا توجد مصروفات لهذه الفترة.</p>}
+              {expenseCategorySummary.map((expense) => (
+                <div key={expense.label}>
+                  <span>{expense.label}</span>
+                  <b>{currency(expense.value)}</b>
+                  <i style={{ "--fill": `${Math.round((expense.value / maxExpenseCategoryValue) * 100)}%`, "--tone": "#b94a48" }} />
                 </div>
               ))}
             </div>
@@ -6717,6 +7296,63 @@ function Reports({ data, helpers, addPayment }) {
         </section>
       )}
 
+      {activeReportTab === "expenses" && (
+        <section className="finance-report-grid">
+          <ExpenseForm onAddExpense={addExpense} />
+
+          <article className="finance-chart-card wide">
+            <div className="finance-card-head">
+              <div>
+                <span>سجل المصروفات</span>
+                <strong>{filteredExpenses.length} عملية في الفترة المختارة</strong>
+              </div>
+              <Trash2 size={20} />
+            </div>
+            <div className="finance-ledger-money">
+              <span>إجمالي المصروفات <b>{currency(totalExpenses)}</b></span>
+              <span>صافي التحصيل <b>{currency(netRevenue)}</b></span>
+              <span>عدد العمليات <b>{filteredExpenses.length}</b></span>
+            </div>
+            <div className="expense-list">
+              {recentExpenses.length === 0 && <div className="finance-empty">لا توجد مصروفات في الفترة المختارة.</div>}
+              {recentExpenses.map((expense) => (
+                <article key={expense.id}>
+                  <div>
+                    <strong>{expense.title || "مصروف"}</strong>
+                    <span>{expense.date} - {expense.category || "أخرى"} - {expense.method || "غير محدد"}</span>
+                    {(expense.vendor || expense.note) && <small>{expense.vendor || ""}{expense.vendor && expense.note ? " - " : ""}{expense.note || ""}</small>}
+                  </div>
+                  <b>{currency(expense.amount)}</b>
+                  <button type="button" onClick={() => deleteExpense?.(expense.id)} aria-label="حذف المصروف">
+                    <Trash2 size={15} />
+                  </button>
+                </article>
+              ))}
+            </div>
+          </article>
+
+          <article className="finance-chart-card">
+            <div className="finance-card-head">
+              <div>
+                <span>حسب التصنيف</span>
+                <strong>أين تذهب المصروفات</strong>
+              </div>
+              <ClipboardList size={20} />
+            </div>
+            <div className="finance-group-bars">
+              {expenseCategorySummary.length === 0 && <p>لا توجد مصروفات مصنفة.</p>}
+              {expenseCategorySummary.map((expense) => (
+                <div key={expense.label}>
+                  <span>{expense.label}</span>
+                  <b>{currency(expense.value)}</b>
+                  <i style={{ "--fill": `${Math.round((expense.value / maxExpenseCategoryValue) * 100)}%`, "--tone": "#b94a48" }} />
+                </div>
+              ))}
+            </div>
+          </article>
+        </section>
+      )}
+
       {activeReportTab === "kits" && (
         <section className="finance-report-grid">
           <article className="finance-chart-card wide">
@@ -6928,6 +7564,37 @@ function PaymentForm({ players, onAddPayment, title }) {
       <button className="primary-button" type="submit">
         <Plus size={18} />
         حفظ الدفعة
+      </button>
+    </form>
+  );
+}
+
+function ExpenseForm({ onAddExpense }) {
+  return (
+    <form className="panel form-panel expense-form" onSubmit={onAddExpense}>
+      <FormTitle icon={Wallet} title="تسجيل مصروف" />
+      <input name="title" placeholder="اسم المصروف: إيجار، معدات، مواصلات..." required />
+      <select name="category" required>
+        <option>تشغيل</option>
+        <option>معدات</option>
+        <option>ملاعب</option>
+        <option>رواتب</option>
+        <option>مواصلات</option>
+        <option>تسويق</option>
+        <option>أخرى</option>
+      </select>
+      <input name="amount" type="number" min="0" placeholder="قيمة المصروف" required />
+      <input name="date" type="date" defaultValue={today} required />
+      <select name="method" required>
+        <option>نقد</option>
+        <option>تحويل</option>
+        <option>آجل</option>
+      </select>
+      <input name="vendor" placeholder="المورد أو الجهة - اختياري" />
+      <textarea name="note" placeholder="ملاحظة اختيارية" />
+      <button className="primary-button" type="submit">
+        <Plus size={18} />
+        حفظ المصروف
       </button>
     </form>
   );
