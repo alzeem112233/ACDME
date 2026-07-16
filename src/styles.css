@@ -210,11 +210,24 @@ button {
   padding-bottom: 0;
 }
 
+.app-shell.age-groups-view {
+  min-height: 100dvh;
+  padding-bottom: 18px;
+  display: grid;
+  align-items: start;
+}
+
 .app-shell.setup-mode .profile-menu-shell {
   position: fixed;
   top: max(10px, calc(10px + env(safe-area-inset-top)));
   inset-inline-end: 12px;
   z-index: 1300;
+}
+
+.app-shell.age-groups-view .profile-menu-shell {
+  position: fixed;
+  top: max(12px, calc(12px + env(safe-area-inset-top)));
+  inset-inline-end: max(12px, calc((100vw - 760px) / 2 + 12px));
 }
 
 .app-header {
@@ -898,6 +911,17 @@ html[data-theme="dark"] .backup-security-grid span {
   padding: 12px 0 34px;
 }
 
+.age-groups-view .main-panel {
+  width: min(760px, calc(100% - 24px));
+  padding: max(64px, calc(64px + env(safe-area-inset-top))) 0 18px;
+  align-self: start;
+}
+
+.age-groups-view .view-transition {
+  display: grid;
+  justify-items: center;
+}
+
 .view-transition {
   animation: pageEnter 0.28s ease both;
   transform-origin: 50% 10%;
@@ -1290,9 +1314,10 @@ html[data-theme="dark"] .attendance-list-head h2 {
 }
 
 .age-setup-screen {
-  width: min(100% - 24px, 760px);
+  width: min(100%, 760px);
   margin-inline: auto;
   justify-items: stretch;
+  align-content: start;
 }
 
 .setup-header {
@@ -5837,6 +5862,16 @@ html[data-theme="dark"] .expense-list button {
     gap: 10px;
   }
 
+  .app-shell.age-groups-view .profile-menu-shell {
+    inset-inline-end: 12px;
+  }
+
+  .age-groups-view .main-panel {
+    width: min(100% - 12px, 430px);
+    padding-top: max(58px, calc(58px + env(safe-area-inset-top)));
+    padding-bottom: 10px;
+  }
+
   .setup-card {
     padding: 14px;
     border-radius: 12px;
@@ -5844,8 +5879,8 @@ html[data-theme="dark"] .expense-list button {
   }
 
   .age-setup-screen {
-    width: min(100%, 430px);
-    padding-top: 46px;
+    width: 100%;
+    padding-top: 0;
   }
 
   .age-hero-card {

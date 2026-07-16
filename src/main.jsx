@@ -3094,7 +3094,11 @@ function App() {
   }
 
   return (
-    <div className={`${showBottomNav ? "app-shell" : "app-shell setup-mode"} ${displayedView === "home" ? "home-view" : ""}`}>
+    <div className={[
+      showBottomNav ? "app-shell" : "app-shell setup-mode",
+      displayedView === "home" ? "home-view" : "",
+      displayedView === "ageGroups" ? "age-groups-view" : "",
+    ].filter(Boolean).join(" ")}>
       <button className="global-refresh-button" type="button" onClick={handlePageRefresh} aria-label="تحديث الصفحة">
         <RefreshCw size={18} />
       </button>
