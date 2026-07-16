@@ -964,6 +964,26 @@ async function sha256Text(text) {
     .join("");
 }
 
+async function verifyBackupBlob(blob, filename) {
+  try {
+    const text = await readBackupText(new File([blob], filename, { type: blob.type || "application/gzip" }));
+    const backup = JSON.parse(text);
+    if (!backup.data || !backup.appState || backup.backupType !== "full-app") {
+      return { ok: false, message: "تم إيقاف الحفظ: محتوى النسخة الاحتياطية غير مكتمل." };
+    }
+    if (backup.security?.checksum) {
+      const { security, ...coreBackupPayload } = backup;
+      const checksum = await sha256Text(JSON.stringify(coreBackupPayload));
+      if (checksum !== backup.security.checksum) {
+        return { ok: false, message: "تم إيقاف الحفظ: بصمة النسخة الاحتياطية غير مطابقة." };
+      }
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, message: "تم إيقاف الحفظ: تعذر اختبار ملف النسخة الاحتياطية قبل الحفظ." };
+  }
+}
+
 async function saveBlobFile(blob, filename, description = "ملف") {
   if (window.showSaveFilePicker) {
     try {
@@ -989,6 +1009,47 @@ async function saveBlobFile(blob, filename, description = "ملف") {
     }
   }
 
+  downloadBlob(blob, filename);
+  return { ok: true, method: "download", filename, location: "مجلد التنزيلات في الجهاز أو المسار الافتراضي للمتصفح" };
+}
+
+async function saveGeneratedBlobFile(filename, description, createBlob, verifyBlob) {
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: filename,
+        types: [
+          {
+            description,
+            accept: {
+              "application/gzip": [".gz"],
+              "application/json": [".json"],
+            },
+          },
+        ],
+      });
+      const blob = await createBlob();
+      if (verifyBlob) {
+        const verification = await verifyBlob(blob, filename);
+        if (!verification.ok) return verification;
+      }
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return { ok: true, method: "picker", filename: handle.name || filename, location: "المسار الذي اخترته قبل إنشاء النسخة" };
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        return { ok: false, cancelled: true, filename };
+      }
+      return { ok: false, message: "تعذر حفظ الملف في المسار المختار." };
+    }
+  }
+
+  const blob = await createBlob();
+  if (verifyBlob) {
+    const verification = await verifyBlob(blob, filename);
+    if (!verification.ok) return verification;
+  }
   downloadBlob(blob, filename);
   return { ok: true, method: "download", filename, location: "مجلد التنزيلات في الجهاز أو المسار الافتراضي للمتصفح" };
 }
@@ -1554,6 +1615,10 @@ function App() {
 
     try {
       await upsertRemoteAcademyData(currentAcademyId, academyPayload);
+      const remoteCheck = await getRemoteAcademyData(currentAcademyId);
+      if (!remoteCheck?.data) {
+        throw new Error("تمت محاولة الرفع، لكن لم يتم تأكيد وجود بيانات الأكاديمية في السحابة.");
+      }
       const syncedAccounts = await syncAcademyPlatformAccounts(platformData.users || [], academyData);
       if (syncedAccounts.length) {
         setPlatformData((prev) => ({
@@ -1563,7 +1628,7 @@ function App() {
       }
       lastCloudPayloadRef.current = nextSignature;
       setCloudSyncState((prev) => ({ ...prev, saving: false, error: "", syncedAt: new Date().toISOString() }));
-      return { ok: true, message: "تم رفع بيانات الأكاديمية العامة إلى الإنترنت." };
+      return { ok: true, message: "تم رفع البيانات والتحقق من وجودها في السحابة." };
     } catch (error) {
       const message = error.message || "تعذر رفع البيانات الآن. سيتم إعادة المحاولة تلقائيًا.";
       setCloudSyncState((prev) => ({ ...prev, saving: false, error: message }));
@@ -2855,16 +2920,23 @@ function App() {
         note: "تستخدم هذه البصمة لاكتشاف تلف أو تعديل ملف النسخة الاحتياطية قبل الاسترداد.",
       },
     };
-    const blob = await gzipText(JSON.stringify(backupPayload));
     const safeName = (backupPayload.academyName || "academy").replace(/[^\w\u0600-\u06FF-]+/g, "-");
     const filename = `${safeName}-${today}.secure-acdme-backup.json.gz`;
-    const saveResult = await saveBlobFile(blob, filename, "نسخة احتياطية آمنة");
+    const saveResult = await saveGeneratedBlobFile(
+      filename,
+      "نسخة احتياطية آمنة",
+      () => gzipText(JSON.stringify(backupPayload)),
+      verifyBackupBlob,
+    );
     if (saveResult.cancelled) {
       return { ok: false, message: "تم إلغاء حفظ النسخة الاحتياطية." };
     }
+    if (!saveResult.ok) {
+      return { ok: false, message: saveResult.message || "تعذر إنشاء نسخة احتياطية صالحة." };
+    }
     return {
       ok: true,
-      message: `تم حفظ نسخة احتياطية آمنة: ${saveResult.filename}. المسار: ${saveResult.location}.`,
+      message: `تم اختيار المسار ثم حفظ نسخة احتياطية فعالة: ${saveResult.filename}. المسار: ${saveResult.location}.`,
     };
   };
 
@@ -4901,19 +4973,19 @@ function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBa
         <section className="age-hero-card">
           <span>نسخة احتياطية</span>
           <h2>حفظ آمن لكل بيانات التطبيق</h2>
-          <p>تنشئ ملفًا مضغوطًا وموقّعًا ببصمة تحقق، مع منع استرداد نسخة تخص أكاديمية مختلفة عن الحساب الحالي.</p>
+          <p>اختر مكان الحفظ أولًا عند دعم الجهاز، ثم ينشئ التطبيق ملفًا مضغوطًا ويختبره قبل حفظه.</p>
         </section>
 
         <div className="backup-security-grid">
           <span><ShieldCheck size={16} /> بصمة تحقق SHA-256</span>
-          <span><FolderOpen size={16} /> اختيار مسار الحفظ عند دعم الجهاز</span>
-          <span><FileCheck2 size={16} /> فحص الملف قبل الاسترداد</span>
+          <span><FolderOpen size={16} /> اختيار مسار الحفظ قبل إنشاء النسخة</span>
+          <span><FileCheck2 size={16} /> فحص الملف قبل الحفظ وقبل الاسترداد</span>
         </div>
 
         <div className="backup-actions">
           <button className="yellow-button" type="button" onClick={handleBackupExport} disabled={isBackupBusy}>
             <Download size={18} />
-            إنشاء نسخة احتياطية
+            اختيار المسار وإنشاء نسخة
           </button>
           <label className={isBackupBusy ? "backup-import-button disabled" : "backup-import-button"}>
             <Upload size={18} />
@@ -4923,7 +4995,7 @@ function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBa
         </div>
 
         <small className="backup-path-note">
-          على الهاتف يتم الحفظ غالبًا في التنزيلات. على المتصفحات الداعمة سيظهر اختيار مسار الحفظ مباشرة.
+          إذا كان الجهاز يدعم اختيار المسار ستظهر نافذة الحفظ قبل إنشاء النسخة. على بعض هواتف Android يتم الحفظ تلقائيًا في التنزيلات حسب قيود النظام.
         </small>
 
         {backupMessage && <p className={backupMessage.startsWith("تم") ? "setup-success" : "setup-error"}>{backupMessage}</p>}
@@ -4987,7 +5059,7 @@ function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBa
         <section className="age-hero-card">
           <span>مزامنة</span>
           <h2>رفع الإعدادات إلى الإنترنت</h2>
-          <p>يتم رفع بيانات الأكاديمية العامة تلقائيًا عند توفر الاتصال. بيانات اللاعبين وصورهم تبقى محفوظة على الهاتف فقط.</p>
+          <p>زر المزامنة يرفع البيانات العامة ثم يتحقق من وجودها في السحابة. بيانات اللاعبين وصورهم تبقى محفوظة على الهاتف فقط.</p>
         </section>
 
         <div className={cloudSyncState?.error || !isOnline ? "sync-status warning" : "sync-status"}>
