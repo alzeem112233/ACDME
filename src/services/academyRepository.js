@@ -8,6 +8,9 @@ const remoteStatusByArabic = {
   "قيد المراجعة": "pending",
   "مقبول": "approved",
   "مرفوض": "rejected",
+  "ظ‚ظٹط¯ ط§ظ„ظ…ط±ط§ط¬ط¹ط©": "pending",
+  "ظ…ظ‚ط¨ظˆظ„": "approved",
+  "ظ…ط±ظپظˆط¶": "rejected",
   pending: "pending",
   approved: "approved",
   rejected: "rejected",
@@ -28,6 +31,12 @@ function toArabicStatus(status) {
 
 function toRemoteStatus(status) {
   return remoteStatusByArabic[status] || "pending";
+}
+
+function normalizePlatformStatus(status) {
+  if (!status || status === "active" || status === "نشط" || status === "ظ†ط´ط·") return "نشط";
+  if (status === "disabled" || status === "معطل") return "معطل";
+  return status;
 }
 
 function mapRegistrationRequest(row) {
@@ -57,7 +66,7 @@ function mapPlatformAccount(row) {
     passwordHash: row.password_hash || "",
     passwordStatus: row.password_status || "مشفرة",
     passwordUpdatedAt: row.password_updated_at || "",
-    status: row.status || "نشط",
+    status: normalizePlatformStatus(row.status),
   };
 }
 
@@ -129,6 +138,18 @@ export async function upsertRemoteAcademyData(academyId, academyData) {
 
   if (error) throw error;
   return mapAcademyCloudData(data);
+}
+
+export async function deleteRemoteAcademyData(academyId) {
+  if (!isSupabaseConfigured || isOffline() || !academyId) return null;
+
+  const { error } = await supabase
+    .from("academy_cloud_data")
+    .delete()
+    .eq("academy_id", academyId);
+
+  if (error) throw error;
+  return true;
 }
 
 export async function listPlayers() {
@@ -277,7 +298,7 @@ export async function updateRemoteRegistrationRequest(requestId, status) {
   return mapRegistrationRequest(data);
 }
 
-export async function deleteRemoteRegistrationRequestsByPhone(phone) {
+export async function deleteRemoteRegistrationRequestsByPhone(phone, academyId = "") {
   if (!isSupabaseConfigured || isOffline() || !phone) return null;
 
   let { error } = await supabase
@@ -294,6 +315,27 @@ export async function deleteRemoteRegistrationRequestsByPhone(phone) {
   }
 
   if (error) throw error;
+
+  const contactDelete = await supabase
+    .from("registration_requests")
+    .delete()
+    .eq("contact", phone);
+
+  if (contactDelete.error && !String(contactDelete.error.message || "").includes("column")) {
+    throw contactDelete.error;
+  }
+
+  if (academyId) {
+    const academyDelete = await supabase
+      .from("registration_requests")
+      .delete()
+      .eq("academy_id", academyId);
+
+    if (academyDelete.error && !String(academyDelete.error.message || "").includes("column")) {
+      throw academyDelete.error;
+    }
+  }
+
   return true;
 }
 

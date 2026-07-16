@@ -51,6 +51,7 @@ import { registerServiceWorker } from "./registerServiceWorker";
 import { readLocalData, writeLocalData } from "./services/localRepository";
 import {
   createRegistrationRequest,
+  deleteRemoteAcademyData,
   deleteRemotePlatformAccount,
   deleteRemoteRegistrationRequestsByPhone,
   getRemoteAcademyData,
@@ -2105,6 +2106,11 @@ function App() {
 
     const normalizedPhone = normalizePhone(targetUser?.phone);
     if (!normalizedPhone) return;
+    const targetAcademyId = targetUser?.academyId || "";
+    const remainingAcademyUsers = (platformUsers || []).filter(
+      (user) => user.academyId === targetAcademyId && normalizePhone(user.phone) !== normalizedPhone,
+    );
+    const shouldDeleteAcademyData = Boolean(targetAcademyId && remainingAcademyUsers.length === 0);
 
     const ok = window.confirm(`هل تريد حذف حساب ${targetUser?.name || normalizedPhone} نهائيًا من لوحة المنصة؟`);
     if (!ok) return;
@@ -2119,6 +2125,11 @@ function App() {
 
     setAcademyDataById((prev) => {
       const next = { ...prev };
+      if (shouldDeleteAcademyData) {
+        delete next[targetAcademyId];
+        return next;
+      }
+
       Object.keys(next).forEach((academyId) => {
         const academyData = normalizeAcademyData(next[academyId]);
         next[academyId] = {
@@ -2132,7 +2143,8 @@ function App() {
 
     Promise.allSettled([
       deleteRemotePlatformAccount(normalizedPhone),
-      deleteRemoteRegistrationRequestsByPhone(normalizedPhone),
+      deleteRemoteRegistrationRequestsByPhone(normalizedPhone, targetAcademyId),
+      shouldDeleteAcademyData ? deleteRemoteAcademyData(targetAcademyId) : Promise.resolve(null),
     ]).catch(() => {
       // The local cleanup stays visible; remote cleanup can be retried manually if the network is unavailable.
     });
