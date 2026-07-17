@@ -75,6 +75,12 @@ function currentDateKey() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function normalizeDigits(value = "") {
+  return String(value)
+    .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)))
+    .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)));
+}
+
 const today = currentDateKey();
 const SUPER_ADMIN_PHONE = "+967772227092";
 const SUPER_ADMIN_PASSWORD = "772227092";
@@ -108,7 +114,7 @@ const ageGroupPresets = [
 const trainingDayOptions = ["السبت", "الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة"];
 
 function normalizePhone(value = "") {
-  const raw = String(value).trim().replace(/\s+/g, "");
+  const raw = normalizeDigits(value).trim().replace(/\s+/g, "");
   if (raw.startsWith("+")) return raw;
   if (raw.startsWith("00")) return `+${raw.slice(2)}`;
   if (raw.startsWith("967")) return `+${raw}`;
@@ -445,6 +451,49 @@ function normalizeAcademyData(value = {}, account = {}) {
     registrationRequests: [],
     cloudSummary: value.cloudSummary || {},
   };
+}
+
+function buildAccountAcademyData(account = {}, value = {}) {
+  const phone = normalizePhone(account.phone);
+  const accountUser = {
+    id: account.id || `user-${phone.replace(/\D/g, "")}`,
+    name: account.name || "",
+    phone,
+    role: account.role || ROLE_OWNER,
+    academyId: account.academyId,
+    academyName: account.academyName || "",
+    academyNameEn: account.academyNameEn || "",
+    academyLogo: account.academyLogo || "",
+    permissions: account.permissions || PERMISSION_FULL,
+    passwordHash: account.passwordHash || "",
+    passwordStatus: account.passwordStatus || "مشفرة",
+    passwordUpdatedAt: account.passwordUpdatedAt || today,
+    status: account.status || "نشط",
+  };
+  const baseData = normalizeAcademyData(value, accountUser);
+
+  return normalizeAcademyData(
+    {
+      ...baseData,
+      coach: {
+        ...baseData.coach,
+        name: baseData.coach.name || account.name || "",
+        phone: baseData.coach.phone || phone,
+      },
+      academy: {
+        ...baseData.academy,
+        name: baseData.academy.name || account.academyName || "",
+        nameEn: baseData.academy.nameEn || account.academyNameEn || "",
+        ownerPhone: baseData.academy.ownerPhone || phone,
+        logo: baseData.academy.logo || account.academyLogo || "",
+      },
+      users: [
+        accountUser,
+        ...(baseData.users || []).filter((user) => normalizePhone(user.phone) !== phone),
+      ],
+    },
+    accountUser,
+  );
 }
 
 function buildAcademyCloudSummary(value = {}) {
@@ -2680,6 +2729,9 @@ function App() {
             status: "نشط",
           }
         : null;
+    const approvedAcademyData = approvedAccount
+      ? buildAccountAcademyData(approvedAccount, academyDataById[academyId])
+      : null;
 
     setPlatformData((prev) => ({
       ...prev,
@@ -2698,18 +2750,20 @@ function App() {
     if (status === STATUS_APPROVED && currentRequest?.phone) {
       setAcademyDataById((prev) => ({
         ...prev,
-        [academyId]: normalizeAcademyData(prev[academyId], {
-          name: currentRequest.ownerName,
-          phone: normalizePhone(currentRequest.phone),
-          academyName: currentRequest.academyName,
-        }),
+        [academyId]: buildAccountAcademyData(approvedAccount, prev[academyId]),
       }));
     }
 
     try {
       await updateRemoteRegistrationRequest(requestId, status);
       if (approvedAccount) {
-        await upsertPlatformAccount(approvedAccount);
+        const syncedAccount = await upsertPlatformAccount(approvedAccount);
+        const remoteAcademy = await getRemoteAcademyData(academyId).catch(() => null);
+        const cloudAcademyData =
+          remoteAcademy?.data && hasAcademyContent(remoteAcademy.data)
+            ? mergeAcademyLocalAndRemote(approvedAcademyData, remoteAcademy.data, syncedAccount || approvedAccount)
+            : approvedAcademyData;
+        await upsertRemoteAcademyData(academyId, toCloudAcademyData(cloudAcademyData, syncedAccount || approvedAccount));
       }
     } catch {
       // The visible dashboard state is kept locally if remote update is unavailable.
@@ -2777,6 +2831,7 @@ function App() {
       permissions: PERMISSION_FULL,
       status: "نشط",
     };
+    const accountAcademyData = buildAccountAcademyData(account);
 
     try {
       const remoteRequest = await createRegistrationRequest({ ...request, status: STATUS_PENDING });
@@ -2787,6 +2842,12 @@ function App() {
       const confirmedAccount = await getRemotePlatformAccountByPhone(normalizedPhone);
       if (!syncedAccount || !confirmedAccount?.passwordHash) {
         throw new Error("لم يتم تأكيد وجود الحساب في السحابة.");
+      }
+      const cloudAcademyData = buildAccountAcademyData(confirmedAccount, accountAcademyData);
+      await upsertRemoteAcademyData(request.academyId, toCloudAcademyData(cloudAcademyData, confirmedAccount));
+      const confirmedAcademy = await getRemoteAcademyData(request.academyId);
+      if (!confirmedAcademy?.data || !hasAcademyContent(confirmedAcademy.data)) {
+        throw new Error("تم إنشاء الحساب، لكن لم يتم تأكيد نسخة الأكاديمية في السحابة.");
       }
       setPlatformData((prev) => ({
         ...prev,
@@ -2801,11 +2862,7 @@ function App() {
       }));
       setAcademyDataById((prev) => ({
         ...prev,
-        [request.academyId]: normalizeAcademyData(prev[request.academyId], {
-          name: ownerName,
-          phone: normalizedPhone,
-          academyName,
-        }),
+        [request.academyId]: buildAccountAcademyData(confirmedAccount, prev[request.academyId] || cloudAcademyData),
       }));
       await refreshRegistrationRequests();
       await refreshPlatformUsers();

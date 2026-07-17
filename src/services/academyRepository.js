@@ -33,8 +33,14 @@ function toRemoteStatus(status) {
   return remoteStatusByArabic[status] || "pending";
 }
 
+function normalizeDigits(value = "") {
+  return String(value)
+    .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)))
+    .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)));
+}
+
 function normalizePhoneForRemote(value = "") {
-  const raw = String(value).trim().replace(/\s+/g, "");
+  const raw = normalizeDigits(value).trim().replace(/\s+/g, "");
   if (raw.startsWith("+")) return raw;
   if (raw.startsWith("00")) return `+${raw.slice(2)}`;
   if (raw.startsWith("967")) return `+${raw}`;
@@ -49,7 +55,7 @@ function legacyPhoneForRemote(value = "") {
 
 function normalizePlatformStatus(status) {
   if (!status || status === "active" || status === "نشط" || status === "ظ†ط´ط·") return "نشط";
-  if (status === "disabled" || status === "معطل") return "معطل";
+  if (status === "disabled" || status === "معطل" || status === "ظ…ط¹ط·ظ„") return "معطل";
   return status;
 }
 
@@ -73,7 +79,7 @@ function mapPlatformAccount(row) {
   return {
     id: row.id,
     name: row.name,
-    phone: row.phone,
+    phone: normalizePhoneForRemote(row.phone),
     role: row.role,
     academyId: row.academy_id,
     academyName: row.academy_name,
@@ -94,10 +100,11 @@ function mapAcademyCloudData(row) {
 }
 
 function platformAccountPayload(account) {
+  const phone = normalizePhoneForRemote(account.phone);
   return {
-    id: account.id || `account-${String(account.phone || "").replace(/\W/g, "")}`,
+    id: account.id || `account-${phone.replace(/\W/g, "")}`,
     name: account.name,
-    phone: account.phone,
+    phone,
     role: account.role,
     academy_id: account.academyId,
     academy_name: account.academyName,
@@ -105,7 +112,7 @@ function platformAccountPayload(account) {
     password_hash: account.passwordHash,
     password_status: account.passwordStatus || "مشفرة",
     password_updated_at: account.passwordUpdatedAt || new Date().toISOString().slice(0, 10),
-    status: account.status || "نشط",
+    status: normalizePlatformStatus(account.status),
     updated_at: new Date().toISOString(),
   };
 }
@@ -281,10 +288,12 @@ export async function upsertPlatformAccount(account) {
 export async function deleteRemotePlatformAccount(phone) {
   if (!isSupabaseConfigured || isOffline() || !phone) return null;
 
+  const normalizedPhone = normalizePhoneForRemote(phone);
+  const legacyPhone = legacyPhoneForRemote(normalizedPhone);
   const { error } = await supabase
     .from("platform_accounts")
     .delete()
-    .eq("phone", phone);
+    .or(`phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`);
 
   if (error) throw error;
   return true;
@@ -376,29 +385,14 @@ export async function updateRemoteRegistrationRequest(requestId, status) {
 export async function deleteRemoteRegistrationRequestsByPhone(phone, academyId = "") {
   if (!isSupabaseConfigured || isOffline() || !phone) return null;
 
+  const normalizedPhone = normalizePhoneForRemote(phone);
+  const legacyPhone = legacyPhoneForRemote(normalizedPhone);
   let { error } = await supabase
     .from("registration_requests")
     .delete()
-    .eq("phone", phone);
-
-  if (error && String(error.message || "").includes("column")) {
-    const fallback = await supabase
-      .from("registration_requests")
-      .delete()
-      .eq("contact", phone);
-    error = fallback.error;
-  }
+    .or(`phone.eq.${normalizedPhone},contact.eq.${normalizedPhone},phone.eq.${legacyPhone},contact.eq.${legacyPhone}`);
 
   if (error) throw error;
-
-  const contactDelete = await supabase
-    .from("registration_requests")
-    .delete()
-    .eq("contact", phone);
-
-  if (contactDelete.error && !String(contactDelete.error.message || "").includes("column")) {
-    throw contactDelete.error;
-  }
 
   if (academyId) {
     const academyDelete = await supabase
@@ -417,29 +411,18 @@ export async function deleteRemoteRegistrationRequestsByPhone(phone, academyId =
 export async function updateRemoteRegistrationPassword(phone, passwordHash) {
   if (!isSupabaseConfigured || isOffline()) return null;
 
+  const normalizedPhone = normalizePhoneForRemote(phone);
+  const legacyPhone = legacyPhoneForRemote(normalizedPhone);
   const updatePayload = {
     password_hash: passwordHash,
     reviewed_at: new Date().toISOString(),
   };
 
-  let { data, error } = await supabase
+  const { data, error } = await supabase
     .from("registration_requests")
     .update(updatePayload)
-    .eq("phone", phone)
+    .or(`phone.eq.${normalizedPhone},contact.eq.${normalizedPhone},phone.eq.${legacyPhone},contact.eq.${legacyPhone}`)
     .select();
-
-  if (error) throw error;
-
-  if (!data?.length) {
-    const fallback = await supabase
-      .from("registration_requests")
-      .update(updatePayload)
-      .eq("contact", phone)
-      .select();
-
-    data = fallback.data;
-    error = fallback.error;
-  }
 
   if (error) throw error;
   return data?.map(mapRegistrationRequest) || [];
@@ -448,6 +431,8 @@ export async function updateRemoteRegistrationPassword(phone, passwordHash) {
 export async function updateRemotePlatformAccountPassword(phone, passwordHash) {
   if (!isSupabaseConfigured || isOffline()) return null;
 
+  const normalizedPhone = normalizePhoneForRemote(phone);
+  const legacyPhone = legacyPhoneForRemote(normalizedPhone);
   const { data, error } = await supabase
     .from("platform_accounts")
     .update({
@@ -456,7 +441,7 @@ export async function updateRemotePlatformAccountPassword(phone, passwordHash) {
       password_updated_at: new Date().toISOString().slice(0, 10),
       updated_at: new Date().toISOString(),
     })
-    .eq("phone", phone)
+    .or(`phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`)
     .select();
 
   if (error) throw error;
@@ -466,13 +451,15 @@ export async function updateRemotePlatformAccountPassword(phone, passwordHash) {
 export async function updateRemotePlatformAccountStatus(phone, status) {
   if (!isSupabaseConfigured || isOffline()) return null;
 
+  const normalizedPhone = normalizePhoneForRemote(phone);
+  const legacyPhone = legacyPhoneForRemote(normalizedPhone);
   const { data, error } = await supabase
     .from("platform_accounts")
     .update({
-      status,
+      status: normalizePlatformStatus(status),
       updated_at: new Date().toISOString(),
     })
-    .eq("phone", phone)
+    .or(`phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`)
     .select();
 
   if (error) throw error;
