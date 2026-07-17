@@ -5079,7 +5079,7 @@ function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBa
   );
 }
 
-function AgeGroups({ data, addAgeGroup, updateAgeGroup, removeAgeGroup, finishOnboarding, helpers, isFirstLogin }) {
+function AgeGroups({ data, addAgeGroup, updateAgeGroup, removeAgeGroup, finishOnboarding, helpers, isFirstLogin, setActiveView }) {
   const [formError, setFormError] = useState("");
   const [editingGroup, setEditingGroup] = useState(null);
   const [formKey, setFormKey] = useState(0);
@@ -5244,6 +5244,13 @@ function AgeGroups({ data, addAgeGroup, updateAgeGroup, removeAgeGroup, finishOn
           {editingGroup ? "حفظ التعديل والانتقال للرئيسية" : "حفظ الفئة والانتقال للرئيسية"}
         </button>
       </form>
+
+      {data.ageGroups.length > 0 && (
+        <button className="age-home-button" type="button" onClick={() => setActiveView?.("home")}>
+          <ArrowRight size={17} />
+          العودة إلى الشاشة الرئيسية
+        </button>
+      )}
 
       <section className="saved-age-list">
         <div className="saved-age-list-head">

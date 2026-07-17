@@ -212,9 +212,13 @@ button {
 
 .app-shell.age-groups-view {
   min-height: 100dvh;
+  width: 100%;
+  max-width: 100vw;
   padding-bottom: 18px;
   display: grid;
   align-items: start;
+  justify-items: center;
+  overflow-x: hidden;
 }
 
 .app-shell.setup-mode .profile-menu-shell {
@@ -227,7 +231,24 @@ button {
 .app-shell.age-groups-view .profile-menu-shell {
   position: fixed;
   top: max(12px, calc(12px + env(safe-area-inset-top)));
-  inset-inline-end: max(12px, calc((100vw - 760px) / 2 + 12px));
+  right: 112px;
+  left: auto;
+  inset-inline-start: auto;
+  inset-inline-end: auto;
+}
+
+.app-shell.age-groups-view .profile-dropdown {
+  right: 0;
+  left: auto;
+  inset-inline-start: auto;
+  inset-inline-end: auto;
+}
+
+.app-shell.age-groups-view .profile-dropdown::before {
+  right: 15px;
+  left: auto;
+  inset-inline-start: auto;
+  inset-inline-end: auto;
 }
 
 .app-header {
@@ -912,12 +933,16 @@ html[data-theme="dark"] .backup-security-grid span {
 }
 
 .age-groups-view .main-panel {
-  width: min(760px, calc(100% - 24px));
+  width: min(760px, 100%);
+  max-width: 100vw;
   padding: max(64px, calc(64px + env(safe-area-inset-top))) 0 18px;
   align-self: start;
+  margin: 0 auto;
 }
 
 .age-groups-view .view-transition {
+  width: 100%;
+  max-width: 100vw;
   display: grid;
   justify-items: center;
 }
@@ -1315,6 +1340,7 @@ html[data-theme="dark"] .attendance-list-head h2 {
 
 .age-setup-screen {
   width: min(100%, 760px);
+  max-width: 100vw;
   margin-inline: auto;
   justify-items: stretch;
   align-content: start;
@@ -1856,6 +1882,29 @@ html[data-theme="dark"] .attendance-list-head h2 {
   padding: 0 12px;
   font-size: 11px;
   font-weight: 900;
+}
+
+.age-home-button {
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid rgba(216, 161, 31, 0.38);
+  border-radius: 14px;
+  background: linear-gradient(135deg, #111a4f, #17207c);
+  color: #ffd75f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 950;
+  box-shadow: 0 12px 26px rgba(16, 24, 40, 0.12);
+}
+
+html[data-theme="dark"] .age-home-button {
+  border-color: rgba(255, 213, 105, 0.3);
+  background: rgba(255, 213, 105, 0.12);
+  color: var(--amber);
 }
 
 .age-detail-card {
@@ -5863,13 +5912,19 @@ html[data-theme="dark"] .expense-list button {
   }
 
   .app-shell.age-groups-view .profile-menu-shell {
-    inset-inline-end: 12px;
+    right: 112px;
+    left: auto;
+    inset-inline-start: auto;
+    inset-inline-end: auto;
   }
 
   .age-groups-view .main-panel {
-    width: min(100% - 12px, 430px);
+    width: 100%;
+    max-width: 100vw;
     padding-top: max(58px, calc(58px + env(safe-area-inset-top)));
     padding-bottom: 10px;
+    padding-inline: 0;
+    margin: 0;
   }
 
   .setup-card {
@@ -5880,7 +5935,17 @@ html[data-theme="dark"] .expense-list button {
 
   .age-setup-screen {
     width: 100%;
+    max-width: 100vw;
     padding-top: 0;
+    gap: 10px;
+  }
+
+  .age-setup-screen .setup-header,
+  .age-setup-screen .setup-card,
+  .age-setup-screen .saved-age-list,
+  .age-setup-screen .age-home-button {
+    width: calc(100% - 12px);
+    margin-inline: auto;
   }
 
   .age-hero-card {
