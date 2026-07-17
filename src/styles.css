@@ -3676,6 +3676,22 @@ th {
   font-weight: 900;
 }
 
+.platform-manual-account-card {
+  display: grid;
+  gap: 12px;
+  border-color: rgba(216, 161, 31, 0.24);
+}
+
+.platform-manual-account-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.platform-manual-account-grid input {
+  min-width: 0;
+}
+
 .platform-table-card {
   border-color: rgba(17, 26, 121, 0.12);
 }
@@ -5561,6 +5577,12 @@ html[data-theme="dark"] .expense-list button {
   background: rgba(255, 139, 130, 0.12);
   color: var(--red);
   border-color: rgba(255, 139, 130, 0.28);
+}
+
+@media (max-width: 640px) {
+  .platform-manual-account-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .finance-debt-list strong,

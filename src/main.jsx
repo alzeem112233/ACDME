@@ -2714,6 +2714,102 @@ function App() {
     }
   };
 
+  const addPlatformUserFromDashboard = async (accountInput) => {
+    if (!isSuperAdmin) {
+      return { ok: false, message: "هذا الإجراء مخصص للحساب الرئيسي فقط." };
+    }
+
+    const normalizedPhone = normalizePhone(accountInput.phone);
+    const academyName = String(accountInput.academyName || "").trim();
+    const ownerName = String(accountInput.ownerName || "").trim();
+    const city = String(accountInput.city || "").trim();
+    const password = String(accountInput.password || "").trim();
+
+    if (!normalizedPhone || normalizedPhone.length < 8) {
+      return { ok: false, message: "أدخل رقم هاتف صحيحًا." };
+    }
+
+    if (!academyName || !ownerName) {
+      return { ok: false, message: "أدخل اسم الأكاديمية واسم المسؤول." };
+    }
+
+    if (password.length < 6) {
+      return { ok: false, message: "كلمة السر يجب أن تكون 6 أحرف أو أرقام على الأقل." };
+    }
+
+    const existingUser = platformUsers.find((user) => normalizePhone(user.phone) === normalizedPhone);
+    if (existingUser) {
+      return { ok: false, message: "هذا الرقم موجود بالفعل ضمن الحسابات المعتمدة." };
+    }
+
+    const existingAcademy = (platformUsers || []).find((user) => normalizeText(user.academyName) === normalizeText(academyName));
+    if (existingAcademy) {
+      return { ok: false, message: "اسم الأكاديمية موجود بالفعل ضمن الحسابات المعتمدة." };
+    }
+
+    const passwordHash = await hashPassword(password);
+    const request = {
+      id: crypto.randomUUID(),
+      academyName,
+      ownerName,
+      contact: normalizedPhone,
+      phone: normalizedPhone,
+      academyId: makeAcademyId(normalizedPhone),
+      passwordHash,
+      passwordStatus: "مشفرة",
+      passwordUpdatedAt: today,
+      city,
+      status: STATUS_APPROVED,
+      createdAt: today,
+    };
+    const account = {
+      id: `manual-${request.id}`,
+      name: ownerName,
+      phone: normalizedPhone,
+      role: ROLE_OWNER,
+      academyId: request.academyId,
+      academyName,
+      passwordHash,
+      passwordStatus: "مشفرة",
+      passwordUpdatedAt: today,
+      permissions: PERMISSION_FULL,
+      status: "نشط",
+    };
+
+    setPlatformData((prev) => ({
+      ...prev,
+      registrationRequests: [
+        request,
+        ...(prev.registrationRequests || []).filter((item) => normalizePhone(item.phone || item.contact) !== normalizedPhone),
+      ],
+      users: [
+        ...(prev.users || []).filter((user) => normalizePhone(user.phone) !== normalizedPhone),
+        account,
+      ],
+    }));
+    setAcademyDataById((prev) => ({
+      ...prev,
+      [request.academyId]: normalizeAcademyData(prev[request.academyId], {
+        name: ownerName,
+        phone: normalizedPhone,
+        academyName,
+      }),
+    }));
+
+    try {
+      const remoteRequest = await createRegistrationRequest({ ...request, status: STATUS_PENDING });
+      if (remoteRequest?.id) {
+        await updateRemoteRegistrationRequest(remoteRequest.id, STATUS_APPROVED);
+      }
+      await upsertPlatformAccount(account);
+      await refreshRegistrationRequests();
+      await refreshPlatformUsers();
+      return { ok: true, message: "تم إنشاء الحساب واعتماده ورفعه إلى السحابة." };
+    } catch (error) {
+      return { ok: false, message: error.message || "تم حفظ الحساب محليًا، لكن تعذر رفعه للسحابة." };
+    }
+  };
+
   const resetPlatformUserPassword = async (targetUser) => {
     if (!isSuperAdmin) {
       return { ok: false, message: "هذا الإجراء مخصص للحساب الرئيسي فقط." };
@@ -3057,6 +3153,7 @@ function App() {
     syncCurrentAcademyNow,
     refreshPlatformUsers,
     refreshRegistrationRequests,
+    addPlatformUserFromDashboard,
     renewAcademyAccess,
     updateRegistrationRequest,
     resetPlatformUserPassword,
@@ -3563,6 +3660,7 @@ function PlatformDashboard({
   registrationRequests,
   refreshPlatformUsers,
   refreshRegistrationRequests,
+  addPlatformUserFromDashboard,
   updateRegistrationRequest,
   resetPlatformUserPassword,
   togglePlatformUserStatus,
@@ -3574,6 +3672,8 @@ function PlatformDashboard({
   const [passwordMessages, setPasswordMessages] = useState({});
   const [isRefreshingRequests, setIsRefreshingRequests] = useState(false);
   const [requestsRefreshMessage, setRequestsRefreshMessage] = useState("");
+  const [manualAccountMessage, setManualAccountMessage] = useState("");
+  const [isAddingManualAccount, setIsAddingManualAccount] = useState(false);
   const pending = registrationRequests.filter((request) => request.status === "قيد المراجعة").length;
   const approved = registrationRequests.filter((request) => request.status === "مقبول").length;
   const rejected = registrationRequests.filter((request) => request.status === "مرفوض").length;
@@ -3612,6 +3712,25 @@ function PlatformDashboard({
     } finally {
       setIsRefreshingRequests(false);
     }
+  };
+
+  const handleManualAccountSubmit = async (event) => {
+    event.preventDefault();
+    setManualAccountMessage("");
+    setIsAddingManualAccount(true);
+    const form = new FormData(event.currentTarget);
+    const result = await addPlatformUserFromDashboard?.({
+      academyName: form.get("academyName"),
+      ownerName: form.get("ownerName"),
+      phone: form.get("phone"),
+      city: form.get("city"),
+      password: form.get("password"),
+    });
+    setManualAccountMessage(result?.message || "تم تنفيذ العملية.");
+    if (result?.ok) {
+      event.currentTarget.reset();
+    }
+    setIsAddingManualAccount(false);
   };
 
   return (
@@ -3672,6 +3791,28 @@ function PlatformDashboard({
           </p>
         </section>
       </div>
+
+      <form className="panel platform-manual-account-card" onSubmit={handleManualAccountSubmit}>
+        <PanelHead
+          title="إضافة حساب يدويًا"
+          text="استخدم هذا الخيار إذا لم يظهر طلب التسجيل عندك، وسيتم إنشاء الحساب معتمدًا مباشرة."
+          icon={Plus}
+        />
+        <div className="platform-manual-account-grid">
+          <input name="academyName" placeholder="اسم الأكاديمية" required />
+          <input name="ownerName" placeholder="اسم المسؤول" required />
+          <input name="phone" inputMode="tel" placeholder="رقم الهاتف 7xxxxxxxx" required />
+          <input name="city" placeholder="المدينة - اختياري" />
+          <input name="password" type="text" minLength="6" placeholder="كلمة السر المؤقتة" required />
+        </div>
+        <button className="primary-button" type="submit" disabled={isAddingManualAccount}>
+          <Plus size={18} />
+          {isAddingManualAccount ? "جاري إنشاء الحساب..." : "إنشاء حساب معتمد"}
+        </button>
+        {manualAccountMessage && (
+          <p className={manualAccountMessage.startsWith("تم") ? "setup-success" : "setup-error"}>{manualAccountMessage}</p>
+        )}
+      </form>
 
       <section className="panel table-panel platform-table-card">
         <PanelHead
