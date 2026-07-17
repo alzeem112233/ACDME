@@ -109,6 +109,7 @@ function normalizePhone(value = "") {
   const raw = String(value).trim().replace(/\s+/g, "");
   if (raw.startsWith("+")) return raw;
   if (raw.startsWith("00")) return `+${raw.slice(2)}`;
+  if (raw.startsWith("967")) return `+${raw}`;
   if (raw.startsWith("0")) return `+967${raw.slice(1)}`;
   if (raw.startsWith("7")) return `+967${raw}`;
   return raw;
@@ -2619,11 +2620,14 @@ function App() {
         }));
         return remoteRequest;
       }
-    } catch {
-      // Keep the local request visible and retry can be handled from a later refresh/deploy.
+      throw new Error("تعذر تأكيد وصول الطلب إلى الحساب الرئيسي. تأكد من الاتصال ثم أعد الإرسال.");
+    } catch (error) {
+      setPlatformData((prev) => ({
+        ...prev,
+        registrationRequests: (prev.registrationRequests || []).filter((item) => item.id !== request.id),
+      }));
+      throw new Error(error.message || "تعذر رفع طلب التسجيل إلى السحابة.");
     }
-
-    return request;
   };
 
   const updateRegistrationRequest = async (requestId, status) => {
@@ -3051,6 +3055,8 @@ function App() {
     exportLocalBackup,
     importLocalBackup,
     syncCurrentAcademyNow,
+    refreshPlatformUsers,
+    refreshRegistrationRequests,
     renewAcademyAccess,
     updateRegistrationRequest,
     resetPlatformUserPassword,
@@ -3555,6 +3561,8 @@ function PlatformDashboard({
   stats,
   platformUsers,
   registrationRequests,
+  refreshPlatformUsers,
+  refreshRegistrationRequests,
   updateRegistrationRequest,
   resetPlatformUserPassword,
   togglePlatformUserStatus,
@@ -3564,6 +3572,8 @@ function PlatformDashboard({
   const [temporaryPasswords, setTemporaryPasswords] = useState({});
   const [resettingRows, setResettingRows] = useState({});
   const [passwordMessages, setPasswordMessages] = useState({});
+  const [isRefreshingRequests, setIsRefreshingRequests] = useState(false);
+  const [requestsRefreshMessage, setRequestsRefreshMessage] = useState("");
   const pending = registrationRequests.filter((request) => request.status === "قيد المراجعة").length;
   const approved = registrationRequests.filter((request) => request.status === "مقبول").length;
   const rejected = registrationRequests.filter((request) => request.status === "مرفوض").length;
@@ -3588,6 +3598,22 @@ function PlatformDashboard({
     }
   };
 
+  const handleRefreshRequests = async () => {
+    setIsRefreshingRequests(true);
+    setRequestsRefreshMessage("");
+    try {
+      const [requests] = await Promise.all([
+        refreshRegistrationRequests?.(),
+        refreshPlatformUsers?.(),
+      ]);
+      setRequestsRefreshMessage(`تم تحديث الطلبات: ${Array.isArray(requests) ? requests.length : registrationRequests.length} طلب.`);
+    } catch (error) {
+      setRequestsRefreshMessage(error.message || "تعذر تحديث الطلبات.");
+    } finally {
+      setIsRefreshingRequests(false);
+    }
+  };
+
   return (
     <section className="view-stack">
       <header className="platform-admin-hero">
@@ -3596,8 +3622,15 @@ function PlatformDashboard({
           <h1>إدارة الحسابات والطلبات</h1>
           <p>تحكم في الحسابات المعتمدة، كلمات السر، طلبات التسجيل، وتنظيف بيانات التجربة.</p>
         </div>
-        <ShieldCheck size={34} />
+        <div className="platform-hero-actions">
+          <button type="button" onClick={handleRefreshRequests} disabled={isRefreshingRequests}>
+            <RefreshCw size={17} className={isRefreshingRequests ? "spin-icon" : ""} />
+            تحديث الطلبات
+          </button>
+          <ShieldCheck size={34} />
+        </div>
       </header>
+      {requestsRefreshMessage && <p className="platform-refresh-message">{requestsRefreshMessage}</p>}
 
       <div className="metric-grid">
         <Metric title="طلبات بانتظار الموافقة" value={pending} icon={ClipboardCheck} tone="amber" />

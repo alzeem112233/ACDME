@@ -3637,6 +3637,45 @@ th {
   flex: 0 0 auto;
 }
 
+.platform-hero-actions {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.platform-hero-actions button {
+  min-height: 38px;
+  border: 1px solid rgba(255, 215, 95, 0.38);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffd75f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.platform-hero-actions button:disabled {
+  opacity: 0.68;
+  cursor: wait;
+}
+
+.platform-refresh-message {
+  margin: -4px 0 0;
+  border: 1px solid rgba(34, 197, 94, 0.24);
+  border-radius: 12px;
+  background: #f0fdf4;
+  color: #166534;
+  padding: 10px 12px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .platform-table-card {
   border-color: rgba(17, 26, 121, 0.12);
 }

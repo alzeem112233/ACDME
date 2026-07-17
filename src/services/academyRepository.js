@@ -33,6 +33,20 @@ function toRemoteStatus(status) {
   return remoteStatusByArabic[status] || "pending";
 }
 
+function normalizePhoneForRemote(value = "") {
+  const raw = String(value).trim().replace(/\s+/g, "");
+  if (raw.startsWith("+")) return raw;
+  if (raw.startsWith("00")) return `+${raw.slice(2)}`;
+  if (raw.startsWith("967")) return `+${raw}`;
+  if (raw.startsWith("0")) return `+967${raw.slice(1)}`;
+  if (raw.startsWith("7")) return `+967${raw}`;
+  return raw;
+}
+
+function legacyPhoneForRemote(value = "") {
+  return normalizePhoneForRemote(value).replace(/^\+/, "");
+}
+
 function normalizePlatformStatus(status) {
   if (!status || status === "active" || status === "نشط" || status === "ظ†ط´ط·") return "نشط";
   if (status === "disabled" || status === "معطل") return "معطل";
@@ -40,12 +54,13 @@ function normalizePlatformStatus(status) {
 }
 
 function mapRegistrationRequest(row) {
+  const phone = normalizePhoneForRemote(row.phone || row.contact);
   return {
     id: row.id,
     academyName: row.academy_name,
     ownerName: row.owner_name,
-    contact: row.contact || row.phone,
-    phone: row.phone || row.contact,
+    contact: phone,
+    phone,
     academyId: row.academy_id || "",
     passwordHash: row.password_hash || "",
     city: row.city || "",
@@ -245,17 +260,19 @@ export async function deleteRemotePlatformAccount(phone) {
 export async function createRegistrationRequest(request) {
   if (!isSupabaseConfigured || isOffline()) return null;
 
+  const phone = normalizePhoneForRemote(request.phone || request.contact);
+  const legacyPhone = legacyPhoneForRemote(phone);
   const legacyPayload = {
     academy_name: request.academyName,
     owner_name: request.ownerName,
-    contact: request.contact || request.phone,
+    contact: phone,
     city: request.city,
     status: toRemoteStatus(request.status),
   };
 
   const payload = {
     ...legacyPayload,
-    phone: request.phone,
+    phone,
     academy_id: request.academyId,
     password_hash: request.passwordHash,
   };
@@ -277,7 +294,32 @@ export async function createRegistrationRequest(request) {
     error = fallback.error;
   }
 
+  if (error && (error.code === "23505" || String(error.message || "").toLowerCase().includes("duplicate"))) {
+    const updatePayload = {
+      ...payload,
+      status: "pending",
+      reviewed_at: null,
+    };
+    const candidates = [
+      `phone.eq.${phone}`,
+      `contact.eq.${phone}`,
+      `phone.eq.${legacyPhone}`,
+      `contact.eq.${legacyPhone}`,
+      request.academyId ? `academy_id.eq.${request.academyId}` : "",
+    ].filter(Boolean).join(",");
+
+    const updated = await supabase
+      .from("registration_requests")
+      .update(updatePayload)
+      .or(candidates)
+      .select();
+
+    data = updated.data?.[0] || null;
+    error = updated.error;
+  }
+
   if (error) throw error;
+  if (!data) throw new Error("تعذر تأكيد حفظ طلب التسجيل في السحابة.");
   return mapRegistrationRequest(data);
 }
 
