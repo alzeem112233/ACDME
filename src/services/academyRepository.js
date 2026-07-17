@@ -220,6 +220,23 @@ export async function listRegistrationRequests() {
   return data.map(mapRegistrationRequest);
 }
 
+export async function getRemoteRegistrationRequestByPhone(phone) {
+  if (!isSupabaseConfigured || isOffline() || !phone) return null;
+
+  const normalizedPhone = normalizePhoneForRemote(phone);
+  const legacyPhone = legacyPhoneForRemote(normalizedPhone);
+  const { data, error } = await supabase
+    .from("registration_requests")
+    .select("*")
+    .or(`phone.eq.${normalizedPhone},contact.eq.${normalizedPhone},phone.eq.${legacyPhone},contact.eq.${legacyPhone}`)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data ? mapRegistrationRequest(data) : null;
+}
+
 export async function listPlatformAccounts() {
   if (!isSupabaseConfigured || isOffline()) return null;
 
@@ -230,6 +247,22 @@ export async function listPlatformAccounts() {
 
   if (error) throw error;
   return data.map(mapPlatformAccount);
+}
+
+export async function getRemotePlatformAccountByPhone(phone) {
+  if (!isSupabaseConfigured || isOffline() || !phone) return null;
+
+  const normalizedPhone = normalizePhoneForRemote(phone);
+  const legacyPhone = legacyPhoneForRemote(normalizedPhone);
+  const { data, error } = await supabase
+    .from("platform_accounts")
+    .select("*")
+    .or(`phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data ? mapPlatformAccount(data) : null;
 }
 
 export async function upsertPlatformAccount(account) {

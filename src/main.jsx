@@ -55,6 +55,8 @@ import {
   deleteRemotePlatformAccount,
   deleteRemoteRegistrationRequestsByPhone,
   getRemoteAcademyData,
+  getRemotePlatformAccountByPhone,
+  getRemoteRegistrationRequestByPhone,
   listRemoteAcademyData,
   listPlatformAccounts,
   listRegistrationRequests,
@@ -2776,37 +2778,40 @@ function App() {
       status: "نشط",
     };
 
-    setPlatformData((prev) => ({
-      ...prev,
-      registrationRequests: [
-        request,
-        ...(prev.registrationRequests || []).filter((item) => normalizePhone(item.phone || item.contact) !== normalizedPhone),
-      ],
-      users: [
-        ...(prev.users || []).filter((user) => normalizePhone(user.phone) !== normalizedPhone),
-        account,
-      ],
-    }));
-    setAcademyDataById((prev) => ({
-      ...prev,
-      [request.academyId]: normalizeAcademyData(prev[request.academyId], {
-        name: ownerName,
-        phone: normalizedPhone,
-        academyName,
-      }),
-    }));
-
     try {
       const remoteRequest = await createRegistrationRequest({ ...request, status: STATUS_PENDING });
       if (remoteRequest?.id) {
         await updateRemoteRegistrationRequest(remoteRequest.id, STATUS_APPROVED);
       }
-      await upsertPlatformAccount(account);
+      const syncedAccount = await upsertPlatformAccount(account);
+      const confirmedAccount = await getRemotePlatformAccountByPhone(normalizedPhone);
+      if (!syncedAccount || !confirmedAccount?.passwordHash) {
+        throw new Error("لم يتم تأكيد وجود الحساب في السحابة.");
+      }
+      setPlatformData((prev) => ({
+        ...prev,
+        registrationRequests: [
+          { ...request, id: remoteRequest?.id || request.id },
+          ...(prev.registrationRequests || []).filter((item) => normalizePhone(item.phone || item.contact) !== normalizedPhone),
+        ],
+        users: [
+          confirmedAccount,
+          ...(prev.users || []).filter((user) => normalizePhone(user.phone) !== normalizedPhone),
+        ],
+      }));
+      setAcademyDataById((prev) => ({
+        ...prev,
+        [request.academyId]: normalizeAcademyData(prev[request.academyId], {
+          name: ownerName,
+          phone: normalizedPhone,
+          academyName,
+        }),
+      }));
       await refreshRegistrationRequests();
       await refreshPlatformUsers();
       return { ok: true, message: "تم إنشاء الحساب واعتماده ورفعه إلى السحابة." };
     } catch (error) {
-      return { ok: false, message: error.message || "تم حفظ الحساب محليًا، لكن تعذر رفعه للسحابة." };
+      return { ok: false, message: error.message || "تعذر رفع الحساب للسحابة، لذلك لم يتم حفظه محليًا." };
     }
   };
 
@@ -4415,7 +4420,21 @@ function LoginPassword({
       const requestsForLogin = Array.isArray(liveRegistrationRequests) ? liveRegistrationRequests : registrationRequests;
       const usersForLogin = Array.isArray(liveUsers) ? liveUsers : users;
       let account = findAccountByPhone(normalizedPhone, requestsForLogin, usersForLogin);
-      const existingRequest = findRequestByPhone(normalizedPhone, requestsForLogin);
+      let existingRequest = findRequestByPhone(normalizedPhone, requestsForLogin);
+
+      if (!account) {
+        const remoteAccount = await getRemotePlatformAccountByPhone(normalizedPhone);
+        if (remoteAccount) {
+          account = remoteAccount;
+        }
+      }
+
+      if (!existingRequest) {
+        existingRequest = await getRemoteRegistrationRequestByPhone(normalizedPhone);
+        if (existingRequest?.status === STATUS_APPROVED && !account) {
+          account = findAccountByPhone(normalizedPhone, [existingRequest], usersForLogin);
+        }
+      }
 
       if (!account) {
         account = await findCloudAcademyAccountByPhone(normalizedPhone);
