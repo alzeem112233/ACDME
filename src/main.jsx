@@ -3740,6 +3740,17 @@ function PlatformDashboard({
   const approved = registrationRequests.filter((request) => request.status === "مقبول").length;
   const rejected = registrationRequests.filter((request) => request.status === "مرفوض").length;
   const approvedAccounts = platformUsers || [];
+  const requestStatusOrder = {
+    [STATUS_PENDING]: 0,
+    [STATUS_APPROVED]: 1,
+    [STATUS_REJECTED]: 2,
+  };
+  const displayedRegistrationRequests = [...registrationRequests].sort((first, second) => {
+    const firstOrder = requestStatusOrder[first.status] ?? 3;
+    const secondOrder = requestStatusOrder[second.status] ?? 3;
+    if (firstOrder !== secondOrder) return firstOrder - secondOrder;
+    return String(second.createdAt || "").localeCompare(String(first.createdAt || ""));
+  });
 
   const handlePasswordReset = async (user) => {
     const rowKey = user.id || user.phone;
@@ -3775,6 +3786,35 @@ function PlatformDashboard({
       setIsRefreshingRequests(false);
     }
   };
+
+  useEffect(() => {
+    let isMounted = true;
+
+    setIsRefreshingRequests(true);
+    Promise.all([
+      refreshRegistrationRequests?.(),
+      refreshPlatformUsers?.(),
+    ])
+      .then(([requests]) => {
+        if (isMounted) {
+          setRequestsRefreshMessage(`تم تحديث الطلبات: ${Array.isArray(requests) ? requests.length : registrationRequests.length} طلب.`);
+        }
+      })
+      .catch((error) => {
+        if (isMounted) {
+          setRequestsRefreshMessage(error.message || "تعذر تحديث الطلبات.");
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsRefreshingRequests(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const handleManualAccountSubmit = async (event) => {
     event.preventDefault();
@@ -3997,7 +4037,14 @@ function PlatformDashboard({
               </tr>
             </thead>
             <tbody>
-              {registrationRequests.map((request) => (
+              {displayedRegistrationRequests.length === 0 && (
+                <tr>
+                  <td className="empty-table-cell" colSpan="7">
+                    لا توجد طلبات ظاهرة الآن. اضغط تحديث الطلبات للتأكد من جلب آخر الطلبات من السحابة.
+                  </td>
+                </tr>
+              )}
+              {displayedRegistrationRequests.map((request) => (
                 <tr key={request.id}>
                   <td>{request.academyName}</td>
                   <td>{request.ownerName}</td>
@@ -4011,10 +4058,10 @@ function PlatformDashboard({
                   </td>
                   <td>
                     <div className="action-row">
-                      <button className="mini-button approve" onClick={() => updateRegistrationRequest(request.id, "مقبول")}>
+                      <button className="mini-button approve" type="button" onClick={() => updateRegistrationRequest(request.id, "مقبول")}>
                         موافقة
                       </button>
-                      <button className="mini-button reject" onClick={() => updateRegistrationRequest(request.id, "مرفوض")}>
+                      <button className="mini-button reject" type="button" onClick={() => updateRegistrationRequest(request.id, "مرفوض")}>
                         رفض
                       </button>
                     </div>

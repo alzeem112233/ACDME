@@ -1,9 +1,5 @@
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 
-function isOffline() {
-  return typeof navigator !== "undefined" && navigator.onLine === false;
-}
-
 const remoteStatusByArabic = {
   "قيد المراجعة": "pending",
   "مقبول": "approved",
@@ -118,7 +114,7 @@ function platformAccountPayload(account) {
 }
 
 export async function getRemoteAcademyData(academyId) {
-  if (!isSupabaseConfigured || !academyId || isOffline()) return null;
+  if (!isSupabaseConfigured || !academyId) return null;
 
   const { data, error } = await supabase
     .from("academy_cloud_data")
@@ -131,7 +127,7 @@ export async function getRemoteAcademyData(academyId) {
 }
 
 export async function listRemoteAcademyData() {
-  if (!isSupabaseConfigured || isOffline()) return [];
+  if (!isSupabaseConfigured) return [];
 
   const { data, error } = await supabase
     .from("academy_cloud_data")
@@ -143,7 +139,7 @@ export async function listRemoteAcademyData() {
 }
 
 export async function upsertRemoteAcademyData(academyId, academyData) {
-  if (!isSupabaseConfigured || !academyId || isOffline()) return null;
+  if (!isSupabaseConfigured || !academyId) return null;
 
   const { data, error } = await supabase
     .from("academy_cloud_data")
@@ -163,7 +159,7 @@ export async function upsertRemoteAcademyData(academyId, academyData) {
 }
 
 export async function deleteRemoteAcademyData(academyId) {
-  if (!isSupabaseConfigured || isOffline() || !academyId) return null;
+  if (!isSupabaseConfigured || !academyId) return null;
 
   const { error } = await supabase
     .from("academy_cloud_data")
@@ -175,7 +171,7 @@ export async function deleteRemoteAcademyData(academyId) {
 }
 
 export async function listPlayers() {
-  if (!isSupabaseConfigured || isOffline()) return null;
+  if (!isSupabaseConfigured) return null;
 
   const { data, error } = await supabase
     .from("players")
@@ -187,7 +183,7 @@ export async function listPlayers() {
 }
 
 export async function createPlayer(player) {
-  if (!isSupabaseConfigured || isOffline()) return null;
+  if (!isSupabaseConfigured) return null;
 
   const { data, error } = await supabase.from("players").insert(player).select().single();
   if (error) throw error;
@@ -195,7 +191,7 @@ export async function createPlayer(player) {
 }
 
 export async function recordRemoteAttendance(attendance) {
-  if (!isSupabaseConfigured || isOffline()) return null;
+  if (!isSupabaseConfigured) return null;
 
   const { data, error } = await supabase
     .from("attendance")
@@ -208,7 +204,7 @@ export async function recordRemoteAttendance(attendance) {
 }
 
 export async function createPayment(payment) {
-  if (!isSupabaseConfigured || isOffline()) return null;
+  if (!isSupabaseConfigured) return null;
 
   const { data, error } = await supabase.from("payments").insert(payment).select().single();
   if (error) throw error;
@@ -216,7 +212,7 @@ export async function createPayment(payment) {
 }
 
 export async function listRegistrationRequests() {
-  if (!isSupabaseConfigured || isOffline()) return null;
+  if (!isSupabaseConfigured) return null;
 
   const { data, error } = await supabase
     .from("registration_requests")
@@ -228,7 +224,7 @@ export async function listRegistrationRequests() {
 }
 
 export async function getRemoteRegistrationRequestByPhone(phone) {
-  if (!isSupabaseConfigured || isOffline() || !phone) return null;
+  if (!isSupabaseConfigured || !phone) return null;
 
   const normalizedPhone = normalizePhoneForRemote(phone);
   const legacyPhone = legacyPhoneForRemote(normalizedPhone);
@@ -245,7 +241,7 @@ export async function getRemoteRegistrationRequestByPhone(phone) {
 }
 
 export async function listPlatformAccounts() {
-  if (!isSupabaseConfigured || isOffline()) return null;
+  if (!isSupabaseConfigured) return null;
 
   const { data, error } = await supabase
     .from("platform_accounts")
@@ -257,7 +253,7 @@ export async function listPlatformAccounts() {
 }
 
 export async function getRemotePlatformAccountByPhone(phone) {
-  if (!isSupabaseConfigured || isOffline() || !phone) return null;
+  if (!isSupabaseConfigured || !phone) return null;
 
   const normalizedPhone = normalizePhoneForRemote(phone);
   const legacyPhone = legacyPhoneForRemote(normalizedPhone);
@@ -273,7 +269,7 @@ export async function getRemotePlatformAccountByPhone(phone) {
 }
 
 export async function upsertPlatformAccount(account) {
-  if (!isSupabaseConfigured || isOffline()) return null;
+  if (!isSupabaseConfigured) return null;
 
   const { data, error } = await supabase
     .from("platform_accounts")
@@ -286,7 +282,7 @@ export async function upsertPlatformAccount(account) {
 }
 
 export async function deleteRemotePlatformAccount(phone) {
-  if (!isSupabaseConfigured || isOffline() || !phone) return null;
+  if (!isSupabaseConfigured || !phone) return null;
 
   const normalizedPhone = normalizePhoneForRemote(phone);
   const legacyPhone = legacyPhoneForRemote(normalizedPhone);
@@ -300,7 +296,7 @@ export async function deleteRemotePlatformAccount(phone) {
 }
 
 export async function createRegistrationRequest(request) {
-  if (!isSupabaseConfigured || isOffline()) return null;
+  if (!isSupabaseConfigured) return null;
 
   const phone = normalizePhoneForRemote(request.phone || request.contact);
   const legacyPhone = legacyPhoneForRemote(phone);
@@ -366,7 +362,7 @@ export async function createRegistrationRequest(request) {
 }
 
 export async function updateRemoteRegistrationRequest(requestId, status) {
-  if (!isSupabaseConfigured || isOffline()) return null;
+  if (!isSupabaseConfigured) return null;
 
   const { data, error } = await supabase
     .from("registration_requests")
@@ -383,7 +379,7 @@ export async function updateRemoteRegistrationRequest(requestId, status) {
 }
 
 export async function deleteRemoteRegistrationRequestsByPhone(phone, academyId = "") {
-  if (!isSupabaseConfigured || isOffline() || !phone) return null;
+  if (!isSupabaseConfigured || !phone) return null;
 
   const normalizedPhone = normalizePhoneForRemote(phone);
   const legacyPhone = legacyPhoneForRemote(normalizedPhone);
@@ -409,7 +405,7 @@ export async function deleteRemoteRegistrationRequestsByPhone(phone, academyId =
 }
 
 export async function updateRemoteRegistrationPassword(phone, passwordHash) {
-  if (!isSupabaseConfigured || isOffline()) return null;
+  if (!isSupabaseConfigured) return null;
 
   const normalizedPhone = normalizePhoneForRemote(phone);
   const legacyPhone = legacyPhoneForRemote(normalizedPhone);
@@ -429,7 +425,7 @@ export async function updateRemoteRegistrationPassword(phone, passwordHash) {
 }
 
 export async function updateRemotePlatformAccountPassword(phone, passwordHash) {
-  if (!isSupabaseConfigured || isOffline()) return null;
+  if (!isSupabaseConfigured) return null;
 
   const normalizedPhone = normalizePhoneForRemote(phone);
   const legacyPhone = legacyPhoneForRemote(normalizedPhone);
@@ -449,7 +445,7 @@ export async function updateRemotePlatformAccountPassword(phone, passwordHash) {
 }
 
 export async function updateRemotePlatformAccountStatus(phone, status) {
-  if (!isSupabaseConfigured || isOffline()) return null;
+  if (!isSupabaseConfigured) return null;
 
   const normalizedPhone = normalizePhoneForRemote(phone);
   const legacyPhone = legacyPhoneForRemote(normalizedPhone);
