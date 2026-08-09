@@ -9,7 +9,7 @@ https://al-qaisar-dashboard.vercel.app
 قاعدة البيانات الحالية على Supabase:
 
 ```text
-https://gsttfeqmpauipbuqrjjn.supabase.co
+https://vfvsexrikwokuenopwmi.supabase.co
 ```
 
 ## البناء المحلي
