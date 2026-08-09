@@ -3715,7 +3715,7 @@ th {
 
 .renewal-alert-list article {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 10px;
   padding: 12px;
@@ -3746,6 +3746,15 @@ th {
   color: #64748b;
   font-size: 12px;
   margin-top: 3px;
+}
+
+.renewal-alert-list em {
+  display: block;
+  color: #166534;
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 800;
+  margin-top: 5px;
 }
 
 .renewal-alert-list b {

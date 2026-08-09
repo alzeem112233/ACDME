@@ -97,6 +97,7 @@ const MAX_ACADEMY_ACCOUNTS = 3;
 const LOCAL_ONLY_ACADEMY_KEYS = ["players", "attendance", "payments", "expenses", "matches", "badges"];
 const DEFAULT_ATTENDANCE_PAYMENT = 500;
 const RENEWAL_PERIOD_DAYS = 29;
+const PLATFORM_RENEWAL_DAYS = 209;
 const footballPositionOptions = [
   { value: "حارس", label: "حارس" },
   { value: "مدافع", label: "مدافع" },
@@ -1782,6 +1783,64 @@ function App() {
     return { ok: true, message: `تم التجديد حتى ${renewalExpiresAt}.` };
   };
 
+  const renewAcademyFromPlatform = async (academyId) => {
+    if (!isSuperAdmin) {
+      return { ok: false, message: "هذا الإجراء مخصص للحساب الرئيسي فقط." };
+    }
+
+    if (!academyId) {
+      return { ok: false, message: "لم يتم تحديد الأكاديمية." };
+    }
+
+    const renewalStartedAtIso = new Date().toISOString();
+    const renewalLastAt = currentDateKey();
+    const renewalExpiresAt = addDays(renewalLastAt, PLATFORM_RENEWAL_DAYS);
+    const renewalExpiresAtIso = addDaysIso(renewalStartedAtIso, PLATFORM_RENEWAL_DAYS);
+    const ownerAccount =
+      (platformData.users || []).find((user) => user.academyId === academyId && user.role === ROLE_OWNER) ||
+      (platformData.users || []).find((user) => user.academyId === academyId) ||
+      {};
+    const currentAcademyData = normalizeAcademyData(academyDataById[academyId], ownerAccount);
+    const nextAcademyData = normalizeAcademyData(
+      {
+        ...currentAcademyData,
+        academy: {
+          ...currentAcademyData.academy,
+          renewalLastAt,
+          renewalExpiresAt,
+          renewalStartedAtIso,
+          renewalExpiresAtIso,
+        },
+      },
+      ownerAccount,
+    );
+
+    setAcademyDataById((prev) => ({
+      ...prev,
+      [academyId]: nextAcademyData,
+    }));
+    setRenewalTimers((prev) => ({
+      ...prev,
+      [academyId]: {
+        renewalLastAt,
+        renewalExpiresAt,
+        renewalStartedAtIso,
+        renewalExpiresAtIso,
+        renewedAt: new Date().toISOString(),
+        renewedBy: "platform",
+        renewalDays: PLATFORM_RENEWAL_DAYS,
+      },
+    }));
+
+    try {
+      await upsertRemoteAcademyData(academyId, toCloudAcademyData(nextAcademyData, ownerAccount));
+      setCloudSyncState((prev) => ({ ...prev, academyId: "platform", loaded: true, saving: false, error: "", syncedAt: new Date().toISOString() }));
+      return { ok: true, message: `تم تفعيل الأكاديمية حتى ${renewalExpiresAt} لمدة ${PLATFORM_RENEWAL_DAYS} يوم.` };
+    } catch (error) {
+      return { ok: false, message: error.message || "تم التجديد محليًا، وتعذر رفعه للسحابة الآن." };
+    }
+  };
+
   useEffect(() => {
     let isMounted = true;
 
@@ -3270,6 +3329,7 @@ function App() {
     refreshRegistrationRequests,
     addPlatformUserFromDashboard,
     renewAcademyAccess,
+    renewAcademyFromPlatform,
     updateRegistrationRequest,
     resetPlatformUserPassword,
     togglePlatformUserStatus,
@@ -3782,6 +3842,7 @@ function PlatformDashboard({
   refreshPlatformUsers,
   refreshRegistrationRequests,
   addPlatformUserFromDashboard,
+  renewAcademyFromPlatform,
   updateRegistrationRequest,
   resetPlatformUserPassword,
   togglePlatformUserStatus,
@@ -3795,6 +3856,8 @@ function PlatformDashboard({
   const [requestsRefreshMessage, setRequestsRefreshMessage] = useState("");
   const [manualAccountMessage, setManualAccountMessage] = useState("");
   const [isAddingManualAccount, setIsAddingManualAccount] = useState(false);
+  const [renewingAcademies, setRenewingAcademies] = useState({});
+  const [renewalMessages, setRenewalMessages] = useState({});
   const pending = registrationRequests.filter((request) => request.status === "قيد المراجعة").length;
   const approved = registrationRequests.filter((request) => request.status === "مقبول").length;
   const rejected = registrationRequests.filter((request) => request.status === "مرفوض").length;
@@ -3935,6 +3998,20 @@ function PlatformDashboard({
     setIsAddingManualAccount(false);
   };
 
+  const handlePlatformRenewal = async (academy) => {
+    setRenewingAcademies((prev) => ({ ...prev, [academy.academyId]: true }));
+    setRenewalMessages((prev) => ({ ...prev, [academy.academyId]: "" }));
+
+    try {
+      const result = await renewAcademyFromPlatform?.(academy.academyId);
+      setRenewalMessages((prev) => ({ ...prev, [academy.academyId]: result?.message || "تم تنفيذ التجديد." }));
+    } catch (error) {
+      setRenewalMessages((prev) => ({ ...prev, [academy.academyId]: error.message || "تعذر تنفيذ التجديد." }));
+    } finally {
+      setRenewingAcademies((prev) => ({ ...prev, [academy.academyId]: false }));
+    }
+  };
+
   return (
     <section className="view-stack">
       <header className="platform-admin-hero">
@@ -3998,7 +4075,7 @@ function PlatformDashboard({
       <section className="panel platform-renewal-alerts">
         <PanelHead
           title="تنبيهات التجديد"
-          text={`التطبيق يقفل تلقائيًا بعد ${RENEWAL_PERIOD_DAYS} يومًا لكل أكاديمية. الحسابات المنتهية أو القريبة من الانتهاء تظهر هنا.`}
+          text={`التطبيق يقفل تلقائيًا بعد ${RENEWAL_PERIOD_DAYS} يومًا لكل أكاديمية. من هنا يمكن تفعيل الحساب لمدة ${PLATFORM_RENEWAL_DAYS} يوم.`}
           icon={Clock}
         />
         {renewalAlertRows.length === 0 ? (
@@ -4010,9 +4087,18 @@ function PlatformDashboard({
                 <div>
                   <strong>{academy.name}</strong>
                   <span>{academy.ownerName} - {academy.phone || "بدون رقم"}</span>
+                  {renewalMessages[academy.academyId] && <em>{renewalMessages[academy.academyId]}</em>}
                 </div>
                 <b>{academy.renewalInfo.isExpired ? "متوقف" : `باقي ${academy.renewalInfo.remainingDays} يوم`}</b>
                 <small>ينتهي في {academy.renewalInfo.expiresAt}</small>
+                <button
+                  className="mini-button approve"
+                  type="button"
+                  onClick={() => handlePlatformRenewal(academy)}
+                  disabled={Boolean(renewingAcademies[academy.academyId])}
+                >
+                  {renewingAcademies[academy.academyId] ? "جاري التفعيل..." : `تفعيل ${PLATFORM_RENEWAL_DAYS} يوم`}
+                </button>
               </article>
             ))}
           </div>
