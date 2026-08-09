@@ -4495,15 +4495,24 @@ function LoginPassword({
   };
 
   const passwordMatches = async (account, enteredPassword) => {
+    const normalizedEnteredPassword = normalizeDigits(enteredPassword).trim();
+
     if (account.passwordHash) {
-      return (await hashPassword(enteredPassword)) === account.passwordHash;
+      const enteredHash = await hashPassword(enteredPassword);
+      if (enteredHash === account.passwordHash) return true;
+
+      if (normalizedEnteredPassword !== enteredPassword) {
+        return (await hashPassword(normalizedEnteredPassword)) === account.passwordHash;
+      }
+
+      return false;
     }
 
     if (!account.password) {
       return false;
     }
 
-    return enteredPassword === account.password;
+    return enteredPassword === account.password || normalizedEnteredPassword === normalizeDigits(account.password).trim();
   };
 
   const submitLogin = async (event) => {
