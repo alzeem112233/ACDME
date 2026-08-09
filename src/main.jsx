@@ -1663,6 +1663,25 @@ function App() {
     return platformRegistrationRequests || [];
   };
 
+  useEffect(() => {
+    const hasQueuedRegistration = (platformRegistrationRequests || []).some((request) => {
+      const phone = normalizePhone(request.phone || request.contact);
+      return phone && request.passwordHash && request.status !== STATUS_REJECTED && request.syncStatus === "pending-upload";
+    });
+
+    if (!hasQueuedRegistration || !isOnline) return undefined;
+
+    const retryQueuedRegistrations = () => {
+      refreshRegistrationRequests().catch(() => {
+        // Weak connections can fail repeatedly; the queued request remains local for the next retry.
+      });
+    };
+
+    retryQueuedRegistrations();
+    const retryTimer = window.setInterval(retryQueuedRegistrations, 45000);
+    return () => window.clearInterval(retryTimer);
+  }, [platformRegistrationRequests, isOnline, onlineSyncTick]);
+
   const syncAcademyPlatformAccounts = async (usersToSync = [], academySnapshot = data) => {
     if (!isOnline || !currentAcademyId || isSuperAdmin) return [];
 

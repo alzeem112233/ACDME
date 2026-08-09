@@ -1,5 +1,44 @@
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 
+const NETWORK_RETRY_DELAYS = [1200, 2800, 5500, 9000];
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    globalThis.setTimeout(resolve, ms);
+  });
+}
+
+function isRetryableNetworkError(error) {
+  const message = String(error?.message || error || "");
+  return /failed to fetch|fetch failed|network|timeout|load failed|abort/i.test(message);
+}
+
+async function withWeakNetworkRetry(operation) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= NETWORK_RETRY_DELAYS.length; attempt += 1) {
+    try {
+      const result = await operation();
+      if (result?.error && isRetryableNetworkError(result.error) && attempt < NETWORK_RETRY_DELAYS.length) {
+        lastError = result.error;
+        await wait(NETWORK_RETRY_DELAYS[attempt]);
+        continue;
+      }
+
+      return result;
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableNetworkError(error) || attempt === NETWORK_RETRY_DELAYS.length) {
+        throw error;
+      }
+
+      await wait(NETWORK_RETRY_DELAYS[attempt]);
+    }
+  }
+
+  throw lastError;
+}
+
 const remoteStatusByArabic = {
   "قيد المراجعة": "pending",
   "مقبول": "approved",
@@ -214,10 +253,12 @@ export async function createPayment(payment) {
 export async function listRegistrationRequests() {
   if (!isSupabaseConfigured) return null;
 
-  const { data, error } = await supabase
-    .from("registration_requests")
-    .select("*")
-    .order("created_at", { ascending: false });
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("registration_requests")
+      .select("*")
+      .order("created_at", { ascending: false }),
+  );
 
   if (error) throw error;
   return data.map(mapRegistrationRequest);
@@ -228,13 +269,15 @@ export async function getRemoteRegistrationRequestByPhone(phone) {
 
   const normalizedPhone = normalizePhoneForRemote(phone);
   const legacyPhone = legacyPhoneForRemote(normalizedPhone);
-  const { data, error } = await supabase
-    .from("registration_requests")
-    .select("*")
-    .or(`phone.eq.${normalizedPhone},contact.eq.${normalizedPhone},phone.eq.${legacyPhone},contact.eq.${legacyPhone}`)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("registration_requests")
+      .select("*")
+      .or(`phone.eq.${normalizedPhone},contact.eq.${normalizedPhone},phone.eq.${legacyPhone},contact.eq.${legacyPhone}`)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  );
 
   if (error) throw error;
   return data ? mapRegistrationRequest(data) : null;
@@ -315,18 +358,22 @@ export async function createRegistrationRequest(request) {
     password_hash: request.passwordHash,
   };
 
-  let { data, error } = await supabase
-    .from("registration_requests")
-    .insert(payload)
-    .select()
-    .single();
+  let { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("registration_requests")
+      .insert(payload)
+      .select()
+      .single(),
+  );
 
   if (error && String(error.message || "").includes("column")) {
-    const fallback = await supabase
-      .from("registration_requests")
-      .insert(legacyPayload)
-      .select()
-      .single();
+    const fallback = await withWeakNetworkRetry(() =>
+      supabase
+        .from("registration_requests")
+        .insert(legacyPayload)
+        .select()
+        .single(),
+    );
 
     data = fallback.data;
     error = fallback.error;
@@ -346,11 +393,13 @@ export async function createRegistrationRequest(request) {
       request.academyId ? `academy_id.eq.${request.academyId}` : "",
     ].filter(Boolean).join(",");
 
-    const updated = await supabase
-      .from("registration_requests")
-      .update(updatePayload)
-      .or(candidates)
-      .select();
+    const updated = await withWeakNetworkRetry(() =>
+      supabase
+        .from("registration_requests")
+        .update(updatePayload)
+        .or(candidates)
+        .select(),
+    );
 
     data = updated.data?.[0] || null;
     error = updated.error;
