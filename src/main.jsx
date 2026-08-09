@@ -97,7 +97,7 @@ const MAX_ACADEMY_ACCOUNTS = 3;
 const LOCAL_ONLY_ACADEMY_KEYS = ["players", "attendance", "payments", "expenses", "matches", "badges"];
 const DEFAULT_ATTENDANCE_PAYMENT = 500;
 const RENEWAL_PERIOD_DAYS = 29;
-const PLATFORM_RENEWAL_DAYS = 209;
+const PLATFORM_RENEWAL_DAYS = RENEWAL_PERIOD_DAYS;
 const footballPositionOptions = [
   { value: "حارس", label: "حارس" },
   { value: "مدافع", label: "مدافع" },
@@ -1835,7 +1835,7 @@ function App() {
     try {
       await upsertRemoteAcademyData(academyId, toCloudAcademyData(nextAcademyData, ownerAccount));
       setCloudSyncState((prev) => ({ ...prev, academyId: "platform", loaded: true, saving: false, error: "", syncedAt: new Date().toISOString() }));
-      return { ok: true, message: `تم تفعيل الأكاديمية حتى ${renewalExpiresAt} لمدة ${PLATFORM_RENEWAL_DAYS} يوم.` };
+      return { ok: true, message: `تم تجديد الأكاديمية حتى ${renewalExpiresAt} لمدة ${PLATFORM_RENEWAL_DAYS} يوم.` };
     } catch (error) {
       return { ok: false, message: error.message || "تم التجديد محليًا، وتعذر رفعه للسحابة الآن." };
     }
@@ -4075,7 +4075,7 @@ function PlatformDashboard({
       <section className="panel platform-renewal-alerts">
         <PanelHead
           title="تنبيهات التجديد"
-          text={`التطبيق يقفل تلقائيًا بعد ${RENEWAL_PERIOD_DAYS} يومًا لكل أكاديمية. من هنا يمكن تفعيل الحساب لمدة ${PLATFORM_RENEWAL_DAYS} يوم.`}
+          text={`التطبيق يقفل تلقائيًا بعد ${RENEWAL_PERIOD_DAYS} يومًا لكل أكاديمية. من هنا يمكن تجديد الحساب لمدة ${PLATFORM_RENEWAL_DAYS} يوم جديد.`}
           icon={Clock}
         />
         {renewalAlertRows.length === 0 ? (
@@ -4097,7 +4097,7 @@ function PlatformDashboard({
                   onClick={() => handlePlatformRenewal(academy)}
                   disabled={Boolean(renewingAcademies[academy.academyId])}
                 >
-                  {renewingAcademies[academy.academyId] ? "جاري التفعيل..." : `تفعيل ${PLATFORM_RENEWAL_DAYS} يوم`}
+                  {renewingAcademies[academy.academyId] ? "جاري التجديد..." : `تجديد ${PLATFORM_RENEWAL_DAYS} يوم`}
                 </button>
               </article>
             ))}
