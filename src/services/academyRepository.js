@@ -286,10 +286,12 @@ export async function getRemoteRegistrationRequestByPhone(phone) {
 export async function listPlatformAccounts() {
   if (!isSupabaseConfigured) return null;
 
-  const { data, error } = await supabase
-    .from("platform_accounts")
-    .select("*")
-    .order("created_at", { ascending: false });
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("platform_accounts")
+      .select("*")
+      .order("created_at", { ascending: false }),
+  );
 
   if (error) throw error;
   return data.map(mapPlatformAccount);
@@ -300,12 +302,14 @@ export async function getRemotePlatformAccountByPhone(phone) {
 
   const normalizedPhone = normalizePhoneForRemote(phone);
   const legacyPhone = legacyPhoneForRemote(normalizedPhone);
-  const { data, error } = await supabase
-    .from("platform_accounts")
-    .select("*")
-    .or(`phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`)
-    .limit(1)
-    .maybeSingle();
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("platform_accounts")
+      .select("*")
+      .or(`phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`)
+      .limit(1)
+      .maybeSingle(),
+  );
 
   if (error) throw error;
   return data ? mapPlatformAccount(data) : null;
@@ -314,11 +318,13 @@ export async function getRemotePlatformAccountByPhone(phone) {
 export async function upsertPlatformAccount(account) {
   if (!isSupabaseConfigured) return null;
 
-  const { data, error } = await supabase
-    .from("platform_accounts")
-    .upsert(platformAccountPayload(account), { onConflict: "phone" })
-    .select()
-    .single();
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("platform_accounts")
+      .upsert(platformAccountPayload(account), { onConflict: "phone" })
+      .select()
+      .single(),
+  );
 
   if (error) throw error;
   return mapPlatformAccount(data);

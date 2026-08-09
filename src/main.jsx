@@ -3028,7 +3028,37 @@ function App() {
       await refreshPlatformUsers();
       return { ok: true, message: "تم إنشاء الحساب واعتماده ورفعه إلى السحابة." };
     } catch (error) {
-      return { ok: false, message: error.message || "تعذر رفع الحساب للسحابة، لذلك لم يتم حفظه محليًا." };
+      const queuedRequest = {
+        ...request,
+        syncStatus: "pending-upload",
+        syncMessage: friendlyNetworkError(error, "تم إنشاء الحساب محليًا، لكن لم يتم رفعه للسحابة الآن."),
+      };
+      const queuedAccount = {
+        ...account,
+        syncStatus: "pending-upload",
+        syncMessage: queuedRequest.syncMessage,
+      };
+
+      setPlatformData((prev) => ({
+        ...prev,
+        registrationRequests: [
+          queuedRequest,
+          ...(prev.registrationRequests || []).filter((item) => normalizePhone(item.phone || item.contact) !== normalizedPhone),
+        ],
+        users: [
+          queuedAccount,
+          ...(prev.users || []).filter((user) => normalizePhone(user.phone) !== normalizedPhone),
+        ],
+      }));
+      setAcademyDataById((prev) => ({
+        ...prev,
+        [request.academyId]: buildAccountAcademyData(queuedAccount, prev[request.academyId] || accountAcademyData),
+      }));
+
+      return {
+        ok: true,
+        message: `${queuedRequest.syncMessage} يستطيع الحساب الدخول على هذا الجهاز، وسيتم رفعه تلقائيًا عند عودة اتصال السحابة.`,
+      };
     }
   };
 
