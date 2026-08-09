@@ -123,6 +123,15 @@ function normalizePhone(value = "") {
   return raw;
 }
 
+function friendlyNetworkError(error, fallback = "تعذر الاتصال بالسحابة الآن.") {
+  const message = String(error?.message || error || "");
+  if (/failed to fetch|fetch failed|network|load failed/i.test(message)) {
+    return `${fallback} تحقق من الإنترنت ثم أعد المحاولة، وسيحاول التطبيق المزامنة تلقائيًا عند توفر الاتصال.`;
+  }
+
+  return message || fallback;
+}
+
 function normalizeText(value = "") {
   return String(value).trim().replace(/\s+/g, " ").toLowerCase();
 }
@@ -252,7 +261,13 @@ async function syncMissingRemoteRegistrationRequests(remoteRequests = [], localR
     }
   }
 
-  return [...syncedRequests, ...remoteRequests];
+  const syncedPhones = new Set(syncedRequests.map((request) => normalizePhone(request.phone || request.contact)));
+  const remainingLocalRequests = localRequests.filter((request) => {
+    const phone = normalizePhone(request.phone || request.contact);
+    return phone && !remotePhones.has(phone) && !syncedPhones.has(phone);
+  });
+
+  return [...syncedRequests, ...remoteRequests, ...remainingLocalRequests];
 }
 
 function mergePlatformUsers(remoteUsers = [], localUsers = []) {
@@ -2767,7 +2782,10 @@ function App() {
 
     setPlatformData((prev) => ({
       ...prev,
-      registrationRequests: [request, ...(prev.registrationRequests || [])],
+      registrationRequests: [
+        request,
+        ...(prev.registrationRequests || []).filter((item) => normalizePhone(item.phone || item.contact) !== normalizedPhone),
+      ],
     }));
 
     try {
@@ -2786,9 +2804,21 @@ function App() {
     } catch (error) {
       setPlatformData((prev) => ({
         ...prev,
-        registrationRequests: (prev.registrationRequests || []).filter((item) => item.id !== request.id),
+        registrationRequests: [
+          {
+            ...request,
+            syncStatus: "pending-upload",
+            syncMessage: friendlyNetworkError(error, "تم حفظ طلب التسجيل على هذا الجهاز، لكن لم يتم رفعه للسحابة الآن."),
+          },
+          ...(prev.registrationRequests || []).filter((item) => item.id !== request.id && normalizePhone(item.phone || item.contact) !== normalizedPhone),
+        ],
       }));
-      throw new Error(error.message || "تعذر رفع طلب التسجيل إلى السحابة.");
+      return {
+        ...request,
+        queued: true,
+        syncStatus: "pending-upload",
+        syncMessage: friendlyNetworkError(error, "تم حفظ طلب التسجيل على هذا الجهاز، لكن لم يتم رفعه للسحابة الآن."),
+      };
     }
   };
 
@@ -4902,13 +4932,13 @@ function LoginPassword({
 
     setIsLoading(true);
     try {
-      const liveRegistrationRequests = await refreshRegistrationRequests?.();
-      const liveUsers = await refreshPlatformUsers?.();
+      const liveRegistrationRequests = await refreshRegistrationRequests?.().catch(() => null);
+      const liveUsers = await refreshPlatformUsers?.().catch(() => null);
       const requestsForRegistration = Array.isArray(liveRegistrationRequests) ? liveRegistrationRequests : registrationRequests;
       const usersForRegistration = Array.isArray(liveUsers) ? liveUsers : users;
       const existingAccount =
         findAccountByPhone(normalizedPhone, requestsForRegistration, usersForRegistration) ||
-        (await findCloudAcademyAccountByPhone(normalizedPhone));
+        (await findCloudAcademyAccountByPhone(normalizedPhone).catch(() => null));
       const existingRequest = findRequestByPhone(normalizedPhone, requestsForRegistration);
       const existingAcademyName = findAcademyByName(registration.academyName, requestsForRegistration, usersForRegistration);
 
@@ -4931,7 +4961,7 @@ function LoginPassword({
       }
 
       const passwordHash = await hashPassword(registration.password);
-      await onRequestRegistration({
+      const requestResult = await onRequestRegistration({
         academyName: registration.academyName,
         ownerName: registration.ownerName,
         phone: normalizedPhone,
@@ -4944,9 +4974,13 @@ function LoginPassword({
       setPassword("");
       setRegistration({ academyName: "", ownerName: "", phone: "", password: "", city: "" });
       setMode("login");
-      setMessage("تم إرسال طلب التسجيل. بعد موافقة السوبر أدمين يمكنك الدخول برقم الهاتف وكلمة السر.");
+      setMessage(
+        requestResult?.queued
+          ? "تم حفظ طلب التسجيل على الهاتف، وسيتم رفعه تلقائيًا عند توفر اتصال جيد بالسحابة."
+          : "تم إرسال طلب التسجيل. بعد موافقة السوبر أدمين يمكنك الدخول برقم الهاتف وكلمة السر.",
+      );
     } catch (error) {
-      setMessage(error.message || "تعذر إرسال طلب التسجيل.");
+      setMessage(friendlyNetworkError(error, "تعذر إرسال طلب التسجيل الآن."));
     } finally {
       setIsLoading(false);
     }
