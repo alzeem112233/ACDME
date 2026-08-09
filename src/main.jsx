@@ -4528,29 +4528,54 @@ function LoginPassword({
 
     setIsLoading(true);
     try {
-      const liveRegistrationRequests = await refreshRegistrationRequests?.();
-      const liveUsers = await refreshPlatformUsers?.();
+      let account = findAccountByPhone(normalizedPhone, registrationRequests, users);
+      let existingRequest = findRequestByPhone(normalizedPhone, registrationRequests);
+
+      if (account?.role === ROLE_SUPER_ADMIN) {
+        const isCorrectPassword = await passwordMatches(account, password);
+        if (!isCorrectPassword) {
+          setMessage("كلمة السر غير صحيحة.");
+          return;
+        }
+
+        onVerified({
+          userId: account.id,
+          name: account.name,
+          phone: normalizedPhone,
+          role: account.role || ROLE_OWNER,
+          academyId: account.academyId || makeAcademyId(normalizedPhone),
+          academyName: account.academyName || data.academy.name,
+          academyNameEn: account.academyNameEn || data.academy.nameEn,
+          academyLogo: account.academyLogo || data.academy.logo,
+          permissions: account.permissions || PERMISSION_FULL,
+          signedInAt: new Date().toISOString(),
+        });
+        return;
+      }
+
+      const liveRegistrationRequests = await refreshRegistrationRequests?.().catch(() => null);
+      const liveUsers = await refreshPlatformUsers?.().catch(() => null);
       const requestsForLogin = Array.isArray(liveRegistrationRequests) ? liveRegistrationRequests : registrationRequests;
       const usersForLogin = Array.isArray(liveUsers) ? liveUsers : users;
-      let account = findAccountByPhone(normalizedPhone, requestsForLogin, usersForLogin);
-      let existingRequest = findRequestByPhone(normalizedPhone, requestsForLogin);
+      account = findAccountByPhone(normalizedPhone, requestsForLogin, usersForLogin);
+      existingRequest = findRequestByPhone(normalizedPhone, requestsForLogin);
 
       if (!account) {
-        const remoteAccount = await getRemotePlatformAccountByPhone(normalizedPhone);
+        const remoteAccount = await getRemotePlatformAccountByPhone(normalizedPhone).catch(() => null);
         if (remoteAccount) {
           account = remoteAccount;
         }
       }
 
       if (!existingRequest) {
-        existingRequest = await getRemoteRegistrationRequestByPhone(normalizedPhone);
+        existingRequest = await getRemoteRegistrationRequestByPhone(normalizedPhone).catch(() => null);
         if (existingRequest?.status === STATUS_APPROVED && !account) {
           account = findAccountByPhone(normalizedPhone, [existingRequest], usersForLogin);
         }
       }
 
       if (!account) {
-        account = await findCloudAcademyAccountByPhone(normalizedPhone);
+        account = await findCloudAcademyAccountByPhone(normalizedPhone).catch(() => null);
       }
 
       if (!account) {
