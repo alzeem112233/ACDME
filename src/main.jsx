@@ -1414,6 +1414,7 @@ function App() {
   const [themeMode, setThemeMode] = useLocalState("acdme-theme-v1", "light");
   const [cloudSyncState, setCloudSyncState] = useState({ academyId: "", loaded: false, saving: false, error: "", syncedAt: "" });
   const lastCloudPayloadRef = useRef("");
+  const autoSyncedOnOpenRef = useRef("");
   const bottomNavRef = useRef(null);
   const [query, setQuery] = useState("");
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
@@ -1843,6 +1844,7 @@ function App() {
 
     if (!session?.verified) {
       lastCloudPayloadRef.current = "";
+      autoSyncedOnOpenRef.current = "";
       setCloudSyncState({ academyId: "", loaded: false, saving: false, error: "", syncedAt: "" });
       return () => {
         isCancelled = true;
@@ -1962,13 +1964,23 @@ function App() {
     if (!hasAcademyContent(academyPayload)) return undefined;
 
     const nextSignature = JSON.stringify(academyPayload);
-    if (nextSignature === lastCloudPayloadRef.current) return undefined;
+    const openSyncKey = `${currentAcademyId}:${onlineSyncTick}:${nextSignature}`;
+    const shouldSyncOnOpen = autoSyncedOnOpenRef.current !== openSyncKey;
+    if (!shouldSyncOnOpen && nextSignature === lastCloudPayloadRef.current) return undefined;
 
     const saveTimer = window.setTimeout(() => {
       setCloudSyncState((prev) => ({ ...prev, saving: true, error: "" }));
       upsertRemoteAcademyData(currentAcademyId, academyPayload)
-        .then(() => {
+        .then(async () => {
+          const syncedAccounts = await syncAcademyPlatformAccounts(platformData.users || [], academyDataById[currentAcademyId]);
+          if (syncedAccounts.length) {
+            setPlatformData((prev) => ({
+              ...prev,
+              users: mergePlatformUsers(syncedAccounts, prev.users || []),
+            }));
+          }
           lastCloudPayloadRef.current = nextSignature;
+          autoSyncedOnOpenRef.current = openSyncKey;
           setCloudSyncState((prev) => ({ ...prev, saving: false, error: "", syncedAt: new Date().toISOString() }));
         })
         .catch((error) => {
@@ -1977,7 +1989,7 @@ function App() {
     }, 900);
 
     return () => window.clearTimeout(saveTimer);
-  }, [academyDataById, currentAcademyId, session, isSuperAdmin, cloudSyncState.loaded, cloudSyncState.academyId, isOnline, onlineSyncTick]);
+  }, [academyDataById, currentAcademyId, session, isSuperAdmin, cloudSyncState.loaded, cloudSyncState.academyId, isOnline, onlineSyncTick, platformData.users]);
 
   const addAgeGroup = (event) => {
     event.preventDefault();
