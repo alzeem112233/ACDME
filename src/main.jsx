@@ -53,7 +53,6 @@ import {
   createRegistrationRequest,
   deleteRemoteAcademyData,
   deleteRemotePlatformAccount,
-  deleteRemoteRegistrationRequestsByPhone,
   getRemoteAcademyData,
   getRemotePlatformAccountByPhone,
   getRemoteRegistrationRequestByPhone,
@@ -370,6 +369,26 @@ function accountFromApprovedRequest(request) {
     passwordUpdatedAt: request.passwordUpdatedAt || today,
     permissions: PERMISSION_FULL,
     status: "نشط",
+  };
+}
+
+function rejectedRequestFromAccount(account = {}, reason = "تم حذف الحساب من لوحة التحكم") {
+  const phone = normalizePhone(account.phone);
+
+  return {
+    id: `deleted-${phone.replace(/\D/g, "") || account.id || crypto.randomUUID()}`,
+    academyName: account.academyName || "حساب محذوف",
+    ownerName: account.name || "مستخدم محذوف",
+    contact: phone,
+    phone,
+    academyId: account.academyId || makeAcademyId(phone),
+    passwordHash: account.passwordHash || "",
+    passwordStatus: account.passwordStatus || "مشفرة",
+    passwordUpdatedAt: account.passwordUpdatedAt || today,
+    city: account.city || "",
+    status: STATUS_REJECTED,
+    createdAt: today,
+    rejectionReason: reason,
   };
 }
 
@@ -2235,9 +2254,15 @@ function App() {
     setPlatformData((prev) => ({
       ...prev,
       users: (prev.users || []).filter((user) => normalizePhone(user.phone) !== normalizedPhone),
-      registrationRequests: (prev.registrationRequests || []).filter(
-        (request) => normalizePhone(request.phone || request.contact) !== normalizedPhone,
-      ),
+      registrationRequests: [
+        ...(prev.registrationRequests || []).some((request) => normalizePhone(request.phone || request.contact) === normalizedPhone)
+          ? (prev.registrationRequests || []).map((request) =>
+              normalizePhone(request.phone || request.contact) === normalizedPhone
+                ? { ...request, status: STATUS_REJECTED, rejectionReason: "تم حذف الحساب من لوحة التحكم" }
+                : request,
+            )
+          : [rejectedRequestFromAccount(targetUser)],
+      ],
     }));
 
     setAcademyDataById((prev) => {
@@ -2260,7 +2285,9 @@ function App() {
 
     Promise.allSettled([
       deleteRemotePlatformAccount(normalizedPhone),
-      deleteRemoteRegistrationRequestsByPhone(normalizedPhone, targetAcademyId),
+      ...((registrationRequests || [])
+        .filter((request) => normalizePhone(request.phone || request.contact) === normalizedPhone)
+        .map((request) => updateRemoteRegistrationRequest(request.id, STATUS_REJECTED))),
       shouldDeleteAcademyData ? deleteRemoteAcademyData(targetAcademyId) : Promise.resolve(null),
     ]).catch(() => {
       // The local cleanup stays visible; remote cleanup can be retried manually if the network is unavailable.
@@ -3751,6 +3778,8 @@ function PlatformDashboard({
     if (firstOrder !== secondOrder) return firstOrder - secondOrder;
     return String(second.createdAt || "").localeCompare(String(first.createdAt || ""));
   });
+  const pendingRegistrationRequests = displayedRegistrationRequests.filter((request) => request.status === STATUS_PENDING);
+  const rejectedRegistrationRequests = displayedRegistrationRequests.filter((request) => request.status === STATUS_REJECTED);
 
   const handlePasswordReset = async (user) => {
     const rowKey = user.id || user.phone;
@@ -4019,8 +4048,8 @@ function PlatformDashboard({
 
       <section className="panel table-panel platform-table-card">
         <PanelHead
-          title="طلبات تسجيل الأكاديميات"
-          text="وافق على الأكاديميات الجديدة أو ارفض الطلبات غير المكتملة."
+          title="طلبات تسجيل جديدة"
+          text="كل حساب يطلب إنشاء حساب يظهر هنا مباشرة للمراجعة والموافقة."
           icon={Users}
         />
         <div className="table-scroll">
@@ -4037,14 +4066,14 @@ function PlatformDashboard({
               </tr>
             </thead>
             <tbody>
-              {displayedRegistrationRequests.length === 0 && (
+              {pendingRegistrationRequests.length === 0 && (
                 <tr>
                   <td className="empty-table-cell" colSpan="7">
-                    لا توجد طلبات ظاهرة الآن. اضغط تحديث الطلبات للتأكد من جلب آخر الطلبات من السحابة.
+                    لا توجد طلبات جديدة الآن. اضغط تحديث الطلبات للتأكد من جلب آخر الطلبات من السحابة.
                   </td>
                 </tr>
               )}
-              {displayedRegistrationRequests.map((request) => (
+              {pendingRegistrationRequests.map((request) => (
                 <tr key={request.id}>
                   <td>{request.academyName}</td>
                   <td>{request.ownerName}</td>
@@ -4065,6 +4094,51 @@ function PlatformDashboard({
                         رفض
                       </button>
                     </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="panel table-panel platform-table-card">
+        <PanelHead
+          title="الحسابات المرفوضة أو المحذوفة"
+          text="أي طلب يتم رفضه أو أي حساب يتم حذفه يبقى هنا كسجل واضح للمراجعة."
+          icon={X}
+        />
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>الأكاديمية</th>
+                <th>المسؤول</th>
+                <th>التواصل</th>
+                <th>المدينة</th>
+                <th>التاريخ</th>
+                <th>السبب</th>
+                <th>الإجراء</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rejectedRegistrationRequests.length === 0 && (
+                <tr>
+                  <td className="empty-table-cell" colSpan="7">لا توجد حسابات مرفوضة أو محذوفة بعد</td>
+                </tr>
+              )}
+              {rejectedRegistrationRequests.map((request) => (
+                <tr key={request.id}>
+                  <td>{request.academyName}</td>
+                  <td>{request.ownerName}</td>
+                  <td>{request.contact}</td>
+                  <td>{request.city}</td>
+                  <td>{request.createdAt}</td>
+                  <td>{request.rejectionReason || "تم رفض الطلب"}</td>
+                  <td>
+                    <button className="mini-button approve" type="button" onClick={() => updateRegistrationRequest(request.id, "مقبول")}>
+                      إعادة اعتماد
+                    </button>
                   </td>
                 </tr>
               ))}
