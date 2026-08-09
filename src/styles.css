@@ -2437,10 +2437,18 @@ html[data-theme="dark"] .age-home-button {
   gap: 9px;
 }
 
+.home-player-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .home-player-list h2 {
   color: #111a4f;
   font-size: 15px;
-  margin-bottom: 2px;
+  margin: 0 0 2px;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -3696,6 +3704,66 @@ th {
   border-color: rgba(17, 26, 121, 0.12);
 }
 
+.platform-renewal-alerts {
+  border-color: rgba(185, 28, 28, 0.16);
+}
+
+.renewal-alert-list {
+  display: grid;
+  gap: 10px;
+}
+
+.renewal-alert-list article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(217, 119, 6, 0.24);
+  border-radius: 12px;
+  background: #fffaf0;
+}
+
+.renewal-alert-list article.expired {
+  border-color: rgba(185, 28, 28, 0.25);
+  background: #fff1f2;
+}
+
+.renewal-alert-list strong,
+.renewal-alert-list span,
+.renewal-alert-list small {
+  min-width: 0;
+}
+
+.renewal-alert-list strong {
+  display: block;
+  color: #111a4f;
+  font-weight: 900;
+}
+
+.renewal-alert-list span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  margin-top: 3px;
+}
+
+.renewal-alert-list b {
+  color: #9a3412;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.renewal-alert-list article.expired b {
+  color: #b91c1c;
+}
+
+.renewal-alert-list small {
+  color: #64748b;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .platform-account-actions {
   display: flex;
   gap: 8px;
@@ -4324,6 +4392,16 @@ html[data-theme="dark"] .player-card-actions button {
 }
 
 @media (max-width: 520px) {
+  .renewal-alert-list article {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .renewal-alert-list b,
+  .renewal-alert-list small {
+    white-space: normal;
+  }
+
   .birth-date-fields {
     grid-template-columns: 1fr;
   }

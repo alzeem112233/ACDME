@@ -1241,24 +1241,37 @@ function comparePlayersBySortMode(firstPlayer, secondPlayer, sortMode) {
   const secondHasBirth = Number.isFinite(secondBirth);
 
   if (firstHasBirth && secondHasBirth && firstBirth !== secondBirth) {
-    return secondBirth - firstBirth;
+    return sortMode === "ageDesc" ? firstBirth - secondBirth : secondBirth - firstBirth;
   }
 
   if (firstHasBirth !== secondHasBirth) return firstHasBirth ? -1 : 1;
   return String(firstPlayer.name || "").localeCompare(String(secondPlayer.name || ""), "ar");
 }
 
+function nextPlayerSortMode(sortMode) {
+  if (sortMode === "name") return "ageAsc";
+  if (sortMode === "ageAsc" || sortMode === "age") return "ageDesc";
+  return "name";
+}
+
+function playerSortLabel(sortMode) {
+  if (sortMode === "name") return "أ - ي";
+  if (sortMode === "ageDesc") return "الأكبر";
+  return "الأصغر";
+}
+
 function SortModeButton({ sortMode, onToggle }) {
+  const label = playerSortLabel(sortMode);
   return (
     <button
       className="list-sort-toggle"
       type="button"
       onClick={onToggle}
-      aria-label={sortMode === "age" ? "الترتيب من الأصغر إلى الأكبر" : "الترتيب الأبجدي"}
-      title={sortMode === "age" ? "الأصغر للأكبر" : "أبجدي"}
+      aria-label={`ترتيب اللاعبين: ${label}`}
+      title={`ترتيب اللاعبين: ${label}`}
     >
       <ArrowDownAZ size={17} />
-      <span>{sortMode === "age" ? "العمر" : "أبجدي"}</span>
+      <span>{label}</span>
     </button>
   );
 }
@@ -3240,6 +3253,7 @@ function App() {
     exportLocalBackup,
     importLocalBackup,
     syncCurrentAcademyNow,
+    renewalTimers,
     refreshPlatformUsers,
     refreshRegistrationRequests,
     addPlatformUserFromDashboard,
@@ -3603,6 +3617,7 @@ function RenewalGate({ academyName, renewalInfo, canRenew, isOnline, onRenew, on
 function Dashboard({ data, stats, helpers, setActiveView, setSelectedPlayerId, session }) {
   const [homeSearch, setHomeSearch] = useState("");
   const [activeHomeGroup, setActiveHomeGroup] = useState("all");
+  const [homeSortMode, setHomeSortMode] = useState("name");
   const academyLogo = data.academy.logo || session?.academyLogo || "";
   const academyName = data.academy.name || session?.academyName || "اسم الأكاديمية";
   const academyNameEn = data.academy.nameEn || session?.academyNameEn || "Official Sports Academy";
@@ -3622,7 +3637,7 @@ function Dashboard({ data, stats, helpers, setActiveView, setSelectedPlayerId, s
 
       return matchesSearch && matchesGroup;
     })
-    .sort((a, b) => b.xp - a.xp)
+    .sort((firstPlayer, secondPlayer) => comparePlayersBySortMode(firstPlayer, secondPlayer, homeSortMode))
     .slice(0, 8);
 
   return (
@@ -3711,7 +3726,10 @@ function Dashboard({ data, stats, helpers, setActiveView, setSelectedPlayerId, s
       </div>
 
       <section className="home-player-list">
-        <h2>قائمة اللاعبين <span>{homePlayers.length}</span></h2>
+        <div className="home-player-list-head">
+          <h2>قائمة اللاعبين <span>{homePlayers.length}</span></h2>
+          <SortModeButton sortMode={homeSortMode} onToggle={() => setHomeSortMode((mode) => nextPlayerSortMode(mode))} />
+        </div>
         {homePlayers.length === 0 && (
           <div className="home-empty-list">
             لا توجد نتائج مطابقة. غيّر البحث أو الفئة، أو أضف لاعبًا جديدًا.
@@ -3744,9 +3762,11 @@ function Dashboard({ data, stats, helpers, setActiveView, setSelectedPlayerId, s
 
 function PlatformDashboard({
   data,
+  academyDataById,
   stats,
   platformUsers,
   registrationRequests,
+  renewalTimers,
   refreshPlatformUsers,
   refreshRegistrationRequests,
   addPlatformUserFromDashboard,
@@ -3780,6 +3800,45 @@ function PlatformDashboard({
   });
   const pendingRegistrationRequests = displayedRegistrationRequests.filter((request) => request.status === STATUS_PENDING);
   const rejectedRegistrationRequests = displayedRegistrationRequests.filter((request) => request.status === STATUS_REJECTED);
+  const academyIds = new Set(
+    [
+      ...approvedAccounts.map((user) => user.academyId),
+      ...registrationRequests.filter((request) => request.status === STATUS_APPROVED).map((request) => requestAcademyId(request)),
+      ...Object.keys(academyDataById || {}),
+    ].filter((academyId) => academyId && academyId !== "platform"),
+  );
+  const academyRows = Array.from(academyIds).map((academyId) => {
+    const academyData = normalizeAcademyData(academyDataById?.[academyId]);
+    const owner =
+      approvedAccounts.find((user) => user.academyId === academyId && user.role === ROLE_OWNER) ||
+      approvedAccounts.find((user) => user.academyId === academyId) ||
+      registrationRequests.find((request) => requestAcademyId(request) === academyId);
+    const renewalInfo = academyRenewalInfo(academyData.academy, renewalTimers?.[academyId]);
+    const summary = academyData.cloudSummary || {};
+    const playerCount = academyData.players.length || Number(summary.playersCount || 0);
+    const teamCount = academyData.teams.length || Number(summary.teamsCount || 0);
+    const groupCount = academyData.ageGroups.length || Number(summary.ageGroupsCount || 0);
+
+    return {
+      academyId,
+      name: academyData.academy.name || owner?.academyName || "أكاديمية بدون اسم",
+      ownerName: owner?.name || owner?.ownerName || "غير محدد",
+      phone: normalizePhone(owner?.phone || owner?.contact || academyData.academy.ownerPhone),
+      renewalInfo,
+      playerCount,
+      teamCount,
+      groupCount,
+      collectedRevenue: Number(summary.collectedRevenue || 0),
+    };
+  });
+  const activeAcademiesCount = academyRows.length;
+  const totalPlayersCount = academyRows.reduce((sum, academy) => sum + academy.playerCount, 0);
+  const totalTeamsCount = academyRows.reduce((sum, academy) => sum + academy.teamCount, 0);
+  const totalGroupsCount = academyRows.reduce((sum, academy) => sum + academy.groupCount, 0);
+  const totalPlatformRevenue = academyRows.reduce((sum, academy) => sum + academy.collectedRevenue, 0);
+  const renewalAlertRows = academyRows
+    .filter((academy) => academy.renewalInfo.isExpired || academy.renewalInfo.remainingDays <= 3)
+    .sort((first, second) => first.renewalInfo.remainingDays - second.renewalInfo.remainingDays);
 
   const handlePasswordReset = async (user) => {
     const rowKey = user.id || user.phone;
@@ -3884,9 +3943,9 @@ function PlatformDashboard({
 
       <div className="metric-grid">
         <Metric title="طلبات بانتظار الموافقة" value={pending} icon={ClipboardCheck} tone="amber" />
-        <Metric title="حسابات معتمدة" value={approvedAccounts.length} icon={BadgeCheck} tone="green" />
+        <Metric title="أكاديميات مسجلة" value={activeAcademiesCount} icon={BadgeCheck} tone="green" />
         <Metric title="طلبات مرفوضة" value={rejected} icon={Bell} tone="red" />
-        <Metric title="إجمالي الإيرادات" value={currency(stats.revenue)} icon={CircleDollarSign} tone="blue" />
+        <Metric title="حسابات معتمدة" value={approvedAccounts.length} icon={CircleDollarSign} tone="blue" />
       </div>
 
       <div className="split-layout">
@@ -3897,12 +3956,13 @@ function PlatformDashboard({
             icon={Activity}
           />
           <div className="detail-grid">
-            <Detail label="الأكاديميات المسجلة" value={Math.max(approved, 1)} />
-            <Detail label="اللاعبون" value={data.players.length} />
-            <Detail label="الفرق" value={data.teams.length} />
-            <Detail label="الفئات العمرية" value={data.ageGroups.length} />
-            <Detail label="حضور اليوم" value={stats.present} />
-            <Detail label="مدفوعات مسجلة" value={currency(stats.revenue)} />
+            <Detail label="الأكاديميات المسجلة" value={activeAcademiesCount} />
+            <Detail label="الحسابات المعتمدة" value={approvedAccounts.length} />
+            <Detail label="طلبات إنشاء الحساب" value={pendingRegistrationRequests.length} />
+            <Detail label="اللاعبون" value={totalPlayersCount} />
+            <Detail label="الفرق" value={totalTeamsCount} />
+            <Detail label="الفئات العمرية" value={totalGroupsCount} />
+            <Detail label="مدفوعات مسجلة" value={currency(totalPlatformRevenue)} />
           </div>
         </section>
 
@@ -3922,6 +3982,30 @@ function PlatformDashboard({
           </p>
         </section>
       </div>
+
+      <section className="panel platform-renewal-alerts">
+        <PanelHead
+          title="تنبيهات التجديد"
+          text={`التطبيق يقفل تلقائيًا بعد ${RENEWAL_PERIOD_DAYS} يومًا لكل أكاديمية. الحسابات المنتهية أو القريبة من الانتهاء تظهر هنا.`}
+          icon={Clock}
+        />
+        {renewalAlertRows.length === 0 ? (
+          <div className="empty-table-cell">لا توجد حسابات متوقفة أو تحتاج تجديدًا قريبًا.</div>
+        ) : (
+          <div className="renewal-alert-list">
+            {renewalAlertRows.map((academy) => (
+              <article className={academy.renewalInfo.isExpired ? "expired" : ""} key={academy.academyId}>
+                <div>
+                  <strong>{academy.name}</strong>
+                  <span>{academy.ownerName} - {academy.phone || "بدون رقم"}</span>
+                </div>
+                <b>{academy.renewalInfo.isExpired ? "متوقف" : `باقي ${academy.renewalInfo.remainingDays} يوم`}</b>
+                <small>ينتهي في {academy.renewalInfo.expiresAt}</small>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
 
       <form className="panel platform-manual-account-card" onSubmit={handleManualAccountSubmit}>
         <PanelHead
@@ -5797,7 +5881,7 @@ function Players({ data, helpers, addPlayer, togglePlayerStatus, setSelectedPlay
   const [birthDateValue, setBirthDateValue] = useState("");
   const [subscriptionChoice, setSubscriptionChoice] = useState("اشتراك شهري");
   const [monthlyFeeValue, setMonthlyFeeValue] = useState("");
-  const [playerSortMode, setPlayerSortMode] = useState("age");
+  const [playerSortMode, setPlayerSortMode] = useState("ageAsc");
   const [playerFormMessage, setPlayerFormMessage] = useState("");
   const groupFilters = data.ageGroups.length ? data.ageGroups : ageGroupPresets;
   const selectedBirthYear = birthDateValue ? new Date(`${birthDateValue}T00:00:00`).getFullYear() : null;
@@ -5893,7 +5977,7 @@ function Players({ data, helpers, addPlayer, togglePlayerStatus, setSelectedPlay
           <Search size={16} />
           <input value={playerSearch} onChange={(event) => setPlayerSearch(event.target.value)} placeholder="ابحث عن لاعب أو ولي أمر" />
         </label>
-        <SortModeButton sortMode={playerSortMode} onToggle={() => setPlayerSortMode((mode) => (mode === "age" ? "name" : "age"))} />
+        <SortModeButton sortMode={playerSortMode} onToggle={() => setPlayerSortMode((mode) => nextPlayerSortMode(mode))} />
         <button type="button" className={isAddingPlayer ? "active" : ""} onClick={() => setIsAddingPlayer((value) => !value)}>
           <Plus size={17} />
         </button>
@@ -6557,7 +6641,7 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
   const [selectedGroupId, setSelectedGroupId] = useState(groupOptions[0]?.id || "");
   const [activePaymentPlayerId, setActivePaymentPlayerId] = useState("");
   const [paymentDrafts, setPaymentDrafts] = useState({});
-  const [attendanceSortMode, setAttendanceSortMode] = useState("age");
+  const [attendanceSortMode, setAttendanceSortMode] = useState("ageAsc");
   const [attendanceSearch, setAttendanceSearch] = useState("");
   const [lastAttendanceAction, setLastAttendanceAction] = useState("");
 
@@ -6730,7 +6814,7 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
             <h2>{selectedGroup?.name || "الفئة"}</h2>
             <p>{isScheduledTrainingDay ? `${groupPlayers.length} من ${selectedGroupPlayers.length} لاعب` : "التحضير مغلق لهذا اليوم"}</p>
           </div>
-          <SortModeButton sortMode={attendanceSortMode} onToggle={() => setAttendanceSortMode((mode) => (mode === "age" ? "name" : "age"))} />
+          <SortModeButton sortMode={attendanceSortMode} onToggle={() => setAttendanceSortMode((mode) => nextPlayerSortMode(mode))} />
         </div>
 
         <label className="attendance-search">
