@@ -75,7 +75,10 @@ function normalizeDigits(value = "") {
 }
 
 function normalizePhoneForRemote(value = "") {
-  const raw = normalizeDigits(value).trim().replace(/\s+/g, "");
+  const compact = normalizeDigits(value).trim().replace(/[()\-\s._/\\]+/g, "");
+  const raw = compact.startsWith("+")
+    ? `+${compact.slice(1).replace(/\D/g, "")}`
+    : compact.replace(/\D/g, "");
   if (raw.startsWith("+")) return raw;
   if (raw.startsWith("00")) return `+${raw.slice(2)}`;
   if (raw.startsWith("967")) return `+${raw}`;
@@ -95,7 +98,7 @@ function normalizePlatformStatus(status) {
 }
 
 function mapRegistrationRequest(row) {
-  const phone = normalizePhoneForRemote(row.phone || row.contact);
+  const phone = normalizePhoneForRemote(row.phone_e164 || row.phone || row.contact);
   return {
     id: row.id,
     academyName: row.academy_name,
@@ -116,7 +119,7 @@ function mapPlatformAccount(row) {
   return {
     id: row.id,
     name: row.name,
-    phone: normalizePhoneForRemote(row.phone),
+    phone: normalizePhoneForRemote(row.phone_e164 || row.phone),
     role: row.role,
     roleKey: row.role_key || "",
     academyId: row.academy_id,
@@ -152,6 +155,7 @@ function platformAccountPayload(account) {
     id: account.id || `account-${phone.replace(/\W/g, "")}`,
     name: account.name,
     phone,
+    phone_e164: phone,
     role: account.role,
     academy_id: account.academyId,
     academy_name: account.academyName,
@@ -299,7 +303,7 @@ export async function listRegistrationRequests() {
   const { data, error } = await withWeakNetworkRetry(() =>
     supabase
       .from("registration_requests")
-      .select("id,academy_name,owner_name,contact,phone,academy_id,city,status,role_key,auth_provider,created_at")
+      .select("id,academy_name,owner_name,contact,phone,phone_e164,academy_id,city,status,role_key,auth_provider,created_at")
       .order("created_at", { ascending: false }),
   );
 
@@ -315,8 +319,8 @@ export async function getRemoteRegistrationRequestByPhone(phone) {
   const { data, error } = await withWeakNetworkRetry(() =>
     supabase
       .from("registration_requests")
-      .select("id,academy_name,owner_name,contact,phone,academy_id,city,status,role_key,auth_provider,created_at")
-      .or(`phone.eq.${normalizedPhone},contact.eq.${normalizedPhone},phone.eq.${legacyPhone},contact.eq.${legacyPhone}`)
+      .select("id,academy_name,owner_name,contact,phone,phone_e164,academy_id,city,status,role_key,auth_provider,created_at")
+      .or(`phone_e164.eq.${normalizedPhone},phone.eq.${normalizedPhone},contact.eq.${normalizedPhone},phone.eq.${legacyPhone},contact.eq.${legacyPhone}`)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
@@ -332,7 +336,7 @@ export async function listPlatformAccounts() {
   const { data, error } = await withWeakNetworkRetry(() =>
     supabase
       .from("platform_accounts")
-      .select("id,name,phone,role,role_key,auth_provider,academy_id,academy_name,permissions,password_status,password_updated_at,status,created_at,updated_at")
+      .select("id,name,phone,phone_e164,role,role_key,auth_provider,academy_id,academy_name,permissions,password_status,password_updated_at,status,created_at,updated_at")
       .order("created_at", { ascending: false }),
   );
 
@@ -348,8 +352,8 @@ export async function getRemotePlatformAccountByPhone(phone) {
   const { data, error } = await withWeakNetworkRetry(() =>
     supabase
       .from("platform_accounts")
-      .select("id,name,phone,role,role_key,auth_provider,academy_id,academy_name,permissions,password_status,password_updated_at,status,created_at,updated_at")
-      .or(`phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`)
+      .select("id,name,phone,phone_e164,role,role_key,auth_provider,academy_id,academy_name,permissions,password_status,password_updated_at,status,created_at,updated_at")
+      .or(`phone_e164.eq.${normalizedPhone},phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`)
       .limit(1)
       .maybeSingle(),
   );
@@ -365,7 +369,7 @@ export async function upsertPlatformAccount(account) {
     supabase
       .from("platform_accounts")
       .upsert(platformAccountPayload(account), { onConflict: "phone" })
-      .select("id,name,phone,role,role_key,auth_provider,academy_id,academy_name,permissions,password_status,password_updated_at,status,created_at,updated_at")
+      .select("id,name,phone,phone_e164,role,role_key,auth_provider,academy_id,academy_name,permissions,password_status,password_updated_at,status,created_at,updated_at")
       .single(),
   );
 
@@ -382,7 +386,7 @@ export async function deleteRemotePlatformAccount(phone) {
     supabase
       .from("platform_accounts")
       .delete()
-      .or(`phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`),
+      .or(`phone_e164.eq.${normalizedPhone},phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`),
   );
 
   if (error) throw error;
@@ -405,6 +409,7 @@ export async function createRegistrationRequest(request) {
   const payload = {
     ...legacyPayload,
     phone,
+    phone_e164: phone,
     academy_id: request.academyId,
     password_hash: request.passwordHash,
   };
@@ -413,7 +418,7 @@ export async function createRegistrationRequest(request) {
     supabase
       .from("registration_requests")
       .insert(payload)
-      .select("id,academy_name,owner_name,contact,phone,academy_id,city,status,role_key,auth_provider,created_at")
+      .select("id,academy_name,owner_name,contact,phone,phone_e164,academy_id,city,status,role_key,auth_provider,created_at")
       .single(),
   );
 
@@ -422,7 +427,7 @@ export async function createRegistrationRequest(request) {
       supabase
         .from("registration_requests")
         .insert(legacyPayload)
-        .select("id,academy_name,owner_name,contact,phone,academy_id,city,status,role_key,auth_provider,created_at")
+        .select("id,academy_name,owner_name,contact,phone,phone_e164,academy_id,city,status,role_key,auth_provider,created_at")
         .single(),
     );
 
@@ -438,6 +443,7 @@ export async function createRegistrationRequest(request) {
     };
     const candidates = [
       `phone.eq.${phone}`,
+      `phone_e164.eq.${phone}`,
       `contact.eq.${phone}`,
       `phone.eq.${legacyPhone}`,
       `contact.eq.${legacyPhone}`,
@@ -449,7 +455,7 @@ export async function createRegistrationRequest(request) {
         .from("registration_requests")
         .update(updatePayload)
         .or(candidates)
-        .select("id,academy_name,owner_name,contact,phone,academy_id,city,status,role_key,auth_provider,created_at"),
+        .select("id,academy_name,owner_name,contact,phone,phone_e164,academy_id,city,status,role_key,auth_provider,created_at"),
     );
 
     data = updated.data?.[0] || null;
@@ -472,7 +478,7 @@ export async function updateRemoteRegistrationRequest(requestId, status) {
         reviewed_at: new Date().toISOString(),
       })
       .eq("id", requestId)
-      .select("id,academy_name,owner_name,contact,phone,academy_id,city,status,role_key,auth_provider,created_at")
+      .select("id,academy_name,owner_name,contact,phone,phone_e164,academy_id,city,status,role_key,auth_provider,created_at")
       .single(),
   );
 
@@ -489,7 +495,7 @@ export async function deleteRemoteRegistrationRequestsByPhone(phone, academyId =
     supabase
       .from("registration_requests")
       .delete()
-      .or(`phone.eq.${normalizedPhone},contact.eq.${normalizedPhone},phone.eq.${legacyPhone},contact.eq.${legacyPhone}`),
+      .or(`phone_e164.eq.${normalizedPhone},phone.eq.${normalizedPhone},contact.eq.${normalizedPhone},phone.eq.${legacyPhone},contact.eq.${legacyPhone}`),
   );
 
   if (error) throw error;
@@ -524,8 +530,8 @@ export async function updateRemoteRegistrationPassword(phone, passwordHash) {
     supabase
       .from("registration_requests")
       .update(updatePayload)
-      .or(`phone.eq.${normalizedPhone},contact.eq.${normalizedPhone},phone.eq.${legacyPhone},contact.eq.${legacyPhone}`)
-      .select("id,academy_name,owner_name,contact,phone,academy_id,city,status,role_key,auth_provider,created_at"),
+      .or(`phone_e164.eq.${normalizedPhone},phone.eq.${normalizedPhone},contact.eq.${normalizedPhone},phone.eq.${legacyPhone},contact.eq.${legacyPhone}`)
+      .select("id,academy_name,owner_name,contact,phone,phone_e164,academy_id,city,status,role_key,auth_provider,created_at"),
   );
 
   if (error) throw error;
@@ -546,8 +552,8 @@ export async function updateRemotePlatformAccountPassword(phone, passwordHash) {
       password_updated_at: new Date().toISOString().slice(0, 10),
       updated_at: new Date().toISOString(),
       })
-      .or(`phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`)
-      .select("id,name,phone,role,role_key,auth_provider,academy_id,academy_name,permissions,password_status,password_updated_at,status,created_at,updated_at"),
+      .or(`phone_e164.eq.${normalizedPhone},phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`)
+      .select("id,name,phone,phone_e164,role,role_key,auth_provider,academy_id,academy_name,permissions,password_status,password_updated_at,status,created_at,updated_at"),
   );
 
   if (error) throw error;
@@ -566,8 +572,8 @@ export async function updateRemotePlatformAccountStatus(phone, status) {
       status: normalizePlatformStatus(status),
       updated_at: new Date().toISOString(),
       })
-      .or(`phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`)
-      .select("id,name,phone,role,role_key,auth_provider,academy_id,academy_name,permissions,password_status,password_updated_at,status,created_at,updated_at"),
+      .or(`phone_e164.eq.${normalizedPhone},phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`)
+      .select("id,name,phone,phone_e164,role,role_key,auth_provider,academy_id,academy_name,permissions,password_status,password_updated_at,status,created_at,updated_at"),
   );
 
   if (error) throw error;

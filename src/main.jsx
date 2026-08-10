@@ -114,7 +114,10 @@ const ageGroupPresets = [
 const trainingDayOptions = ["السبت", "الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة"];
 
 function normalizePhone(value = "") {
-  const raw = normalizeDigits(value).trim().replace(/\s+/g, "");
+  const compact = normalizeDigits(value).trim().replace(/[()\-\s._/\\]+/g, "");
+  const raw = compact.startsWith("+")
+    ? `+${compact.slice(1).replace(/\D/g, "")}`
+    : compact.replace(/\D/g, "");
   if (raw.startsWith("+")) return raw;
   if (raw.startsWith("00")) return `+${raw.slice(2)}`;
   if (raw.startsWith("967")) return `+${raw}`;

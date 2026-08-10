@@ -26,7 +26,10 @@ function normalizeDigits(value = "") {
 }
 
 function normalizePhone(value = "") {
-  const raw = normalizeDigits(value).trim().replace(/\s+/g, "");
+  const compact = normalizeDigits(value).trim().replace(/[()\-\s._/\\]+/g, "");
+  const raw = compact.startsWith("+")
+    ? `+${compact.slice(1).replace(/\D/g, "")}`
+    : compact.replace(/\D/g, "");
   if (raw.startsWith("+")) return raw;
   if (raw.startsWith("00")) return `+${raw.slice(2)}`;
   if (raw.startsWith("967")) return `+${raw}`;
@@ -59,7 +62,7 @@ async function verifyLegacyPassword(password: string, storedHash = "") {
 }
 
 function publicAccount(row: Record<string, any>, fallback: Record<string, any> = {}) {
-  const phone = normalizePhone(row.phone || row.contact || fallback.phone || "");
+  const phone = normalizePhone(row.phone_e164 || row.phone || row.contact || fallback.phone || "");
   return {
     id: row.id || fallback.id || `account-${phone.replace(/\W/g, "")}`,
     name: row.name || row.owner_name || fallback.name || "",
@@ -167,7 +170,7 @@ Deno.serve(async (request) => {
     const { data: accountRow, error: accountError } = await supabase
       .from("platform_accounts")
       .select("*")
-      .or(`phone.eq.${phone},phone.eq.${phoneWithoutPlus}`)
+      .or(`phone_e164.eq.${phone},phone.eq.${phone},phone.eq.${phoneWithoutPlus}`)
       .limit(1)
       .maybeSingle();
 
@@ -189,7 +192,7 @@ Deno.serve(async (request) => {
     const { data: requestRow, error: requestError } = await supabase
       .from("registration_requests")
       .select("*")
-      .or(`phone.eq.${phone},contact.eq.${phone},phone.eq.${phoneWithoutPlus},contact.eq.${phoneWithoutPlus}`)
+      .or(`phone_e164.eq.${phone},phone.eq.${phone},contact.eq.${phone},phone.eq.${phoneWithoutPlus},contact.eq.${phoneWithoutPlus}`)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
