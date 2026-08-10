@@ -109,6 +109,12 @@ async function issueSession(supabase: any, account: Record<string, any>) {
   return { token, expiresAt, roleKey: key, permissions: permissionsJson(account, key) };
 }
 
+function accountAcademyId(account: Record<string, any>) {
+  const key = roleKey(account, "academy_owner");
+  if (key === "super_admin") return "platform";
+  return String(account.academy_id || account.academyId || "");
+}
+
 async function sendWhatsAppOtp(phone: string, code: string) {
   const message = otpMessage(code);
   const customApiUrl = Deno.env.get("QZ_WHATSAPP_API_URL") || "";
@@ -167,11 +173,12 @@ async function sendWhatsAppOtp(phone: string, code: string) {
   return true;
 }
 
-async function queueManualPasswordReset(supabase: any, phone: string, note = "") {
+async function queueManualPasswordReset(supabase: any, phone: string, note = "", academyId = "") {
   const { error } = await supabase
     .from("password_reset_requests")
     .insert({
       phone_e164: phone,
+      academy_id: academyId || null,
       status: "pending",
       delivery_channel: "manual",
       note,
@@ -360,14 +367,19 @@ Deno.serve(async (request) => {
         fallback: "manual_admin_reset",
       };
       const account = superAdminPhone && phone === superAdminPhone
-        ? { id: "super-admin", phone }
+        ? { id: "super-admin", phone, role_key: "super_admin", academy_id: "platform" }
         : await findApprovedAccount(supabase, phone, phoneWithoutPlus);
 
       if (!account) {
         return jsonResponse(genericResponse);
       }
 
-      await queueManualPasswordReset(supabase, phone, "User requested password reset from the login page.");
+      await queueManualPasswordReset(
+        supabase,
+        phone,
+        "User requested password reset from the login page.",
+        accountAcademyId(account),
+      );
       return jsonResponse(genericResponse);
     }
 
@@ -381,7 +393,7 @@ Deno.serve(async (request) => {
         message: "If this phone belongs to an approved account, a verification code will be sent by WhatsApp.",
       };
       const account = superAdminPhone && phone === superAdminPhone
-        ? { id: "super-admin", phone }
+        ? { id: "super-admin", phone, role_key: "super_admin", academy_id: "platform" }
         : await findApprovedAccount(supabase, phone, phoneWithoutPlus);
 
       if (!account) {
@@ -406,11 +418,13 @@ Deno.serve(async (request) => {
       const otp = createOtp();
       const otpHash = await sha256Hex(`${phone}:${otp}:${Deno.env.get("QZ_OTP_PEPPER") || serviceRoleKey}`);
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+      const academyId = accountAcademyId(account);
 
       const { error: insertOtpError } = await supabase
         .from("password_reset_otps")
         .insert({
           phone_e164: phone,
+          academy_id: academyId || null,
           otp_hash: otpHash,
           channel: "whatsapp",
           purpose: "password_reset",
@@ -422,7 +436,12 @@ Deno.serve(async (request) => {
       const sent = await sendWhatsAppOtp(phone, otp);
       if (!sent) {
         console.warn("WhatsApp OTP provider is not configured.");
-        await queueManualPasswordReset(supabase, phone, "WhatsApp provider is not configured; manual password reset is required.");
+        await queueManualPasswordReset(
+          supabase,
+          phone,
+          "WhatsApp provider is not configured; manual password reset is required.",
+          academyId,
+        );
       }
 
       return jsonResponse({
