@@ -828,6 +828,48 @@ function currency(value) {
   return new Intl.NumberFormat("ar-YE").format(Number(value || 0)) + " ريال";
 }
 
+function playerFinancialTerms(player = {}) {
+  const subscriptionTotal = Number(player.monthlyFee || 0);
+  const discount = Math.max(0, Number(player.discountAmount || 0));
+  const grant = Math.max(0, Number(player.grantAmount || 0));
+  const netDue = Math.max(subscriptionTotal - discount - grant, 0);
+  return { subscriptionTotal, discount, grant, netDue };
+}
+
+function paymentKind(payment = {}) {
+  if (payment.paymentType === "transfer" || payment.isTransfer || payment.method === "حوالة" || payment.method === "تحويل") return "transfer";
+  return "cash";
+}
+
+function paymentMethodLabel(payment = {}) {
+  return paymentKind(payment) === "transfer" ? "حوالة" : "نقدي";
+}
+
+function receiptSequenceNumber(payments = [], receiptNumber = "") {
+  const match = String(receiptNumber || "").match(/QZ-\d{4}-(\d{6})/);
+  if (!match) return 0;
+  return Number(match[1] || 0);
+}
+
+function nextReceiptNumber(payments = [], date = today) {
+  const year = String(date || today).slice(0, 4) || new Date().getFullYear();
+  const maxSequence = payments.reduce((max, payment) => {
+    if (!String(payment.receiptNumber || "").startsWith(`QZ-${year}-`)) return max;
+    return Math.max(max, receiptSequenceNumber(payments, payment.receiptNumber));
+  }, 0);
+  return `QZ-${year}-${String(maxSequence + 1).padStart(6, "0")}`;
+}
+
+function receiptNumberForPayment(payment = {}, payments = []) {
+  if (payment.receiptNumber) return payment.receiptNumber;
+  const year = String(payment.date || today).slice(0, 4) || new Date().getFullYear();
+  const comparablePayments = [...payments]
+    .filter((row) => Number(row.amount || 0) > 0 && String(row.date || today).slice(0, 4) === String(year))
+    .sort((a, b) => `${a.date || ""}-${a.id || ""}`.localeCompare(`${b.date || ""}-${b.id || ""}`));
+  const index = comparablePayments.findIndex((row) => row.id === payment.id);
+  return `QZ-${year}-${String(Math.max(index, 0) + 1).padStart(6, "0")}`;
+}
+
 function escapeHtml(value = "") {
   return String(value ?? "").replace(/[&<>"']/g, (character) => (
     {
@@ -2547,6 +2589,8 @@ function App() {
       ageGroupPreset: form.get("ageGroupPreset") || "",
       ageText: exactAgeFromDate(form.get("birthDate")),
       monthlyFee: Number(form.get("monthlyFee")),
+      discountAmount: Number(form.get("discountAmount") || 0),
+      grantAmount: Number(form.get("grantAmount") || 0),
       subscriptionType: form.get("subscriptionType"),
       subscriptionPaidFull: false,
       kitFee: Number(helpers.teamById[form.get("teamId")]?.kitFee || 0),
@@ -2618,42 +2662,58 @@ function App() {
     if (isFormEvent) {
       eventOrPayment.preventDefault();
       const form = new FormData(eventOrPayment.currentTarget);
+      const amount = Number(form.get("amount") || 0);
+      if (amount <= 0) return { ok: false, message: "لم يتم تسجيل دفعة لأن المبلغ غير مدخل." };
+      const isTransfer = form.get("isTransfer") === "on";
       payment = {
         id: crypto.randomUUID(),
         playerId: form.get("playerId"),
-        amount: Number(form.get("amount")),
+        amount,
         date: form.get("date"),
-        method: form.get("method"),
+        method: isTransfer ? "حوالة" : form.get("method"),
+        paymentType: isTransfer ? "transfer" : "cash",
+        isTransfer,
         status: form.get("status"),
         note: form.get("note"),
       };
       eventOrPayment.currentTarget.reset();
     } else {
+      const amount = Number(eventOrPayment.amount || 0);
+      if (amount <= 0) return { ok: false, message: "لم يتم تسجيل دفعة لأن المبلغ غير مدخل." };
+      const isTransfer = Boolean(eventOrPayment.isTransfer) || eventOrPayment.paymentType === "transfer" || eventOrPayment.method === "حوالة";
       payment = {
         id: crypto.randomUUID(),
-        method: "نقدًا",
         status: "مدفوع",
         note: "",
         ...eventOrPayment,
-        amount: Number(eventOrPayment.amount || 0),
+        amount,
+        method: isTransfer ? "حوالة" : eventOrPayment.method || "نقدًا",
+        paymentType: isTransfer ? "transfer" : "cash",
+        isTransfer,
       };
     }
 
-    setData((prev) => ({
-      ...prev,
-      payments: [
-        payment,
-        ...prev.payments.filter(
-          (row) =>
-            !(
-              payment.source === "attendance" &&
-              row.source === "attendance" &&
-              row.playerId === payment.playerId &&
-              row.date === payment.date
-            ),
-        ),
-      ],
-    }));
+    setData((prev) => {
+      const existingPayments = prev.payments.filter(
+        (row) =>
+          !(
+            payment.source === "attendance" &&
+            row.source === "attendance" &&
+            row.playerId === payment.playerId &&
+            row.date === payment.date
+          ),
+      );
+      const nextPayment = {
+        ...payment,
+        receiptNumber: payment.receiptNumber || nextReceiptNumber(existingPayments, payment.date || today),
+        createdAt: payment.createdAt || new Date().toISOString(),
+      };
+      return {
+        ...prev,
+        payments: [nextPayment, ...existingPayments],
+      };
+    });
+    return { ok: true, message: "تم حفظ الدفعة وإصدار الإيصال." };
   };
 
   const addExpense = (event) => {
@@ -6483,6 +6543,16 @@ function Players({ data, helpers, addPlayer, togglePlayerStatus, setSelectedPlay
               />
             </label>
           )}
+          <div className="two-cols">
+            <label>
+              <span>الخصومات</span>
+              <input name="discountAmount" type="number" min="0" defaultValue="0" placeholder="خصم إن وجد" />
+            </label>
+            <label>
+              <span>المنح</span>
+              <input name="grantAmount" type="number" min="0" defaultValue="0" placeholder="منحة إن وجدت" />
+            </label>
+          </div>
           <div className="player-save-actions">
             <button className="outline-gold-button" type="submit" value="save-add" disabled={!teamsForSelectedGroup.length}>
               حفظ مع إضافة لاعب
@@ -6623,7 +6693,12 @@ function PlayerProfile({ data, helpers, selectedPlayerId, setSelectedPlayerId, u
           headers={["النوع", "التاريخ", "الحالة", "ملاحظة"]}
           rows={[
             ...attendance.map((row) => ["حضور", row.date, row.status, row.note || "-"]),
-            ...payments.map((row) => ["دفعة", row.date, currency(row.amount), row.note || row.status]),
+            ...payments.map((row) => [
+              "دفعة",
+              row.date,
+              currency(row.amount),
+              `${receiptNumberForPayment(row, data.payments)} - ${paymentMethodLabel(row)} - ${row.note || row.status || "-"}`,
+            ]),
           ]}
         />
       </section>
@@ -6664,6 +6739,8 @@ function PlayerDetailsEditor({ data, helpers, player, updatePlayerDetails }) {
       guardianPhone: form.get("guardianPhone"),
       teamId,
       monthlyFee: Number(form.get("monthlyFee") || 0),
+      discountAmount: Number(form.get("discountAmount") || 0),
+      grantAmount: Number(form.get("grantAmount") || 0),
       subscriptionType: form.get("subscriptionType"),
       subscriptionPaidFull: form.get("subscriptionPaidFull") === "on",
       kitFee: Number(form.get("kitFee") || teamKitFee || 0),
@@ -6727,6 +6804,14 @@ function PlayerDetailsEditor({ data, helpers, player, updatePlayerDetails }) {
         <label>
           <span>قيمة الاشتراك</span>
           <input name="monthlyFee" type="number" min="0" defaultValue={player.monthlyFee || 0} />
+        </label>
+        <label>
+          <span>الخصومات</span>
+          <input name="discountAmount" type="number" min="0" defaultValue={player.discountAmount || 0} />
+        </label>
+        <label>
+          <span>المنح</span>
+          <input name="grantAmount" type="number" min="0" defaultValue={player.grantAmount || 0} />
         </label>
         <label>
           <span>قيمة الطقم الرياضي</span>
@@ -6989,6 +7074,7 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
   const [selectedGroupId, setSelectedGroupId] = useState(groupOptions[0]?.id || "");
   const [activePaymentPlayerId, setActivePaymentPlayerId] = useState("");
   const [paymentDrafts, setPaymentDrafts] = useState({});
+  const [transferDrafts, setTransferDrafts] = useState({});
   const [attendanceSortMode, setAttendanceSortMode] = useState("ageAsc");
   const [attendanceSearch, setAttendanceSearch] = useState("");
   const [lastAttendanceAction, setLastAttendanceAction] = useState("");
@@ -7064,7 +7150,9 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
       playerId: player.id,
       amount,
       date: attendanceDate,
-      method: "نقدًا",
+      method: transferDrafts[player.id] ? "حوالة" : "نقدًا",
+      paymentType: transferDrafts[player.id] ? "transfer" : "cash",
+      isTransfer: Boolean(transferDrafts[player.id]),
       status: "مدفوع",
       source: "attendance",
       note: `دفعة ${attendanceRows[player.id]?.status || "حضور"} من صفحة التحضير`,
@@ -7233,10 +7321,20 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
                     }
                     disabled={!isPaymentOpen && Boolean(payment)}
                   />
+                  <button
+                    type="button"
+                    className={`transfer-toggle ${transferDrafts[player.id] || paymentKind(payment) === "transfer" ? "active" : ""}`}
+                    disabled={!isPaymentOpen && Boolean(payment)}
+                    onClick={() => setTransferDrafts((prev) => ({ ...prev, [player.id]: !prev[player.id] }))}
+                    title="تحديد الدفعة كحوالة"
+                    aria-label="تحديد الدفعة كحوالة"
+                  >
+                    <Send size={14} />
+                  </button>
                   <button type="submit" disabled={!isPaymentOpen && Boolean(payment)}>
                     {payment && !isPaymentOpen ? "تم الحفظ" : payment ? "تحديث" : "حفظ"}
                   </button>
-                  {payment && <small>{currency(payment.amount)}</small>}
+                  {payment && <small>{currency(payment.amount)} - {paymentMethodLabel(payment)}</small>}
                 </form>
               )}
             </article>
@@ -7253,6 +7351,7 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
   const [selectedGroupId, setSelectedGroupId] = useState("all");
   const [activeReportTab, setActiveReportTab] = useState("overview");
   const [selectedDailyDate, setSelectedDailyDate] = useState(today);
+  const [paymentListFilter, setPaymentListFilter] = useState("all");
   const [reportNotice, setReportNotice] = useState("");
   const monthOptions = Array.from(
     new Set([currentMonth, ...data.payments.map((payment) => String(payment.date || "").slice(0, 7)).filter(Boolean)]),
@@ -7276,7 +7375,10 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
     const expenseMonth = String(expense.date || "").slice(0, 7);
     return isAllMonths || expenseMonth === selectedMonth;
   });
-  const expected = filteredPlayers.reduce((sum, player) => sum + Number(player.monthlyFee || 0), 0);
+  const grossSubscriptions = filteredPlayers.reduce((sum, player) => sum + playerFinancialTerms(player).subscriptionTotal, 0);
+  const totalDiscounts = filteredPlayers.reduce((sum, player) => sum + playerFinancialTerms(player).discount, 0);
+  const totalGrants = filteredPlayers.reduce((sum, player) => sum + playerFinancialTerms(player).grant, 0);
+  const expected = filteredPlayers.reduce((sum, player) => sum + playerFinancialTerms(player).netDue, 0);
   const rawCollected = filteredPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
   const totalExpenses = filteredExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
   const paidByPlayer = filteredPayments.reduce((map, payment) => {
@@ -7285,7 +7387,7 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
   }, {});
   const fullSubscriptionCredit = filteredPlayers.reduce((sum, player) => {
     if (!player.subscriptionPaidFull) return sum;
-    return sum + Math.max(Number(player.monthlyFee || 0) - Number(paidByPlayer[player.id] || 0), 0);
+    return sum + Math.max(playerFinancialTerms(player).netDue - Number(paidByPlayer[player.id] || 0), 0);
   }, 0);
   const collected = rawCollected + fullSubscriptionCredit;
   const netRevenue = collected - totalExpenses;
@@ -7298,11 +7400,12 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
   );
   const playerFinanceRows = filteredPlayers
     .map((player) => {
-      const due = Number(player.monthlyFee || 0);
+      const terms = playerFinancialTerms(player);
+      const due = terms.netDue;
       const paid = player.subscriptionPaidFull ? Math.max(due, paidByPlayer[player.id] || 0) : paidByPlayer[player.id] || 0;
       const playerRemaining = Math.max(due - paid, 0);
       const status = due === 0 ? "مجاني" : playerRemaining === 0 ? "مدفوع" : paid > 0 ? "جزئي" : "متأخر";
-      return { ...player, paid, due, remaining: playerRemaining, status };
+      return { ...player, ...terms, paid, due, remaining: playerRemaining, status };
     })
     .sort((a, b) => b.remaining - a.remaining);
   const kitRows = filteredPlayers.map((player) => {
@@ -7345,12 +7448,12 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
     return { name: group.name, value };
   }).filter((item) => item.value > 0);
   const maxGroupRevenue = Math.max(...groupRevenue.map((item) => item.value), 1);
-  const paymentMethods = ["نقد", "نقدًا", "تحويل"];
+  const paymentMethods = ["نقد", "نقدًا", "حوالة"];
   const methodSummary = paymentMethods
     .map((method) => ({
       label: method === "نقدًا" ? "نقد من التحضير" : method,
       value: filteredPayments
-        .filter((payment) => payment.method === method)
+        .filter((payment) => payment.method === method || (method === "حوالة" && paymentKind(payment) === "transfer"))
         .reduce((sum, payment) => sum + Number(payment.amount || 0), 0),
     }))
     .filter((item) => item.value > 0);
@@ -7379,7 +7482,11 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
   }, {})).sort((a, b) => b.value - a.value);
   const maxExpenseCategoryValue = Math.max(...expenseCategorySummary.map((item) => item.value), 1);
   const recentExpenses = [...filteredExpenses].sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 8);
-  const recentPayments = [...filteredPayments].sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 6);
+  const transferPayments = filteredPayments.filter((payment) => paymentKind(payment) === "transfer");
+  const cashPayments = filteredPayments.filter((payment) => paymentKind(payment) === "cash");
+  const visiblePayments =
+    paymentListFilter === "transfers" ? transferPayments : paymentListFilter === "cash" ? cashPayments : filteredPayments;
+  const recentPayments = [...visiblePayments].sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 12);
   const latePlayers = playerFinanceRows.filter((row) => row.status === "متأخر" || row.status === "جزئي").slice(0, 6);
   const forecastDate = isAllMonths ? new Date() : new Date(`${selectedMonth}-01T00:00:00`);
   const forecastToday = new Date();
@@ -7411,15 +7518,17 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
     return Array.from(presentPlayerIds)
       .map((playerId) => {
         const player = helpers.playerById[playerId];
-        if (!player || player.subscriptionPaidFull || Number(player.monthlyFee || 0) <= 0) return null;
+        const terms = playerFinancialTerms(player);
+        if (!player || player.subscriptionPaidFull || terms.netDue <= 0) return null;
         const team = helpers.teamById[player.teamId];
         const group = helpers.groupById[team?.ageGroupId];
-        const dailyDue = Math.round(Number(player.monthlyFee || 0) / 8);
+        const dailyDue = Math.round(terms.netDue / 8);
         const paid = paymentsByPlayerDate[`${player.id}-${date}`] || 0;
         const remainingAmount = Math.max(dailyDue - paid, 0);
         const status = remainingAmount === 0 ? "مدفوع" : paid > 0 ? "جزئي" : "متأخر";
         return {
           ...player,
+          ...terms,
           teamName: team?.name || "بدون فريق",
           groupName: group?.name || "-",
           dailyDue,
@@ -7455,7 +7564,7 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
     { id: "daily", label: "التقرير اليومي" },
     { id: "players", label: "كشف اللاعبين" },
     { id: "debts", label: "المتأخرات" },
-    { id: "payments", label: "الدفعات" },
+    { id: "payments", label: "الإيصالات" },
     { id: "expenses", label: "المصروفات" },
     { id: "kits", label: "الطقم الرياضي" },
   ];
@@ -7479,6 +7588,10 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
     `التقرير المالي - ${data.academy.name || "الأكاديمية الرياضية"}`,
     `الفترة: ${reportPeriodLabel}`,
     `الفئة: ${reportGroupLabel}`,
+    `إجمالي الاشتراكات: ${currency(grossSubscriptions)}`,
+    `الخصومات: ${currency(totalDiscounts)}`,
+    `المنح: ${currency(totalGrants)}`,
+    `الصافي المطلوب: ${currency(expected)}`,
     `المحصّل: ${currency(collected)}`,
     `المصروفات: ${currency(totalExpenses)}`,
     `الصافي: ${currency(netRevenue)}`,
@@ -7490,6 +7603,66 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
   const showReportNotice = (message) => {
     setReportNotice(message);
     window.setTimeout(() => setReportNotice(""), 2400);
+  };
+  const receiptDetails = (payment) => {
+    const player = helpers.playerById[payment.playerId];
+    const team = helpers.teamById[player?.teamId];
+    const group = helpers.groupById[team?.ageGroupId];
+    return {
+      receiptNumber: receiptNumberForPayment(payment, data.payments),
+      playerName: player?.name || "لاعب غير معروف",
+      teamName: team?.name || "بدون فريق",
+      groupName: group?.name || "-",
+      amount: Number(payment.amount || 0),
+      method: paymentMethodLabel(payment),
+      date: payment.date || today,
+      note: payment.note || "-",
+    };
+  };
+  const printReceipt = (payment) => {
+    const receipt = receiptDetails(payment);
+    const ok = printReportHtml(buildPrintReportHtml({
+      title: `إيصال ${receipt.receiptNumber}`,
+      subtitle: `${receipt.date} - ${receipt.method}`,
+      academyName: data.academy.name,
+      logo: data.academy.logo,
+      cards: [
+        { label: "رقم الإيصال", value: receipt.receiptNumber },
+        { label: "اللاعب", value: receipt.playerName },
+        { label: "المبلغ", value: currency(receipt.amount) },
+        { label: "طريقة الدفع", value: receipt.method },
+      ],
+      sections: [
+        reportTable("تفاصيل الإيصال", ["البند", "القيمة"], [
+          ["الفريق", receipt.teamName],
+          ["الفئة", receipt.groupName],
+          ["التاريخ", receipt.date],
+          ["الملاحظة", receipt.note],
+        ]),
+      ],
+      note: "يمكن حفظ هذا الإيصال PDF من نافذة الطباعة باختيار Save as PDF.",
+    }));
+    showReportNotice(ok ? "تم فتح الإيصال للطباعة أو الحفظ PDF" : "تعذر فتح نافذة الإيصال");
+  };
+  const shareReceipt = async (payment) => {
+    const receipt = receiptDetails(payment);
+    const text = [
+      `إيصال QZ ACADEMY: ${receipt.receiptNumber}`,
+      `اللاعب: ${receipt.playerName}`,
+      `المبلغ: ${currency(receipt.amount)}`,
+      `طريقة الدفع: ${receipt.method}`,
+      `التاريخ: ${receipt.date}`,
+    ].join("\n");
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: `إيصال ${receipt.receiptNumber}`, text });
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      }
+      showReportNotice("تم تجهيز الإيصال للمشاركة");
+    } catch {
+      showReportNotice("تعذرت مشاركة الإيصال");
+    }
   };
   const copyFinancialSummary = async () => {
     try {
@@ -7510,7 +7683,7 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
   };
   const downloadFinancialCsv = () => {
     const csvRows = [
-      ["اللاعب", "الفريق", "الفئة", "نوع الاشتراك", "المطلوب", "المدفوع", "المتبقي", "الحالة"],
+      ["اللاعب", "الفريق", "الفئة", "نوع الاشتراك", "إجمالي الاشتراك", "الخصومات", "المنح", "الصافي المطلوب", "المدفوع", "المتبقي", "الحالة"],
       ...playerFinanceRows.map((player) => {
         const team = helpers.teamById[player.teamId];
         const group = helpers.groupById[team?.ageGroupId];
@@ -7519,6 +7692,9 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
           team?.name || "بدون فريق",
           group?.name || "-",
           player.subscriptionType,
+          player.subscriptionTotal,
+          player.discount,
+          player.grant,
           player.due,
           player.paid,
           player.remaining,
@@ -7526,6 +7702,19 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
         ];
       }),
     ];
+    csvRows.push([]);
+    csvRows.push(["رقم الإيصال", "اللاعب", "التاريخ", "المبلغ", "طريقة الدفع", "المصدر", "ملاحظة"]);
+    filteredPayments.forEach((payment) => {
+      csvRows.push([
+        receiptNumberForPayment(payment, data.payments),
+        helpers.playerById[payment.playerId]?.name || "لاعب غير معروف",
+        payment.date || "-",
+        payment.amount || 0,
+        paymentMethodLabel(payment),
+        payment.source === "attendance" ? "من التحضير" : "تسجيل يدوي",
+        payment.note || "-",
+      ]);
+    });
     csvRows.push([]);
     csvRows.push(["المصروف", "التصنيف", "المبلغ", "التاريخ", "طريقة الدفع", "المورد", "ملاحظة"]);
     filteredExpenses.forEach((expense) => {
@@ -7562,6 +7751,9 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
         team?.name || "بدون فريق",
         group?.name || "-",
         player.subscriptionType || "-",
+        currency(player.subscriptionTotal),
+        currency(player.discount),
+        currency(player.grant),
         currency(player.due),
         currency(player.paid),
         currency(player.remaining),
@@ -7579,10 +7771,12 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
     const paymentRows = [...filteredPayments]
       .sort((a, b) => String(b.date).localeCompare(String(a.date)))
       .map((payment) => [
+        receiptNumberForPayment(payment, data.payments),
         payment.date || "-",
         helpers.playerById[payment.playerId]?.name || "لاعب غير معروف",
         currency(payment.amount),
-        payment.source === "attendance" ? "من التحضير" : payment.method || "-",
+        paymentMethodLabel(payment),
+        payment.source === "attendance" ? "من التحضير" : "تسجيل يدوي",
         payment.note || "-",
       ]);
     const expenseRows = [...filteredExpenses]
@@ -7605,14 +7799,16 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
         { label: "المحصّل", value: currency(collected) },
         { label: "المصروفات", value: currency(totalExpenses) },
         { label: "الصافي", value: currency(netRevenue) },
-        { label: "المتوقع", value: currency(expected) },
+        { label: "إجمالي الاشتراكات", value: currency(grossSubscriptions) },
+        { label: "الخصومات والمنح", value: currency(totalDiscounts + totalGrants) },
+        { label: "الصافي المطلوب", value: currency(expected) },
         { label: "المتبقي", value: currency(remaining) },
         { label: "نسبة التحصيل", value: `${collectionRate}%` },
       ],
       sections: [
-        reportTable("كشف حساب اللاعبين", ["اللاعب", "الفريق", "الفئة", "الاشتراك", "المطلوب", "المدفوع", "المتبقي", "الحالة"], playerRows),
+        reportTable("كشف حساب اللاعبين", ["اللاعب", "الفريق", "الفئة", "الاشتراك", "إجمالي الاشتراك", "الخصم", "المنحة", "الصافي", "المدفوع", "المتبقي", "الحالة"], playerRows),
         reportTable("المتأخرات", ["اللاعب", "الفريق", "المبلغ المتبقي", "الحالة"], debtRows, "لا توجد متأخرات في الفترة المحددة."),
-        reportTable("سجل الدفعات", ["التاريخ", "اللاعب", "المبلغ", "المصدر", "الملاحظة"], paymentRows, "لا توجد دفعات في الفترة المحددة."),
+        reportTable("سجل الدفعات والإيصالات", ["رقم الإيصال", "التاريخ", "اللاعب", "المبلغ", "طريقة الدفع", "المصدر", "الملاحظة"], paymentRows, "لا توجد دفعات في الفترة المحددة."),
         reportTable("سجل المصروفات", ["التاريخ", "المصروف", "التصنيف", "المبلغ", "الطريقة", "المورد", "الملاحظة"], expenseRows, "لا توجد مصروفات في الفترة المحددة."),
       ],
       note: riskLabel,
@@ -7661,7 +7857,9 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
       player.name,
       player.teamName,
       player.groupName,
-      currency(player.monthlyFee),
+      currency(player.subscriptionTotal),
+      currency(player.discount + player.grant),
+      currency(player.netDue),
       currency(player.dailyDue),
       currency(player.paid),
       currency(player.remaining),
@@ -7681,7 +7879,7 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
       sections: [
         reportTable(
           "تحصيل اللاعبين الحاضرين غير المسددين بالكامل",
-          ["اللاعب", "الفريق", "الفئة", "الاشتراك", "حصة اليوم", "المدفوع", "المتبقي", "الحالة"],
+          ["اللاعب", "الفريق", "الفئة", "إجمالي الاشتراك", "الخصم/المنحة", "الصافي", "حصة اليوم", "المدفوع", "المتبقي", "الحالة"],
           playerRows,
           "لا توجد سجلات حضور محتسبة لهذا اليوم.",
         ),
@@ -7757,8 +7955,18 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
         </article>
         <article>
           <Wallet size={18} />
-          <span>المتوقع</span>
+          <span>الصافي المطلوب</span>
           <strong>{currency(expected)}</strong>
+        </article>
+        <article>
+          <BadgeCheck size={18} />
+          <span>إجمالي الاشتراكات</span>
+          <strong>{currency(grossSubscriptions)}</strong>
+        </article>
+        <article>
+          <Medal size={18} />
+          <span>الخصومات والمنح</span>
+          <strong>{currency(totalDiscounts + totalGrants)}</strong>
         </article>
         <article>
           <Bell size={18} />
@@ -8047,7 +8255,9 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
                       <b className={`ledger-status status-${player.status}`}>{player.status}</b>
                     </div>
                     <div className="finance-ledger-money">
-                      <span>الاشتراك <b>{currency(player.monthlyFee)}</b></span>
+                      <span>إجمالي الاشتراك <b>{currency(player.subscriptionTotal)}</b></span>
+                      <span>الخصم/المنحة <b>{currency(player.discount + player.grant)}</b></span>
+                      <span>الصافي <b>{currency(player.netDue)}</b></span>
                       <span>حصة اليوم <b>{currency(player.dailyDue)}</b></span>
                       <span>المدفوع <b>{currency(player.paid)}</b></span>
                       <span>المتبقي <b>{currency(player.remaining)}</b></span>
@@ -8118,6 +8328,14 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
               </div>
               <Users size={20} />
             </div>
+            <div className="finance-ledger-money">
+              <span>إجمالي الاشتراكات <b>{currency(grossSubscriptions)}</b></span>
+              <span>الخصومات <b>{currency(totalDiscounts)}</b></span>
+              <span>المنح <b>{currency(totalGrants)}</b></span>
+              <span>الصافي المطلوب <b>{currency(expected)}</b></span>
+              <span>المدفوع <b>{currency(collected)}</b></span>
+              <span>المتبقي <b>{currency(remaining)}</b></span>
+            </div>
             <div className="finance-player-ledger">
               {playerFinanceRows.length === 0 && <div className="finance-empty">لا يوجد لاعبون مطابقون للفلتر.</div>}
               {playerFinanceRows.map((player) => {
@@ -8134,7 +8352,10 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
                       <b className={`ledger-status status-${player.status}`}>{player.status}</b>
                     </div>
                     <div className="finance-ledger-money">
-                      <span>المطلوب <b>{currency(player.due)}</b></span>
+                      <span>إجمالي الاشتراك <b>{currency(player.subscriptionTotal)}</b></span>
+                      <span>الخصومات <b>{currency(player.discount)}</b></span>
+                      <span>المنح <b>{currency(player.grant)}</b></span>
+                      <span>الصافي المطلوب <b>{currency(player.due)}</b></span>
                       <span>المدفوع <b>{currency(player.paid)}</b></span>
                       <span>المتبقي <b>{currency(player.remaining)}</b></span>
                     </div>
@@ -8183,20 +8404,51 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
           <article className="finance-chart-card wide">
             <div className="finance-card-head">
               <div>
-                <span>آخر الدفعات</span>
-                <strong>{filteredPayments.length} عملية</strong>
+                <span>الإيصالات والدفعات</span>
+                <strong>{visiblePayments.length} عملية</strong>
               </div>
               <ClipboardList size={20} />
+            </div>
+            <div className="payment-filter-row">
+              <button className={paymentListFilter === "all" ? "active" : ""} type="button" onClick={() => setPaymentListFilter("all")}>
+                الكل
+              </button>
+              <button className={paymentListFilter === "transfers" ? "active" : ""} type="button" onClick={() => setPaymentListFilter("transfers")}>
+                الحوالات فقط
+              </button>
+              <button className={paymentListFilter === "cash" ? "active" : ""} type="button" onClick={() => setPaymentListFilter("cash")}>
+                النقدي فقط
+              </button>
+            </div>
+            <div className="finance-ledger-money">
+              <span>إجمالي الحوالات <b>{currency(transferPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0))}</b></span>
+              <span>إجمالي النقدي <b>{currency(cashPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0))}</b></span>
+              <span>عدد الإيصالات <b>{filteredPayments.length}</b></span>
             </div>
             <div className="finance-payment-list">
               {recentPayments.length === 0 && <div className="finance-empty">لا توجد دفعات في الفترة المختارة.</div>}
               {recentPayments.map((payment) => {
                 const player = helpers.playerById[payment.playerId];
+                const receiptNumber = receiptNumberForPayment(payment, data.payments);
                 return (
                   <div key={payment.id}>
                     <div>
                       <strong>{player?.name || "لاعب غير معروف"}</strong>
-                      <span>{payment.date} - {payment.source === "attendance" ? "من التحضير" : payment.method}</span>
+                      <span>{receiptNumber} - {payment.date} - {payment.source === "attendance" ? "من التحضير" : "تسجيل يدوي"} - {paymentMethodLabel(payment)}</span>
+                      <div className="receipt-action-row">
+                        <button type="button" onClick={() => printReceipt(payment)}>
+                          <ClipboardList size={14} />
+                          طباعة
+                        </button>
+                        <button type="button" onClick={() => printReceipt(payment)}>
+                          <Download size={14} />
+                          حفظ PDF
+                        </button>
+                        <button type="button" onClick={() => shareReceipt(payment)}>
+                          <Share2 size={14} />
+                          مشاركة
+                        </button>
+                      </div>
                     </div>
                     <b>{currency(payment.amount)}</b>
                   </div>
@@ -8473,15 +8725,31 @@ function Community({ data, addPost }) {
 }
 
 function PaymentForm({ players, onAddPayment, title }) {
+  const [isTransfer, setIsTransfer] = useState(false);
+  const [formMessage, setFormMessage] = useState("");
+  const handleSubmit = (event) => {
+    setFormMessage("");
+    const result = onAddPayment?.(event);
+    if (result?.message) setFormMessage(result.message);
+    if (result?.ok) setIsTransfer(false);
+  };
+
   return (
-    <form className="panel form-panel" onSubmit={onAddPayment}>
+    <form className="panel form-panel" onSubmit={handleSubmit}>
       <FormTitle icon={CircleDollarSign} title={title} />
       <select name="playerId" required>
         {players.map((player) => (
           <option key={player.id} value={player.id}>{player.name}</option>
         ))}
       </select>
-      <input name="amount" type="number" min="0" placeholder="المبلغ المدفوع" required />
+      <div className="payment-amount-row">
+        <input name="amount" type="number" min="0" placeholder="المبلغ المدفوع" />
+        <label className={`transfer-chip ${isTransfer ? "active" : ""}`} title="تحديد الدفعة كحوالة">
+          <input name="isTransfer" type="checkbox" checked={isTransfer} onChange={(event) => setIsTransfer(event.target.checked)} />
+          <Send size={15} />
+          حوالة
+        </label>
+      </div>
       <input name="date" type="date" defaultValue={today} required />
       <select name="method" required>
         <option>نقد</option>
@@ -8497,6 +8765,7 @@ function PaymentForm({ players, onAddPayment, title }) {
         <Plus size={18} />
         حفظ الدفعة
       </button>
+      {formMessage && <p className="finance-report-notice">{formMessage}</p>}
     </form>
   );
 }

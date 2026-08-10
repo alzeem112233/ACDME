@@ -146,7 +146,11 @@ html[data-theme="dark"] .finance-forecast-card div {
 }
 
 html[data-theme="dark"] .account-info-row,
-html[data-theme="dark"] .account-password-box {
+html[data-theme="dark"] .account-password-box,
+html[data-theme="dark"] .transfer-chip,
+html[data-theme="dark"] .payment-filter-row button,
+html[data-theme="dark"] .receipt-action-row button,
+html[data-theme="dark"] .attendance-payment-inline .transfer-toggle {
   background: rgba(255, 255, 255, 0.045);
   border-color: var(--line);
 }
@@ -154,7 +158,11 @@ html[data-theme="dark"] .account-password-box {
 html[data-theme="dark"] .account-info-row strong,
 html[data-theme="dark"] .account-profile-form label,
 html[data-theme="dark"] .account-password-head,
-html[data-theme="dark"] .account-profile-message {
+html[data-theme="dark"] .account-profile-message,
+html[data-theme="dark"] .transfer-chip,
+html[data-theme="dark"] .payment-filter-row button,
+html[data-theme="dark"] .receipt-action-row button,
+html[data-theme="dark"] .attendance-payment-inline .transfer-toggle {
   color: var(--ink);
 }
 
@@ -5128,7 +5136,7 @@ html[data-theme="dark"] .player-card-actions button {
 
 .attendance-payment-inline {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) auto;
+  grid-template-columns: 20px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
   border-radius: 14px;
@@ -5158,6 +5166,20 @@ html[data-theme="dark"] .player-card-actions button {
   padding: 0 12px;
   font-size: 12px;
   font-weight: 900;
+}
+
+.attendance-payment-inline .transfer-toggle {
+  width: 38px;
+  padding: 0;
+  background: #f8fafb;
+  color: #111a4f;
+  border: 1px solid rgba(189, 139, 4, 0.24);
+}
+
+.attendance-payment-inline .transfer-toggle.active {
+  background: #157347;
+  border-color: #157347;
+  color: #fff;
 }
 
 .attendance-payment-inline button:disabled,
@@ -5524,6 +5546,69 @@ html[data-theme="dark"] .player-card-actions button {
 
 .finance-report-actions .csv-export-button {
   background: #bd8b04;
+}
+
+.payment-amount-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.transfer-chip {
+  min-height: 42px;
+  border-radius: 10px;
+  border: 1px solid #d8dde5;
+  background: #f8fafb;
+  color: #111a4f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.transfer-chip input {
+  display: none;
+}
+
+.transfer-chip.active,
+.payment-filter-row button.active {
+  background: #157347;
+  border-color: #157347;
+  color: #fff;
+}
+
+.payment-filter-row,
+.receipt-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.payment-filter-row button,
+.receipt-action-row button {
+  min-height: 32px;
+  border-radius: 999px;
+  border: 1px solid #d8dde5;
+  background: #f8fafb;
+  color: #111a4f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.receipt-action-row {
+  margin-top: 8px;
 }
 
 .finance-report-notice {
