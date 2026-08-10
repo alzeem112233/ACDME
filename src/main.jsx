@@ -959,7 +959,79 @@ function reportTable(title, headers, rows, emptyText = "لا توجد بيانا
   `;
 }
 
-function buildPrintReportHtml({ title, subtitle, academyName, logo, cards = [], sections = [], note = "" }) {
+function reportProgressChart(title, percent, caption = "", detail = "") {
+  const safePercent = Math.max(0, Math.min(100, Number(percent || 0)));
+  return `
+    <article class="report-chart-card">
+      <div class="report-chart-head">
+        <h2>${escapeHtml(title)}</h2>
+        <strong>${safePercent}%</strong>
+      </div>
+      <div class="report-progress-ring" style="--ring: ${safePercent}%">
+        <b>${safePercent}%</b>
+      </div>
+      ${caption ? `<p>${escapeHtml(caption)}</p>` : ""}
+      ${detail ? `<small>${escapeHtml(detail)}</small>` : ""}
+    </article>
+  `;
+}
+
+function reportBarChart(title, items = [], emptyText = "لا توجد بيانات للرسم البياني.") {
+  const visibleItems = items.filter((item) => Number(item.value || 0) > 0).slice(0, 10);
+  const maxValue = Math.max(...visibleItems.map((item) => Number(item.value || 0)), 1);
+  return `
+    <article class="report-chart-card">
+      <div class="report-chart-head">
+        <h2>${escapeHtml(title)}</h2>
+        <strong>${visibleItems.length}</strong>
+      </div>
+      <div class="report-bars">
+        ${
+          visibleItems.length
+            ? visibleItems.map((item) => `
+                <div>
+                  <span>${escapeHtml(item.label)}</span>
+                  <b>${escapeHtml(item.display || currency(item.value))}</b>
+                  <i style="--fill: ${Math.max(6, Math.round((Number(item.value || 0) / maxValue) * 100))}%; --tone: ${escapeHtml(item.color || "#bd8b04")}"></i>
+                </div>
+              `).join("")
+            : `<p>${escapeHtml(emptyText)}</p>`
+        }
+      </div>
+    </article>
+  `;
+}
+
+function reportSplitChart(title, items = [], emptyText = "لا توجد بيانات للتوزيع.") {
+  const visibleItems = items.filter((item) => Number(item.value || 0) > 0);
+  const total = visibleItems.reduce((sum, item) => sum + Number(item.value || 0), 0);
+  return `
+    <article class="report-chart-card">
+      <div class="report-chart-head">
+        <h2>${escapeHtml(title)}</h2>
+        <strong>${escapeHtml(total ? String(total) : "")}</strong>
+      </div>
+      <div class="report-split-list">
+        ${
+          visibleItems.length
+            ? visibleItems.map((item) => {
+                const fill = Math.round((Number(item.value || 0) / Math.max(total, 1)) * 100);
+                return `
+                  <div>
+                    <span>${escapeHtml(item.label)}</span>
+                    <b>${escapeHtml(item.display || item.value)}</b>
+                    <i style="--fill: ${fill}%; --tone: ${escapeHtml(item.color || "#17207c")}"></i>
+                  </div>
+                `;
+              }).join("")
+            : `<p>${escapeHtml(emptyText)}</p>`
+        }
+      </div>
+    </article>
+  `;
+}
+
+function buildPrintReportHtml({ title, subtitle, academyName, logo, cards = [], charts = [], sections = [], note = "" }) {
   return `<!doctype html>
 <html lang="ar" dir="rtl">
   <head>
@@ -1052,10 +1124,101 @@ function buildPrintReportHtml({ title, subtitle, academyName, logo, cards = [], 
         margin-top: 12px;
         page-break-inside: avoid;
       }
-      .report-section h2 {
+      .report-section h2,
+      .report-chart-card h2 {
         color: #111a4f;
         font-size: 17px;
         margin: 0 0 10px;
+      }
+      .report-chart-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+      .report-chart-card {
+        border: 1px solid #e7ebf2;
+        border-radius: 18px;
+        background: #fff;
+        padding: 14px;
+        page-break-inside: avoid;
+      }
+      .report-chart-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .report-chart-head strong {
+        color: #157347;
+        font-size: 18px;
+      }
+      .report-progress-ring {
+        width: 118px;
+        height: 118px;
+        border-radius: 999px;
+        background: conic-gradient(#157347 var(--ring), #eef1f5 0);
+        display: grid;
+        place-items: center;
+        margin: 8px auto;
+        position: relative;
+      }
+      .report-progress-ring::before {
+        content: "";
+        position: absolute;
+        inset: 14px;
+        border-radius: inherit;
+        background: #fff;
+        border: 1px solid #eef1f5;
+      }
+      .report-progress-ring b {
+        position: relative;
+        color: #111a79;
+        font-size: 22px;
+      }
+      .report-chart-card p,
+      .report-chart-card small,
+      .report-bars p,
+      .report-split-list p {
+        color: #6b7280;
+        font-size: 11px;
+        font-weight: 800;
+        line-height: 1.6;
+        margin: 6px 0 0;
+      }
+      .report-bars,
+      .report-split-list {
+        display: grid;
+        gap: 8px;
+      }
+      .report-bars div,
+      .report-split-list div {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 5px 10px;
+        align-items: center;
+      }
+      .report-bars span,
+      .report-split-list span {
+        color: #25304a;
+        font-size: 11px;
+        font-weight: 900;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .report-bars b,
+      .report-split-list b {
+        color: #6b7280;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+      .report-bars i,
+      .report-split-list i {
+        grid-column: 1 / -1;
+        height: 8px;
+        border-radius: 999px;
+        background: linear-gradient(90deg, var(--tone) var(--fill), #edf0f4 0);
       }
       table {
         width: 100%;
@@ -1104,7 +1267,7 @@ function buildPrintReportHtml({ title, subtitle, academyName, logo, cards = [], 
       @media print {
         body { background: #fff; }
         .report-page { max-width: none; padding: 0; }
-        .report-section, .report-card { box-shadow: none; }
+        .report-section, .report-card, .report-chart-card { box-shadow: none; }
       }
     </style>
   </head>
@@ -1126,6 +1289,7 @@ function buildPrintReportHtml({ title, subtitle, academyName, logo, cards = [], 
           </article>
         `).join("")}
       </section>
+      ${charts.length ? `<section class="report-chart-grid">${charts.join("")}</section>` : ""}
       ${sections.join("")}
       ${note ? `<div class="report-note">${escapeHtml(note)}</div>` : ""}
       <footer class="report-footer">تم إنشاء التقرير من منصة إدارة الأكاديمية - ${escapeHtml(new Date().toLocaleDateString("ar-YE"))}</footer>
@@ -7772,6 +7936,30 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
   const recentExpenses = [...filteredExpenses].sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 8);
   const transferPayments = filteredPayments.filter((payment) => paymentKind(payment) === "transfer");
   const cashPayments = filteredPayments.filter((payment) => paymentKind(payment) === "cash");
+  const transferPaymentsSorted = [...transferPayments].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const transferTotal = transferPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  const transferAverage = Math.round(transferTotal / Math.max(transferPayments.length, 1));
+  const transferAttendanceTotal = transferPayments
+    .filter((payment) => payment.source === "attendance")
+    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  const transferManualTotal = Math.max(transferTotal - transferAttendanceTotal, 0);
+  const transferByDay = Object.values(transferPayments.reduce((map, payment) => {
+    const date = payment.date || "بدون تاريخ";
+    map[date] = map[date] || { label: date, value: 0 };
+    map[date].value += Number(payment.amount || 0);
+    return map;
+  }, {})).sort((a, b) => String(b.label).localeCompare(String(a.label)));
+  const transferByPlayer = Object.values(transferPayments.reduce((map, payment) => {
+    const player = helpers.playerById[payment.playerId];
+    const playerName = player?.name || "لاعب غير معروف";
+    map[playerName] = map[playerName] || { label: playerName, value: 0 };
+    map[playerName].value += Number(payment.amount || 0);
+    return map;
+  }, {})).sort((a, b) => b.value - a.value);
+  const transferSourceSummary = [
+    { label: "حوالات من التحضير", value: transferAttendanceTotal, color: "#157347", display: currency(transferAttendanceTotal) },
+    { label: "حوالات يدوية", value: transferManualTotal, color: "#17207c", display: currency(transferManualTotal) },
+  ];
   const visiblePayments =
     paymentListFilter === "transfers" ? transferPayments : paymentListFilter === "cash" ? cashPayments : filteredPayments;
   const recentPayments = [...visiblePayments].sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 12);
@@ -7853,6 +8041,7 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
     { id: "players", label: "كشف اللاعبين" },
     { id: "debts", label: "المتأخرات" },
     { id: "payments", label: "الإيصالات" },
+    { id: "transfers", label: "الحوالات" },
     { id: "expenses", label: "المصروفات" },
     { id: "kits", label: "الطقم الرياضي" },
   ];
@@ -7872,6 +8061,19 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
   const attendanceLate = filteredAttendance.filter((row) => row.status === "متأخر").length;
   const attendanceAbsent = filteredAttendance.filter((row) => row.status === "غائب").length;
   const attendanceCollected = attendancePayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  const financialReportCharts = [
+    reportProgressChart("نسبة التحصيل", collectionRate, "النسبة من صافي المطلوب", `المتبقي ${currency(remaining)}`),
+    reportBarChart("آخر 6 أشهر", monthSeries.map((month) => ({ label: month.label, value: month.value, display: currency(month.value), color: "#157347" }))),
+    reportBarChart("التحصيل حسب الفئات", groupRevenue.map((group) => ({ label: group.name, value: group.value, display: currency(group.value), color: "#bd8b04" }))),
+    reportBarChart("طرق الدفع", methodSummary.map((method) => ({ label: method.label, value: method.value, display: currency(method.value), color: method.label.includes("حوالة") ? "#157347" : "#17207c" }))),
+    reportSplitChart("حالة الاشتراكات", statusSummary.map((item) => ({ ...item, display: `${item.value} لاعب` }))),
+  ];
+  const transferReportCharts = [
+    reportProgressChart("نسبة الحوالات من التحصيل", Math.round((transferTotal / Math.max(rawCollected, 1)) * 100), "الحوالات مقارنة بإجمالي المدفوعات الفعلية", `إجمالي الحوالات ${currency(transferTotal)}`),
+    reportBarChart("الحوالات حسب اليوم", transferByDay.map((item) => ({ ...item, display: currency(item.value), color: "#157347" }))),
+    reportBarChart("أعلى اللاعبين بالحوالات", transferByPlayer.map((item) => ({ ...item, display: currency(item.value), color: "#bd8b04" }))),
+    reportSplitChart("مصدر الحوالات", transferSourceSummary),
+  ];
   const reportSummaryText = [
     `التقرير المالي - ${data.academy.name || "الأكاديمية الرياضية"}`,
     `الفترة: ${reportPeriodLabel}`,
@@ -8104,6 +8306,7 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
         { label: "المتبقي", value: currency(remaining) },
         { label: "نسبة التحصيل", value: `${collectionRate}%` },
       ],
+      charts: financialReportCharts,
       sections: [
         reportTable("كشف حساب اللاعبين", ["اللاعب", "الفريق", "الفئة", "الاشتراك", "إجمالي الاشتراك", "الخصم", "المنحة", "الصافي", "المدفوع", "المتبقي", "الحالة"], playerRows),
         reportTable("المتأخرات", ["اللاعب", "الفريق", "المبلغ المتبقي", "الحالة"], debtRows, "لا توجد متأخرات في الفترة المحددة."),
@@ -8144,6 +8347,14 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
         { label: "غائب", value: attendanceAbsent },
         { label: "مبالغ التحضير", value: currency(attendanceCollected) },
       ],
+      charts: [
+        reportSplitChart("توزيع الحضور", [
+          { label: "حاضر", value: attendancePresent, color: "#157347" },
+          { label: "متأخر", value: attendanceLate, color: "#bd8b04" },
+          { label: "غائب", value: attendanceAbsent, color: "#b94a48" },
+        ]),
+        reportBarChart("تحصيل كل يوم", dailyCollectionRows.map((day) => ({ label: day.date, value: day.paid, display: currency(day.paid), color: "#157347" }))),
+      ],
       sections: [
         reportTable("كشف الحضور والانصراف بأسماء اللاعبين", ["التاريخ", "اللاعب", "الفريق", "الفئة", "الحالة", "الانصراف", "دفعة التحضير"], attendanceRows),
       ],
@@ -8174,6 +8385,14 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
         { label: "المفترض اليوم", value: currency(selectedDailyExpected) },
         { label: "المدفوع", value: currency(selectedDailyPaid) },
         { label: "المتبقي", value: currency(selectedDailyRemaining) },
+      ],
+      charts: [
+        reportProgressChart("نسبة سداد اليوم", Math.round((selectedDailyPaid / Math.max(selectedDailyExpected, 1)) * 100), "المدفوع من المفترض لهذا اليوم", `المتبقي ${currency(selectedDailyRemaining)}`),
+        reportSplitChart("حالات اللاعبين", [
+          { label: "مدفوع", value: selectedDailyRows.filter((player) => player.status === "مدفوع").length, color: "#157347" },
+          { label: "جزئي", value: selectedDailyRows.filter((player) => player.status === "جزئي").length, color: "#bd8b04" },
+          { label: "متأخر", value: selectedDailyRows.filter((player) => player.status === "متأخر").length, color: "#b94a48" },
+        ]),
       ],
       sections: [
         reportTable(
@@ -8206,12 +8425,136 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
         { label: "المتبقي", value: currency(kitRemaining) },
         { label: "عدد اللاعبين", value: kitRows.length },
       ],
+      charts: [
+        reportProgressChart("نسبة سداد الطقم", Math.round((kitCollected / Math.max(kitExpected, 1)) * 100), "المدفوع من إجمالي قيمة الأطقم", `المتبقي ${currency(kitRemaining)}`),
+        reportSplitChart("حالة الطقم", [
+          { label: "مدفوع", value: kitRows.filter((player) => player.kitPaid).length, color: "#157347" },
+          { label: "غير مدفوع", value: kitRows.filter((player) => !player.kitPaid && Number(player.kitFee || 0) > 0).length, color: "#b94a48" },
+          { label: "لا توجد قيمة", value: kitRows.filter((player) => Number(player.kitFee || 0) === 0).length, color: "#6b7280" },
+        ]),
+      ],
       sections: [
         reportTable("كشف الطقم الرياضي", ["اللاعب", "الفريق", "الفئة", "قيمة الطقم", "الحالة"], rows, "لا توجد بيانات طقم لهذه الفترة."),
       ],
       note: "قيمة الطقم تحدد من إدارة الفريق ويمكن تعديلها داخل ملف اللاعب.",
     }));
     showReportNotice(ok ? "تم فتح تقرير الطقم للطباعة PDF" : "تعذر فتح نافذة الطباعة");
+  };
+  const printPaymentsPdf = () => {
+    const paymentRows = [...visiblePayments]
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+      .map((payment) => {
+        const receipt = receiptDetails(payment);
+        return [
+          receipt.receiptNumber,
+          receipt.date,
+          receipt.playerName,
+          receipt.teamName,
+          receipt.groupName,
+          currency(receipt.amount),
+          receipt.method,
+          payment.source === "attendance" ? "من التحضير" : "تسجيل يدوي",
+          receipt.note,
+        ];
+      });
+    const ok = printReportHtml(buildPrintReportHtml({
+      title: paymentListFilter === "transfers" ? "تقرير الحوالات" : paymentListFilter === "cash" ? "تقرير الدفعات النقدية" : "تقرير الإيصالات والمدفوعات",
+      subtitle: `${reportPeriodLabel} - ${reportGroupLabel}`,
+      academyName: data.academy.name,
+      logo: data.academy.logo,
+      cards: [
+        { label: "عدد العمليات", value: visiblePayments.length },
+        { label: "إجمالي الدفعات", value: currency(visiblePayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0)) },
+        { label: "إجمالي الحوالات", value: currency(transferTotal) },
+        { label: "إجمالي النقدي", value: currency(cashPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0)) },
+      ],
+      charts: [
+        reportBarChart("طرق الدفع", methodSummary.map((method) => ({ label: method.label, value: method.value, display: currency(method.value), color: method.label.includes("حوالة") ? "#157347" : "#17207c" }))),
+        reportSplitChart("مصدر الدفعات", sourceSummary.map((source) => ({ ...source, display: currency(source.value) }))),
+      ],
+      sections: [
+        reportTable("تفاصيل الإيصالات", ["رقم الإيصال", "التاريخ", "اللاعب", "الفريق", "الفئة", "المبلغ", "طريقة الدفع", "المصدر", "الملاحظة"], paymentRows, "لا توجد دفعات في الفترة المحددة."),
+      ],
+      note: "يمكن حفظ هذا الكشف PDF من نافذة الطباعة أو إرساله للطابعة مباشرة.",
+    }));
+    showReportNotice(ok ? "تم فتح تقرير الإيصالات للطباعة PDF" : "تعذر فتح نافذة الطباعة");
+  };
+  const printTransfersPdf = () => {
+    const transferRows = transferPaymentsSorted.map((payment) => {
+      const receipt = receiptDetails(payment);
+      return [
+        receipt.receiptNumber,
+        receipt.date,
+        receipt.playerName,
+        receipt.teamName,
+        receipt.groupName,
+        currency(receipt.amount),
+        payment.source === "attendance" ? "من التحضير" : "تسجيل يدوي",
+        receipt.note,
+      ];
+    });
+    const ok = printReportHtml(buildPrintReportHtml({
+      title: "تقرير الحوالات المالية",
+      subtitle: `${reportPeriodLabel} - ${reportGroupLabel}`,
+      academyName: data.academy.name,
+      logo: data.academy.logo,
+      cards: [
+        { label: "إجمالي الحوالات", value: currency(transferTotal) },
+        { label: "عدد الحوالات", value: transferPayments.length },
+        { label: "متوسط الحوالة", value: currency(transferAverage) },
+        { label: "من التحضير", value: currency(transferAttendanceTotal) },
+        { label: "تسجيل يدوي", value: currency(transferManualTotal) },
+        { label: "نسبة الحوالات", value: `${Math.round((transferTotal / Math.max(rawCollected, 1)) * 100)}%` },
+      ],
+      charts: transferReportCharts,
+      sections: [
+        reportTable("كشف الحوالات", ["رقم الإيصال", "التاريخ", "اللاعب", "الفريق", "الفئة", "المبلغ", "المصدر", "الملاحظة"], transferRows, "لا توجد حوالات في الفترة المحددة."),
+      ],
+      note: "هذا التقرير يعرض الدفعات التي تم تعليمها كحوالة فقط.",
+    }));
+    showReportNotice(ok ? "تم فتح تقرير الحوالات للطباعة PDF" : "تعذر فتح نافذة الطباعة");
+  };
+  const printExpensesPdf = () => {
+    const expenseRows = [...filteredExpenses]
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+      .map((expense) => [
+        expense.date || "-",
+        expense.title || "-",
+        expense.category || "-",
+        currency(expense.amount),
+        expense.method || "-",
+        expense.vendor || "-",
+        expense.note || "-",
+      ]);
+    const ok = printReportHtml(buildPrintReportHtml({
+      title: "تقرير المصروفات",
+      subtitle: `${reportPeriodLabel} - ${reportGroupLabel}`,
+      academyName: data.academy.name,
+      logo: data.academy.logo,
+      cards: [
+        { label: "إجمالي المصروفات", value: currency(totalExpenses) },
+        { label: "عدد العمليات", value: filteredExpenses.length },
+        { label: "صافي الفترة", value: currency(netRevenue) },
+        { label: "المحصّل", value: currency(collected) },
+      ],
+      charts: [
+        reportBarChart("المصروفات حسب التصنيف", expenseCategorySummary.map((expense) => ({ label: expense.label, value: expense.value, display: currency(expense.value), color: "#b94a48" }))),
+      ],
+      sections: [
+        reportTable("سجل المصروفات", ["التاريخ", "المصروف", "التصنيف", "المبلغ", "الطريقة", "المورد", "الملاحظة"], expenseRows, "لا توجد مصروفات في الفترة المحددة."),
+      ],
+      note: "هذا التقرير مخصص للمصروفات المسجلة داخل الفترة المحددة.",
+    }));
+    showReportNotice(ok ? "تم فتح تقرير المصروفات للطباعة PDF" : "تعذر فتح نافذة الطباعة");
+  };
+  const printCurrentReportPdf = () => {
+    if (activeReportTab === "daily") return printDailyPdf();
+    if (activeReportTab === "payments") return printPaymentsPdf();
+    if (activeReportTab === "transfers") return printTransfersPdf();
+    if (activeReportTab === "expenses") return printExpensesPdf();
+    if (activeReportTab === "kits") return printKitPdf();
+    if (activeReportTab === "debts" || activeReportTab === "players" || activeReportTab === "overview") return printFinancialPdf();
+    return printFinancialPdf();
   };
 
   return (
@@ -8320,9 +8663,17 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
           </article>
         </div>
         <div className="finance-report-actions">
+          <button className="current-pdf-button" type="button" onClick={() => runReportAction(printCurrentReportPdf)} disabled={isReportBusy}>
+            <Download size={16} />
+            {isReportBusy ? "جاري التجهيز..." : "تصدير التقرير الحالي PDF"}
+          </button>
+          <button className="transfer-pdf-button" type="button" onClick={() => runReportAction(printTransfersPdf)} disabled={isReportBusy}>
+            <Send size={16} />
+            PDF الحوالات
+          </button>
           <button type="button" onClick={() => runReportAction(printFinancialPdf)} disabled={isReportBusy}>
             <CircleDollarSign size={16} />
-            {isReportBusy ? "جاري التجهيز..." : "PDF مالي"}
+            PDF مالي شامل
           </button>
           <button className="attendance-pdf-button" type="button" onClick={() => runReportAction(printAttendancePdf)} disabled={isReportBusy}>
             <CalendarCheck size={16} />
@@ -8774,6 +9125,98 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
                 <b>مجاني</b>
                 <small>{freePlayers} لاعب</small>
               </div>
+            </div>
+          </article>
+        </section>
+      )}
+
+      {activeReportTab === "transfers" && (
+        <section className="finance-report-grid">
+          <article className="finance-chart-card wide transfer-report-card">
+            <div className="finance-card-head">
+              <div>
+                <span>تقرير الحوالات المالية</span>
+                <strong>{currency(transferTotal)} / {transferPayments.length} حوالة</strong>
+              </div>
+              <Send size={20} />
+            </div>
+            <div className="finance-ledger-money">
+              <span>إجمالي الحوالات <b>{currency(transferTotal)}</b></span>
+              <span>عدد الحوالات <b>{transferPayments.length}</b></span>
+              <span>متوسط الحوالة <b>{currency(transferAverage)}</b></span>
+              <span>من التحضير <b>{currency(transferAttendanceTotal)}</b></span>
+              <span>تسجيل يدوي <b>{currency(transferManualTotal)}</b></span>
+              <span>نسبة الحوالات <b>{Math.round((transferTotal / Math.max(rawCollected, 1)) * 100)}%</b></span>
+            </div>
+            <button className="yellow-button" type="button" onClick={() => runReportAction(printTransfersPdf)} disabled={isReportBusy}>
+              <Download size={18} />
+              {isReportBusy ? "جاري التجهيز..." : "تصدير كشف الحوالات PDF"}
+            </button>
+            <div className="finance-payment-list">
+              {transferPaymentsSorted.length === 0 && <div className="finance-empty">لا توجد حوالات في الفترة المختارة.</div>}
+              {transferPaymentsSorted.slice(0, 16).map((payment) => {
+                const player = helpers.playerById[payment.playerId];
+                const receiptNumber = receiptNumberForPayment(payment, data.payments);
+                return (
+                  <div key={payment.id}>
+                    <div>
+                      <strong>{player?.name || "لاعب غير معروف"}</strong>
+                      <span>{receiptNumber} - {payment.date} - {payment.source === "attendance" ? "من التحضير" : "تسجيل يدوي"}</span>
+                      <div className="receipt-action-row">
+                        <button type="button" onClick={() => printReceipt(payment)}>
+                          <ClipboardList size={14} />
+                          إيصال
+                        </button>
+                        <button type="button" onClick={() => shareReceipt(payment)}>
+                          <Share2 size={14} />
+                          مشاركة
+                        </button>
+                      </div>
+                    </div>
+                    <b>{currency(payment.amount)}</b>
+                  </div>
+                );
+              })}
+            </div>
+          </article>
+
+          <article className="finance-chart-card">
+            <div className="finance-card-head">
+              <div>
+                <span>حسب اليوم</span>
+                <strong>{transferByDay.length} يوم</strong>
+              </div>
+              <CalendarCheck size={20} />
+            </div>
+            <div className="finance-group-bars">
+              {transferByDay.length === 0 && <p>لا توجد حوالات يومية.</p>}
+              {transferByDay.slice(0, 10).map((day) => (
+                <div key={day.label}>
+                  <span>{day.label}</span>
+                  <b>{currency(day.value)}</b>
+                  <i style={{ "--fill": `${Math.round((day.value / Math.max(...transferByDay.map((item) => item.value), 1)) * 100)}%`, "--tone": "#157347" }} />
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="finance-chart-card">
+            <div className="finance-card-head">
+              <div>
+                <span>حسب اللاعب</span>
+                <strong>أعلى الحوالات</strong>
+              </div>
+              <Users size={20} />
+            </div>
+            <div className="finance-group-bars">
+              {transferByPlayer.length === 0 && <p>لا توجد حوالات للاعبين.</p>}
+              {transferByPlayer.slice(0, 10).map((player) => (
+                <div key={player.label}>
+                  <span>{player.label}</span>
+                  <b>{currency(player.value)}</b>
+                  <i style={{ "--fill": `${Math.round((player.value / Math.max(...transferByPlayer.map((item) => item.value), 1)) * 100)}%`, "--tone": "#bd8b04" }} />
+                </div>
+              ))}
             </div>
           </article>
         </section>

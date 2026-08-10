@@ -5586,6 +5586,15 @@ html[data-theme="dark"] .player-card-actions button {
   background: #157347;
 }
 
+.finance-report-actions .current-pdf-button {
+  grid-column: 1 / -1;
+  background: linear-gradient(135deg, #101947, #17207c 58%, #15644a);
+}
+
+.finance-report-actions .transfer-pdf-button {
+  background: #157347;
+}
+
 .finance-report-actions .csv-export-button {
   background: #bd8b04;
 }
