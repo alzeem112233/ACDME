@@ -87,6 +87,7 @@ const STATUS_APPROVED = "مقبول";
 const STATUS_REJECTED = "مرفوض";
 const ROLE_SUPER_ADMIN = "سوبر أدمين";
 const ROLE_OWNER = "مالك أكاديمية";
+const ROLE_ADMIN = "Admin";
 const ROLE_COACH = "مدرب";
 const PERMISSION_FULL = "إدارة كاملة";
 const PERMISSION_ATTENDANCE_PLAYERS = "الحضور واللاعبين";
@@ -5447,6 +5448,7 @@ function CoachesSettings({ data, addAcademyCoach, toggleAcademyCoachStatus }) {
           <span>الدور *</span>
           <select name="role" defaultValue="مدرب" required>
             <option>مدرب</option>
+            <option>Admin</option>
             <option>مساعد مدرب</option>
             <option>إداري فريق</option>
             <option>مدرب رئيسي</option>
