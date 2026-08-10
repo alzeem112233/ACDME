@@ -1298,31 +1298,38 @@ function buildPrintReportHtml({ title, subtitle, academyName, logo, cards = [], 
 </html>`;
 }
 
-function printReportHtml(html) {
-  const frame = document.createElement("iframe");
-  frame.style.position = "fixed";
-  frame.style.inset = "auto 0 0 auto";
-  frame.style.width = "0";
-  frame.style.height = "0";
-  frame.style.border = "0";
-  frame.style.opacity = "0";
-  document.body.appendChild(frame);
-
-  const printWindow = frame.contentWindow;
-  const printDocument = printWindow?.document;
-  if (!printWindow || !printDocument) {
-    frame.remove();
-    return false;
+function printReportHtml(html, jobName = "QZ Academy Report") {
+  const nativePrinter = window.Capacitor?.Plugins?.QzPrint;
+  if (nativePrinter?.printHtml) {
+    nativePrinter.printHtml({ html, jobName }).catch((error) => {
+      logDeveloperError("native-print-report", error);
+    });
+    return true;
   }
 
-  printDocument.open();
-  printDocument.write(html);
-  printDocument.close();
-  window.setTimeout(() => {
-    printWindow.focus();
-    printWindow.print();
-    window.setTimeout(() => frame.remove(), 1200);
-  }, 450);
+  const printWindow = window.open("", "_blank");
+  if (printWindow) {
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+    window.setTimeout(() => {
+      printWindow.focus();
+      printWindow.print();
+    }, 500);
+    return true;
+  }
+
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.download = `qz-academy-report-${Date.now()}.html`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 30000);
   return true;
 }
 
@@ -8094,16 +8101,14 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
     setReportNotice(message);
     window.setTimeout(() => setReportNotice(""), 2400);
   };
-  const runReportAction = (action) => {
+  const runReportAction = async (action) => {
     if (isReportBusy) return;
     setIsReportBusy(true);
-    window.setTimeout(() => {
-      try {
-        action();
-      } finally {
-        setIsReportBusy(false);
-      }
-    }, 60);
+    try {
+      await action();
+    } finally {
+      window.setTimeout(() => setIsReportBusy(false), 250);
+    }
   };
   const receiptDetails = (payment) => {
     const player = helpers.playerById[payment.playerId];
