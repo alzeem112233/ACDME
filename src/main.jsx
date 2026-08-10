@@ -101,6 +101,9 @@ const LOCAL_ONLY_ACADEMY_KEYS = ["players", "attendance", "payments", "expenses"
 const DEFAULT_ATTENDANCE_PAYMENT = 500;
 const RENEWAL_PERIOD_DAYS = 29;
 const PLATFORM_RENEWAL_DAYS = RENEWAL_PERIOD_DAYS;
+const APP_RELEASE_VERSION = "QZ Academy Release 8";
+const BACKUP_FORMAT_VERSION = 8;
+const BACKUP_KDF_ITERATIONS = 250000;
 const SUPPORT_WHATSAPP_PHONE = normalizePhone(import.meta.env.VITE_SUPPORT_WHATSAPP_PHONE || "+967772227092");
 const footballPositionOptions = [
   { value: "حارس", label: "حارس" },
@@ -131,6 +134,7 @@ function normalizePhone(value = "") {
 }
 
 function friendlyNetworkError(error, fallback = "تعذر الاتصال بالسحابة الآن.") {
+  logDeveloperError("network-operation", error);
   const message = String(error?.message || error || "");
   if (/invalid api key|api key|jwt|unauthorized|401/i.test(message)) {
     return "إعدادات السحابة غير صحيحة. يجب تحديث رابط Supabase والمفتاح العام الصحيح حتى يعمل تسجيل الدخول وإنشاء الحساب أونلاين.";
@@ -140,7 +144,25 @@ function friendlyNetworkError(error, fallback = "تعذر الاتصال بال�
     return `${fallback} تحقق من الإنترنت ثم أعد المحاولة، وسيحاول التطبيق المزامنة تلقائيًا عند توفر الاتصال.`;
   }
 
-  return message || fallback;
+  return safeUserMessage(error, fallback);
+}
+
+function logDeveloperError(scope, error, extra = {}) {
+  if (typeof console !== "undefined") {
+    console.error(`[QZ:${scope}]`, error, extra);
+  }
+}
+
+function safeUserMessage(error, fallback = "تعذر إتمام العملية، يرجى المحاولة مرة أخرى.") {
+  const message = String(error?.message || error || "").trim();
+  if (!message) return fallback;
+  if (/sql|postgres|supabase|undefined|null|http\s*500|500|failed to fetch|typeerror|syntaxerror|jwt|rls|violates|duplicate key|foreign key|networkerror/i.test(message)) {
+    return fallback;
+  }
+  if (/^[A-Za-z0-9_ .:/?=&-]+$/.test(message)) {
+    return fallback;
+  }
+  return message;
 }
 
 function normalizeText(value = "") {
@@ -1130,10 +1152,113 @@ async function sha256Text(text) {
     .join("");
 }
 
-async function verifyBackupBlob(blob, filename) {
+function bytesToBase64(bytes) {
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(value = "") {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+async function deriveBackupKey(passphrase, saltBytes) {
+  const material = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(passphrase),
+    "PBKDF2",
+    false,
+    ["deriveKey"],
+  );
+  return crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt: saltBytes,
+      iterations: BACKUP_KDF_ITERATIONS,
+      hash: "SHA-256",
+    },
+    material,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+
+async function encryptBackupCore(coreBackupPayload, passphrase) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveBackupKey(passphrase, salt);
+  const plaintext = new TextEncoder().encode(JSON.stringify(coreBackupPayload));
+  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plaintext);
+  return {
+    app: "QZ ACADEMY",
+    backupType: "full-app-encrypted",
+    encrypted: true,
+    version: BACKUP_FORMAT_VERSION,
+    appVersion: APP_RELEASE_VERSION,
+    createdAt: coreBackupPayload.createdAt,
+    academyId: coreBackupPayload.academyId,
+    academyName: coreBackupPayload.academyName,
+    metadata: coreBackupPayload.metadata,
+    crypto: {
+      algorithm: "AES-GCM",
+      kdf: "PBKDF2",
+      hash: "SHA-256",
+      iterations: BACKUP_KDF_ITERATIONS,
+      salt: bytesToBase64(salt),
+      iv: bytesToBase64(iv),
+    },
+    payload: bytesToBase64(new Uint8Array(ciphertext)),
+  };
+}
+
+async function decryptBackupPayload(backup, passphrase) {
+  if (!backup?.encrypted) return backup;
+  if (!passphrase || String(passphrase).length < 6) {
+    throw new Error("BACKUP_PASSWORD_REQUIRED");
+  }
+  const salt = base64ToBytes(backup.crypto?.salt || "");
+  const iv = base64ToBytes(backup.crypto?.iv || "");
+  const ciphertext = base64ToBytes(backup.payload || "");
+  const key = await deriveBackupKey(passphrase, salt);
+  const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
+  return JSON.parse(new TextDecoder().decode(plaintext));
+}
+
+async function parseBackupFile(file, passphrase = "") {
+  const text = await readBackupText(file);
+  const backup = JSON.parse(text);
+  const decrypted = await decryptBackupPayload(backup, passphrase);
+  return { envelope: backup, backup: decrypted };
+}
+
+function backupMetadataFor(data, academyId, academyName) {
+  return {
+    appVersion: APP_RELEASE_VERSION,
+    backupFormatVersion: BACKUP_FORMAT_VERSION,
+    createdAt: new Date().toISOString(),
+    academyId,
+    academyName,
+    playersCount: (data.players || []).length,
+    paymentsCount: (data.payments || []).length,
+    attendanceCount: (data.attendance || []).length,
+    expensesCount: (data.expenses || []).length,
+  };
+}
+
+async function verifyBackupBlob(blob, filename, passphrase = "") {
   try {
     const text = await readBackupText(new File([blob], filename, { type: blob.type || "application/gzip" }));
-    const backup = JSON.parse(text);
+    const envelope = JSON.parse(text);
+    const backup = await decryptBackupPayload(envelope, passphrase);
     if (!backup.data || !backup.appState || backup.backupType !== "full-app") {
       return { ok: false, message: "تم إيقاف الحفظ: محتوى النسخة الاحتياطية غير مكتمل." };
     }
@@ -1861,7 +1986,7 @@ function App() {
       setCloudSyncState((prev) => ({ ...prev, saving: false, error: "", syncedAt: new Date().toISOString() }));
       return { ok: true, message: "تم رفع البيانات والتحقق من وجودها في السحابة." };
     } catch (error) {
-      const message = error.message || "تعذر رفع البيانات الآن. سيتم إعادة المحاولة تلقائيًا.";
+      const message = safeUserMessage(error, "تعذر رفع البيانات الآن. سيتم إعادة المحاولة تلقائيًا.");
       setCloudSyncState((prev) => ({ ...prev, saving: false, error: message }));
       return { ok: false, message };
     }
@@ -1920,7 +2045,7 @@ function App() {
           academyId: currentAcademyId,
           loaded: true,
           saving: false,
-          error: error.message || "تم التجديد على هذا الجهاز، وسيُرفع عند عودة الاتصال.",
+          error: safeUserMessage(error, "تم التجديد على هذا الجهاز، وسيُرفع عند عودة الاتصال."),
         }));
       }
     }
@@ -1982,7 +2107,8 @@ function App() {
       setCloudSyncState((prev) => ({ ...prev, academyId: "platform", loaded: true, saving: false, error: "", syncedAt: new Date().toISOString() }));
       return { ok: true, message: `تم تجديد الأكاديمية حتى ${renewalExpiresAt} لمدة ${PLATFORM_RENEWAL_DAYS} يوم.` };
     } catch (error) {
-      return { ok: false, message: error.message || "تم التجديد محليًا، وتعذر رفعه للسحابة الآن." };
+      logDeveloperError("renew-academy-from-platform", error);
+      return { ok: false, message: safeUserMessage(error, "تم التجديد محليًا، وتعذر رفعه للسحابة الآن.") };
     }
   };
 
@@ -2082,7 +2208,8 @@ function App() {
         })
         .catch((error) => {
           if (!isCancelled) {
-            setCloudSyncState({ academyId: "platform", loaded: true, saving: false, error: error.message || "تعذر تحميل بيانات السحابة.", syncedAt: "" });
+            logDeveloperError("load-platform-cloud-data", error);
+            setCloudSyncState({ academyId: "platform", loaded: true, saving: false, error: safeUserMessage(error, "تعذر تحميل بيانات السحابة."), syncedAt: "" });
           }
         });
 
@@ -2140,7 +2267,8 @@ function App() {
       })
       .catch((error) => {
         if (!isCancelled) {
-          setCloudSyncState({ academyId: currentAcademyId, loaded: true, saving: false, error: error.message || "تعذر تحميل بيانات الأكاديمية من السحابة.", syncedAt: "" });
+          logDeveloperError("load-academy-cloud-data", error);
+          setCloudSyncState({ academyId: currentAcademyId, loaded: true, saving: false, error: safeUserMessage(error, "تعذر تحميل بيانات الأكاديمية من السحابة."), syncedAt: "" });
         }
       });
 
@@ -2188,7 +2316,8 @@ function App() {
           setCloudSyncState((prev) => ({ ...prev, saving: false, error: "", syncedAt: new Date().toISOString() }));
         })
         .catch((error) => {
-          setCloudSyncState((prev) => ({ ...prev, saving: false, error: error.message || "تعذر حفظ بيانات الأكاديمية في السحابة." }));
+          logDeveloperError("save-academy-cloud-data", error);
+          setCloudSyncState((prev) => ({ ...prev, saving: false, error: safeUserMessage(error, "تعذر حفظ بيانات الأكاديمية في السحابة.") }));
         });
     }, 900);
 
@@ -2375,7 +2504,7 @@ function App() {
     } catch (error) {
       return {
         ok: false,
-        message: error.message || "تعذر إنشاء حساب دخول المدرب في السحابة. تحقق من الاتصال ثم أعد المحاولة.",
+        message: safeUserMessage(error, "تعذر إنشاء حساب دخول المدرب في السحابة. تحقق من الاتصال ثم أعد المحاولة."),
       };
     }
 
@@ -3363,24 +3492,31 @@ function App() {
     return { ok: true, message: "تم تحديث اسم المستخدم." };
   };
 
-  const exportLocalBackup = async () => {
+  const exportLocalBackup = async (passphrase = "") => {
     if (!currentAcademyId || isSuperAdmin) {
       return { ok: false, message: "النسخ الاحتياطي متاح داخل حساب الأكاديمية فقط." };
     }
+    if (!passphrase || String(passphrase).length < 6) {
+      return { ok: false, message: "أدخل كلمة مرور للنسخة الاحتياطية لا تقل عن 6 أحرف أو أرقام." };
+    }
 
     const academyData = normalizeAcademyData(academyDataById[currentAcademyId], session);
+    const academyName = academyData.academy.name || session?.academyName || "";
+    const metadata = backupMetadataFor(academyData, currentAcademyId, academyName);
     const allAcademies = {
       ...academyDataById,
       [currentAcademyId]: academyData,
     };
     const coreBackupPayload = {
       app: "QZ ACADEMY",
-      version: 4,
+      version: BACKUP_FORMAT_VERSION,
+      appVersion: APP_RELEASE_VERSION,
       backupType: "full-app",
-      createdAt: new Date().toISOString(),
+      createdAt: metadata.createdAt,
       academyId: currentAcademyId,
-      academyName: academyData.academy.name || session?.academyName || "",
+      academyName,
       ownerPhone: normalizePhone(session?.phone || academyData.academy.ownerPhone),
+      metadata,
       data: academyData,
       appState: {
         activeView,
@@ -3411,13 +3547,14 @@ function App() {
         note: "تستخدم هذه البصمة لاكتشاف تلف أو تعديل ملف النسخة الاحتياطية قبل الاسترداد.",
       },
     };
+    const encryptedBackupPayload = await encryptBackupCore(backupPayload, passphrase);
     const safeName = (backupPayload.academyName || "academy").replace(/[^\w\u0600-\u06FF-]+/g, "-");
-    const filename = `${safeName}-${today}.secure-acdme-backup.json.gz`;
+    const filename = `${safeName}-${today}.qzbackup.gz`;
     const saveResult = await saveGeneratedBlobFile(
       filename,
-      "نسخة احتياطية آمنة",
-      () => gzipText(JSON.stringify(backupPayload)),
-      verifyBackupBlob,
+      "نسخة احتياطية مشفرة",
+      () => gzipText(JSON.stringify(encryptedBackupPayload)),
+      (blob, savedFilename) => verifyBackupBlob(blob, savedFilename, passphrase),
     );
     if (saveResult.cancelled) {
       return { ok: false, message: "تم إلغاء حفظ النسخة الاحتياطية." };
@@ -3427,18 +3564,18 @@ function App() {
     }
     return {
       ok: true,
-      message: `تم اختيار المسار ثم حفظ نسخة احتياطية فعالة: ${saveResult.filename}. المسار: ${saveResult.location}.`,
+      message: `تم حفظ Backup كامل ومشفر: ${saveResult.filename}. اللاعبين: ${metadata.playersCount}، المدفوعات: ${metadata.paymentsCount}. المسار: ${saveResult.location}.`,
     };
   };
 
-  const importLocalBackup = async (file) => {
+  const importLocalBackup = async (file, passphrase = "") => {
     if (!currentAcademyId || isSuperAdmin) {
       return { ok: false, message: "استيراد النسخة الاحتياطية متاح داخل حساب الأكاديمية فقط." };
     }
 
     try {
-      const text = await readBackupText(file);
-      const backup = JSON.parse(text);
+      const parsed = await parseBackupFile(file, passphrase);
+      const backup = parsed.backup;
       if (backup.security?.checksum) {
         const { security, ...coreBackupPayload } = backup;
         const checksum = await sha256Text(JSON.stringify(coreBackupPayload));
@@ -3496,12 +3633,18 @@ function App() {
       });
       return {
         ok: true,
-        message: backup.security?.checksum
-          ? "تم التحقق من بصمة النسخة واستعادة بيانات التطبيق بأمان."
-          : "تم استيراد نسخة قديمة بدون بصمة تحقق. يفضل إنشاء نسخة احتياطية جديدة الآن.",
+        message: parsed.envelope?.encrypted
+          ? `تم فك تشفير النسخة واستعادة البيانات بأمان. تاريخ النسخة: ${readableDateTime(backup.metadata?.createdAt || backup.createdAt)}.`
+          : backup.security?.checksum
+            ? "تم التحقق من بصمة النسخة واستعادة بيانات التطبيق بأمان."
+            : "تم استيراد نسخة قديمة بدون تشفير أو بصمة تحقق. يفضل إنشاء نسخة احتياطية جديدة الآن.",
       };
-    } catch {
-      return { ok: false, message: "تعذر قراءة النسخة الاحتياطية. تأكد من اختيار الملف الصحيح." };
+    } catch (error) {
+      logDeveloperError("backup-restore", error);
+      if (String(error?.message || "").includes("BACKUP_PASSWORD_REQUIRED")) {
+        return { ok: false, message: "أدخل كلمة مرور النسخة الاحتياطية أولًا." };
+      }
+      return { ok: false, message: "تعذر قراءة النسخة الاحتياطية. تأكد من اختيار الملف وكلمة المرور." };
     }
   };
 
@@ -4153,7 +4296,8 @@ function PlatformDashboard({
       }
       setPasswordMessages((prev) => ({ ...prev, [rowKey]: result.message }));
     } catch (error) {
-      setPasswordMessages((prev) => ({ ...prev, [rowKey]: error.message || "تعذر تغيير كلمة السر." }));
+      logDeveloperError("platform-password-reset", error);
+      setPasswordMessages((prev) => ({ ...prev, [rowKey]: safeUserMessage(error, "تعذر تغيير كلمة السر.") }));
     } finally {
       setResettingRows((prev) => ({ ...prev, [rowKey]: false }));
     }
@@ -4170,7 +4314,8 @@ function PlatformDashboard({
       ]);
       setRequestsRefreshMessage(`تم تحديث الطلبات: ${Array.isArray(requests) ? requests.length : registrationRequests.length} طلب.`);
     } catch (error) {
-      setRequestsRefreshMessage(error.message || "تعذر تحديث الطلبات.");
+      logDeveloperError("refresh-registration-requests", error);
+      setRequestsRefreshMessage(safeUserMessage(error, "تعذر تحديث الطلبات."));
     } finally {
       setIsRefreshingRequests(false);
     }
@@ -4192,7 +4337,8 @@ function PlatformDashboard({
       })
       .catch((error) => {
         if (isMounted) {
-          setRequestsRefreshMessage(error.message || "تعذر تحديث الطلبات.");
+          logDeveloperError("auto-refresh-registration-requests", error);
+          setRequestsRefreshMessage(safeUserMessage(error, "تعذر تحديث الطلبات."));
         }
       })
       .finally(() => {
@@ -4247,7 +4393,8 @@ function PlatformDashboard({
       const result = await renewAcademyFromPlatform?.(academy.academyId);
       setRenewalMessages((prev) => ({ ...prev, [academy.academyId]: result?.message || "تم تنفيذ التجديد." }));
     } catch (error) {
-      setRenewalMessages((prev) => ({ ...prev, [academy.academyId]: error.message || "تعذر تنفيذ التجديد." }));
+      logDeveloperError("platform-renewal", error);
+      setRenewalMessages((prev) => ({ ...prev, [academy.academyId]: safeUserMessage(error, "تعذر تنفيذ التجديد.") }));
     } finally {
       setRenewingAcademies((prev) => ({ ...prev, [academy.academyId]: false }));
     }
@@ -5777,6 +5924,8 @@ function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBa
   const [formError, setFormError] = useState("");
   const [backupMessage, setBackupMessage] = useState("");
   const [isBackupBusy, setIsBackupBusy] = useState(false);
+  const [backupPassword, setBackupPassword] = useState("");
+  const [restorePassword, setRestorePassword] = useState("");
   const [syncMessage, setSyncMessage] = useState("");
   const [isManualSyncing, setIsManualSyncing] = useState(false);
 
@@ -5827,9 +5976,15 @@ function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBa
   const handleBackupExport = async () => {
     setBackupMessage("");
     setIsBackupBusy(true);
-    const result = await exportLocalBackup?.();
-    setBackupMessage(result?.message || "تم تنفيذ العملية.");
-    setIsBackupBusy(false);
+    try {
+      const result = await exportLocalBackup?.(backupPassword);
+      setBackupMessage(result?.message || "تم تنفيذ العملية.");
+    } catch (error) {
+      logDeveloperError("backup-export", error);
+      setBackupMessage(safeUserMessage(error, "تعذر إتمام النسخ الاحتياطي، يرجى المحاولة مرة أخرى."));
+    } finally {
+      setIsBackupBusy(false);
+    }
   };
   const handleBackupImport = async (event) => {
     const file = event.target.files?.[0];
@@ -5837,9 +5992,15 @@ function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBa
 
     setBackupMessage("");
     setIsBackupBusy(true);
-    const result = await importLocalBackup?.(file);
-    setBackupMessage(result?.message || "تم تنفيذ العملية.");
-    setIsBackupBusy(false);
+    try {
+      const result = await importLocalBackup?.(file, restorePassword);
+      setBackupMessage(result?.message || "تم تنفيذ العملية.");
+    } catch (error) {
+      logDeveloperError("backup-import", error);
+      setBackupMessage(safeUserMessage(error, "تعذر استعادة النسخة الاحتياطية، يرجى المحاولة مرة أخرى."));
+    } finally {
+      setIsBackupBusy(false);
+    }
     event.target.value = "";
   };
   const handleManualSync = async () => {
@@ -5874,20 +6035,43 @@ function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBa
         </section>
 
         <div className="backup-security-grid">
+          <span><LockKeyhole size={16} /> تشفير AES-GCM بكلمة مرور</span>
           <span><ShieldCheck size={16} /> بصمة تحقق SHA-256</span>
+          <span><ClipboardList size={16} /> تاريخ النسخة وإصدار التطبيق</span>
           <span><FolderOpen size={16} /> اختيار مسار الحفظ قبل إنشاء النسخة</span>
           <span><FileCheck2 size={16} /> فحص الملف قبل الحفظ وقبل الاسترداد</span>
+        </div>
+
+        <div className="backup-password-grid">
+          <label>
+            <span>كلمة مرور النسخة الجديدة</span>
+            <PasswordField
+              value={backupPassword}
+              onChange={(event) => setBackupPassword(event.target.value)}
+              placeholder="6 أحرف أو أرقام على الأقل"
+              autoComplete="new-password"
+            />
+          </label>
+          <label>
+            <span>كلمة مرور الاستعادة</span>
+            <PasswordField
+              value={restorePassword}
+              onChange={(event) => setRestorePassword(event.target.value)}
+              placeholder="أدخل كلمة مرور النسخة"
+              autoComplete="current-password"
+            />
+          </label>
         </div>
 
         <div className="backup-actions">
           <button className="yellow-button" type="button" onClick={handleBackupExport} disabled={isBackupBusy}>
             <Download size={18} />
-            اختيار المسار وإنشاء نسخة
+            {isBackupBusy ? "جاري تنفيذ العملية..." : "اختيار المسار وإنشاء نسخة"}
           </button>
           <label className={isBackupBusy ? "backup-import-button disabled" : "backup-import-button"}>
             <Upload size={18} />
             استيراد نسخة احتياطية
-            <input type="file" accept=".gz,.json,application/gzip,application/json" onChange={handleBackupImport} disabled={isBackupBusy} />
+            <input type="file" accept=".qzbackup,.gz,.json,application/gzip,application/json" onChange={handleBackupImport} disabled={isBackupBusy} />
           </label>
         </div>
 
@@ -6281,7 +6465,7 @@ function TeamProfile({ data, helpers, selectedTeamId, setSelectedTeamId }) {
   );
 }
 
-function Players({ data, helpers, addPlayer, togglePlayerStatus, setSelectedPlayerId, setActiveView }) {
+function Players({ data, helpers, addPlayer, togglePlayerStatus, setSelectedPlayerId, setActiveView, cloudSyncState }) {
   const [isAddingPlayer, setIsAddingPlayer] = useState(false);
   const [playerSearch, setPlayerSearch] = useState("");
   const [activeGroupFilter, setActiveGroupFilter] = useState("all");
@@ -6570,7 +6754,14 @@ function Players({ data, helpers, addPlayer, togglePlayerStatus, setSelectedPlay
           <span>{visiblePlayers.length}</span>
         </div>
 
-        {visiblePlayers.length === 0 && (
+        {!cloudSyncState?.loaded && (
+          <div className="players-loading-state">
+            <RefreshCw size={17} className="spin-icon" />
+            <span>جاري تحميل اللاعبين ومزامنة البيانات...</span>
+          </div>
+        )}
+
+        {cloudSyncState?.loaded && visiblePlayers.length === 0 && (
           <div className="players-empty-state">
             لا يوجد لاعبون مطابقون. أضف لاعبًا جديدًا أو غيّر الفلتر.
           </div>
@@ -7075,6 +7266,7 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
   const [activePaymentPlayerId, setActivePaymentPlayerId] = useState("");
   const [paymentDrafts, setPaymentDrafts] = useState({});
   const [transferDrafts, setTransferDrafts] = useState({});
+  const [isSavingAttendancePayment, setIsSavingAttendancePayment] = useState(false);
   const [attendanceSortMode, setAttendanceSortMode] = useState("ageAsc");
   const [attendanceSearch, setAttendanceSearch] = useState("");
   const [lastAttendanceAction, setLastAttendanceAction] = useState("");
@@ -7142,10 +7334,11 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
 
   const saveAttendancePayment = (event, player) => {
     event.preventDefault();
-    if (!isScheduledTrainingDay) return;
+    if (!isScheduledTrainingDay || isSavingAttendancePayment) return;
     const amount = Number(paymentDrafts[player.id] || DEFAULT_ATTENDANCE_PAYMENT);
     if (amount <= 0) return;
 
+    setIsSavingAttendancePayment(true);
     addPayment({
       playerId: player.id,
       amount,
@@ -7159,6 +7352,7 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
     });
     setActivePaymentPlayerId("");
     setLastAttendanceAction(`تم حفظ دفعة ${currency(amount)} للاعب ${player.name}`);
+    window.setTimeout(() => setIsSavingAttendancePayment(false), 250);
   };
 
   return (
@@ -7331,8 +7525,8 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
                   >
                     <Send size={14} />
                   </button>
-                  <button type="submit" disabled={!isPaymentOpen && Boolean(payment)}>
-                    {payment && !isPaymentOpen ? "تم الحفظ" : payment ? "تحديث" : "حفظ"}
+                  <button type="submit" disabled={isSavingAttendancePayment || (!isPaymentOpen && Boolean(payment))}>
+                    {isSavingAttendancePayment && isPaymentOpen ? "جاري الحفظ..." : payment && !isPaymentOpen ? "تم الحفظ" : payment ? "تحديث" : "حفظ"}
                   </button>
                   {payment && <small>{currency(payment.amount)} - {paymentMethodLabel(payment)}</small>}
                 </form>
@@ -7353,6 +7547,7 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
   const [selectedDailyDate, setSelectedDailyDate] = useState(today);
   const [paymentListFilter, setPaymentListFilter] = useState("all");
   const [reportNotice, setReportNotice] = useState("");
+  const [isReportBusy, setIsReportBusy] = useState(false);
   const monthOptions = Array.from(
     new Set([currentMonth, ...data.payments.map((payment) => String(payment.date || "").slice(0, 7)).filter(Boolean)]),
   ).sort((a, b) => b.localeCompare(a));
@@ -7603,6 +7798,17 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
   const showReportNotice = (message) => {
     setReportNotice(message);
     window.setTimeout(() => setReportNotice(""), 2400);
+  };
+  const runReportAction = (action) => {
+    if (isReportBusy) return;
+    setIsReportBusy(true);
+    window.setTimeout(() => {
+      try {
+        action();
+      } finally {
+        setIsReportBusy(false);
+      }
+    }, 60);
   };
   const receiptDetails = (payment) => {
     const player = helpers.playerById[payment.playerId];
@@ -8021,27 +8227,27 @@ function Reports({ data, helpers, addPayment, addExpense, deleteExpense }) {
           </article>
         </div>
         <div className="finance-report-actions">
-          <button type="button" onClick={printFinancialPdf}>
+          <button type="button" onClick={() => runReportAction(printFinancialPdf)} disabled={isReportBusy}>
             <CircleDollarSign size={16} />
-            PDF مالي
+            {isReportBusy ? "جاري التجهيز..." : "PDF مالي"}
           </button>
-          <button className="attendance-pdf-button" type="button" onClick={printAttendancePdf}>
+          <button className="attendance-pdf-button" type="button" onClick={() => runReportAction(printAttendancePdf)} disabled={isReportBusy}>
             <CalendarCheck size={16} />
             PDF حضور
           </button>
-          <button className="attendance-pdf-button" type="button" onClick={printDailyPdf}>
+          <button className="attendance-pdf-button" type="button" onClick={() => runReportAction(printDailyPdf)} disabled={isReportBusy}>
             <CalendarCheck size={16} />
             PDF يومي
           </button>
-          <button type="button" onClick={printKitPdf}>
+          <button type="button" onClick={() => runReportAction(printKitPdf)} disabled={isReportBusy}>
             <Trophy size={16} />
             PDF الطقم
           </button>
-          <button type="button" onClick={copyFinancialSummary}>
+          <button type="button" onClick={copyFinancialSummary} disabled={isReportBusy}>
             <ClipboardList size={16} />
             نسخ الملخص
           </button>
-          <button className="csv-export-button" type="button" onClick={downloadFinancialCsv}>
+          <button className="csv-export-button" type="button" onClick={() => runReportAction(downloadFinancialCsv)} disabled={isReportBusy}>
             <Send size={16} />
             تنزيل CSV
           </button>
@@ -8727,15 +8933,22 @@ function Community({ data, addPost }) {
 function PaymentForm({ players, onAddPayment, title }) {
   const [isTransfer, setIsTransfer] = useState(false);
   const [formMessage, setFormMessage] = useState("");
+  const [isSavingPayment, setIsSavingPayment] = useState(false);
   const handleSubmit = (event) => {
+    if (isSavingPayment) {
+      event.preventDefault();
+      return;
+    }
     setFormMessage("");
+    setIsSavingPayment(true);
     const result = onAddPayment?.(event);
     if (result?.message) setFormMessage(result.message);
     if (result?.ok) setIsTransfer(false);
+    window.setTimeout(() => setIsSavingPayment(false), 300);
   };
 
   return (
-    <form className="panel form-panel" onSubmit={handleSubmit}>
+    <form className="panel form-panel" onSubmit={handleSubmit} aria-busy={isSavingPayment}>
       <FormTitle icon={CircleDollarSign} title={title} />
       <select name="playerId" required>
         {players.map((player) => (
@@ -8761,9 +8974,9 @@ function PaymentForm({ players, onAddPayment, title }) {
         <option>متأخر</option>
       </select>
       <textarea name="note" placeholder="ملاحظة اختيارية" />
-      <button className="primary-button" type="submit">
+      <button className="primary-button" type="submit" disabled={isSavingPayment}>
         <Plus size={18} />
-        حفظ الدفعة
+        {isSavingPayment ? "جاري حفظ الدفع..." : "حفظ الدفعة"}
       </button>
       {formMessage && <p className="finance-report-notice">{formMessage}</p>}
     </form>

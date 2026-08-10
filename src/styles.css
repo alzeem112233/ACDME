@@ -53,6 +53,23 @@ body {
   transition: background 0.24s ease, color 0.24s ease;
 }
 
+button:disabled,
+label.disabled {
+  cursor: not-allowed;
+  opacity: 0.66;
+}
+
+[aria-busy="true"] {
+  cursor: wait;
+}
+
+[aria-busy="true"] button,
+[aria-busy="true"] input,
+[aria-busy="true"] select,
+[aria-busy="true"] textarea {
+  opacity: 0.78;
+}
+
 html[data-theme="dark"] body {
   background:
     radial-gradient(circle at 18% 4%, rgba(99, 214, 165, 0.16), transparent 28%),
@@ -911,6 +928,19 @@ button {
   flex: 0 0 auto;
 }
 
+.backup-password-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.backup-password-grid label {
+  display: grid;
+  gap: 7px;
+  color: #111a4f;
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .backup-path-note {
   color: var(--muted);
   font-size: 11px;
@@ -922,6 +952,10 @@ button {
 html[data-theme="dark"] .backup-security-grid span {
   background: rgba(255, 255, 255, 0.05);
   border-color: var(--line);
+  color: var(--ink);
+}
+
+html[data-theme="dark"] .backup-password-grid label {
   color: var(--ink);
 }
 
@@ -3323,7 +3357,8 @@ html[data-theme="dark"] .age-home-button {
   justify-items: start;
 }
 
-.players-empty-state {
+.players-empty-state,
+.players-loading-state {
   border: 1px dashed #d8dde5;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.76);
@@ -3332,6 +3367,13 @@ html[data-theme="dark"] .age-home-button {
   text-align: center;
   font-size: 12px;
   line-height: 1.7;
+}
+
+.players-loading-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
 
 .eyebrow {

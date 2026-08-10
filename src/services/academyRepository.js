@@ -287,7 +287,7 @@ export async function listRemoteAcademyData() {
   const { data, error } = await withWeakNetworkRetry(() =>
     supabase
       .from("academy_cloud_data")
-      .select("*")
+      .select("academy_id,payload,updated_at")
       .order("updated_at", { ascending: false }),
   );
 

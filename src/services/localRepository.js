@@ -8,9 +8,19 @@ export function readLocalData(key, fallback) {
 }
 
 export function writeLocalData(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch (error) {
+    console.error("[QZ:local-storage-write]", error, { key });
+    return false;
+  }
 }
 
 export function clearLocalData(key) {
-  localStorage.removeItem(key);
+  try {
+    localStorage.removeItem(key);
+  } catch (error) {
+    console.error("[QZ:local-storage-clear]", error, { key });
+  }
 }
