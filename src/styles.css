@@ -692,6 +692,32 @@ button {
   line-height: 1.8;
 }
 
+.otp-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px dashed rgba(17, 26, 79, 0.22);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 10px 12px;
+  direction: rtl;
+}
+
+.otp-preview span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.otp-preview strong {
+  direction: ltr;
+  color: var(--primary-dark);
+  font-size: 20px;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
 .login-message {
   margin: 16px 0 0;
   color: var(--primary-dark);

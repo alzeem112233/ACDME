@@ -50,6 +50,74 @@ async function sha256Hex(value: string) {
     .join("");
 }
 
+function createOtp() {
+  const bytes = new Uint32Array(1);
+  crypto.getRandomValues(bytes);
+  return String(bytes[0] % 1000000).padStart(6, "0");
+}
+
+function otpMessage(code: string) {
+  return `QZ ACADEMY password reset code: ${code}. It expires in 10 minutes.`;
+}
+
+async function sendWhatsAppOtp(phone: string, code: string) {
+  const message = otpMessage(code);
+  const customApiUrl = Deno.env.get("QZ_WHATSAPP_API_URL") || "";
+  const customApiToken = Deno.env.get("QZ_WHATSAPP_API_TOKEN") || "";
+
+  if (customApiUrl) {
+    const response = await fetch(customApiUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(customApiToken ? { Authorization: `Bearer ${customApiToken}` } : {}),
+      },
+      body: JSON.stringify({
+        to: phone,
+        code,
+        message,
+        channel: "whatsapp",
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`WhatsApp provider failed with ${response.status}`);
+    }
+
+    return true;
+  }
+
+  const phoneNumberId = Deno.env.get("QZ_WHATSAPP_PHONE_NUMBER_ID") || Deno.env.get("WHATSAPP_PHONE_NUMBER_ID") || "";
+  const accessToken = Deno.env.get("QZ_WHATSAPP_ACCESS_TOKEN") || Deno.env.get("WHATSAPP_ACCESS_TOKEN") || "";
+  if (!phoneNumberId || !accessToken) {
+    return false;
+  }
+
+  const response = await fetch(`https://graph.facebook.com/v20.0/${phoneNumberId}/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: phone.replace(/^\+/, ""),
+      type: "text",
+      text: {
+        preview_url: false,
+        body: message,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`WhatsApp Cloud API failed with ${response.status}`);
+  }
+
+  return true;
+}
+
 async function verifyLegacyPassword(password: string, storedHash = "") {
   if (!storedHash) return false;
   const normalizedPassword = normalizeDigits(password).trim();
@@ -59,6 +127,53 @@ async function verifyLegacyPassword(password: string, storedHash = "") {
     return (await sha256Hex(normalizedPassword)) === storedHash;
   }
   return false;
+}
+
+async function findApprovedAccount(supabase: any, phone: string, phoneWithoutPlus: string) {
+  const { data: accountRow, error: accountError } = await supabase
+    .from("platform_accounts")
+    .select("*")
+    .or(`phone_e164.eq.${phone},phone.eq.${phone},phone.eq.${phoneWithoutPlus}`)
+    .limit(1)
+    .maybeSingle();
+
+  if (accountError) throw accountError;
+  if (accountRow && !STATUS_DISABLED_VALUES.has(accountRow.status)) {
+    return accountRow;
+  }
+
+  const { data: requestRow, error: requestError } = await supabase
+    .from("registration_requests")
+    .select("*")
+    .or(`phone_e164.eq.${phone},phone.eq.${phone},contact.eq.${phone},phone.eq.${phoneWithoutPlus},contact.eq.${phoneWithoutPlus}`)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (requestError) throw requestError;
+  if (requestRow && STATUS_APPROVED_VALUES.has(requestRow.status)) {
+    return requestRow;
+  }
+
+  const { data: cloudRows, error: cloudError } = await supabase
+    .from("academy_cloud_data")
+    .select("academy_id,payload")
+    .order("updated_at", { ascending: false });
+
+  if (cloudError) throw cloudError;
+
+  for (const row of cloudRows || []) {
+    const academyData = row.payload || {};
+    const candidates = [
+      ...((academyData.users || []).map((user: Record<string, any>) => accountFromCloudUser(user, academyData, row.academy_id))),
+      ...((academyData.coaches || []).map((coach: Record<string, any>) => accountFromCloudCoach(coach, academyData, row.academy_id))),
+    ].filter(Boolean) as Record<string, any>[];
+
+    const matched = candidates.find((candidate) => normalizePhone(candidate.phone) === phone);
+    if (matched) return matched;
+  }
+
+  return null;
 }
 
 function publicAccount(row: Record<string, any>, fallback: Record<string, any> = {}) {
@@ -133,19 +248,75 @@ Deno.serve(async (request) => {
   try {
     const body = await request.json();
     const action = String(body.action || "login");
-    if (action !== "login") {
+    if (!["login", "request-password-otp"].includes(action)) {
       return jsonResponse({ ok: false, message: "الإجراء غير مدعوم." });
     }
 
     const phone = normalizePhone(body.phone || "");
     const phoneWithoutPlus = legacyPhone(phone);
     const password = String(body.password || "");
+    const superAdminPhone = normalizePhone(Deno.env.get("QZ_SUPER_ADMIN_PHONE") || "");
+    const superAdminPasswordHash = Deno.env.get("QZ_SUPER_ADMIN_PASSWORD_HASH") || "";
+    if (action === "request-password-otp") {
+      if (phone.length < 8) {
+        return jsonResponse({ ok: false, message: "Invalid phone number." });
+      }
+
+      const genericResponse = {
+        ok: true,
+        message: "If this phone belongs to an approved account, a verification code will be sent by WhatsApp.",
+      };
+      const account = superAdminPhone && phone === superAdminPhone
+        ? { id: "super-admin", phone }
+        : await findApprovedAccount(supabase, phone, phoneWithoutPlus);
+
+      if (!account) {
+        return jsonResponse(genericResponse);
+      }
+
+      const recentWindow = new Date(Date.now() - 60 * 1000).toISOString();
+      const { data: recentOtp, error: recentError } = await supabase
+        .from("password_reset_otps")
+        .select("id")
+        .eq("phone_e164", phone)
+        .gte("created_at", recentWindow)
+        .is("consumed_at", null)
+        .limit(1)
+        .maybeSingle();
+
+      if (recentError) throw recentError;
+      if (recentOtp) {
+        return jsonResponse(genericResponse);
+      }
+
+      const otp = createOtp();
+      const otpHash = await sha256Hex(`${phone}:${otp}:${Deno.env.get("QZ_OTP_PEPPER") || serviceRoleKey}`);
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+      const { error: insertOtpError } = await supabase
+        .from("password_reset_otps")
+        .insert({
+          phone_e164: phone,
+          otp_hash: otpHash,
+          channel: "whatsapp",
+          purpose: "password_reset",
+          expires_at: expiresAt,
+        });
+
+      if (insertOtpError) throw insertOtpError;
+
+      const sent = await sendWhatsAppOtp(phone, otp);
+      if (!sent) {
+        console.warn("WhatsApp OTP provider is not configured.");
+      }
+
+      return jsonResponse(genericResponse);
+    }
+
     if (phone.length < 8 || !password) {
       return jsonResponse({ ok: false, message: "أدخل رقم الهاتف وكلمة السر للمتابعة." });
     }
 
-    const superAdminPhone = normalizePhone(Deno.env.get("QZ_SUPER_ADMIN_PHONE") || "");
-    const superAdminPasswordHash = Deno.env.get("QZ_SUPER_ADMIN_PASSWORD_HASH") || "";
     if (superAdminPhone && phone === superAdminPhone) {
       const passwordOk = await verifyLegacyPassword(password, superAdminPasswordHash);
       if (!passwordOk) {

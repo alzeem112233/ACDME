@@ -204,6 +204,26 @@ export async function authenticateRemoteAccount(phone, password) {
   return data.account || null;
 }
 
+export async function requestPasswordResetOtp(phone) {
+  if (!isSupabaseConfigured) return null;
+
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase.functions.invoke("qz-auth", {
+      body: {
+        action: "request-password-otp",
+        phone,
+      },
+    }),
+  );
+
+  if (error) throw error;
+  if (!data?.ok) {
+    throw new Error(data?.message || "تعذر إرسال رمز التحقق.");
+  }
+
+  return data;
+}
+
 export async function listRemoteAcademyData() {
   if (!isSupabaseConfigured) return [];
 

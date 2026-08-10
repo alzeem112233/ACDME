@@ -56,10 +56,10 @@ import {
   authenticateRemoteAccount,
   getRemoteAcademyData,
   getRemotePlatformAccountByPhone,
-  getRemoteRegistrationRequestByPhone,
   listRemoteAcademyData,
   listPlatformAccounts,
   listRegistrationRequests,
+  requestPasswordResetOtp,
   updateRemotePlatformAccountPassword,
   updateRemotePlatformAccountStatus,
   updateRemoteRegistrationPassword,
@@ -4944,41 +4944,18 @@ function LoginPassword({
 
     const normalizedPhone = normalizePhone(resetPhone || phone);
     if (normalizedPhone.length < 8) {
-      setMessage("أدخل رقم هاتف صحيحًا لإعادة تعيين كلمة المرور.");
+      setMessage("أدخل رقم هاتف صحيحًا لإرسال رمز التحقق.");
       return;
     }
 
     setIsLoading(true);
     try {
-      const liveRegistrationRequests = await refreshRegistrationRequests?.().catch(() => null);
-      const liveUsers = await refreshPlatformUsers?.().catch(() => null);
-      const requestsForReset = Array.isArray(liveRegistrationRequests) ? liveRegistrationRequests : registrationRequests;
-      const usersForReset = Array.isArray(liveUsers) ? liveUsers : users;
-
-      let account =
-        findAccountByPhone(normalizedPhone, requestsForReset, usersForReset) ||
-        (await getRemotePlatformAccountByPhone(normalizedPhone).catch(() => null)) ||
-        (await findCloudAcademyAccountByPhone(normalizedPhone).catch(() => null));
-
-      const existingRequest =
-        findRequestByPhone(normalizedPhone, requestsForReset) ||
-        (await getRemoteRegistrationRequestByPhone(normalizedPhone).catch(() => null));
-
-      if (!account && existingRequest?.status === STATUS_PENDING) {
-        setMessage("هذا الرقم لديه طلب تسجيل بانتظار الموافقة. بعد اعتماد الحساب يمكن إعادة تعيين كلمة المرور من الحساب الرئيسي.");
-        return;
-      }
-
-      if (!account || account.blocked || account.status === "معطل") {
-        setMessage("لم نجد حسابًا معتمدًا بهذا الرقم. تأكد من الرقم أو اطلب من إدارة المنصة مراجعة الحساب.");
-        return;
-      }
-
+      await requestPasswordResetOtp(normalizedPhone);
       setPhone(normalizedPhone);
       setPassword("");
-      setMessage("تم التحقق من الحساب. لإعادة تعيين كلمة المرور بأمان، افتح الحساب الرئيسي ثم الحسابات المسجلة واضغط: تعيين كلمة جديدة لهذا الرقم.");
+      setMessage("إذا كان الرقم مرتبطًا بحساب معتمد، سيتم إرسال رمز تحقق مكون من 6 أرقام عبر واتساب. لا تشارك الرمز مع أي شخص.");
     } catch (error) {
-      setMessage(friendlyNetworkError(error, "تعذر التحقق من الحساب الآن."));
+      setMessage(friendlyNetworkError(error, "تعذر إرسال رمز التحقق الآن."));
     } finally {
       setIsLoading(false);
     }
@@ -5104,7 +5081,7 @@ function LoginPassword({
           <form className="form-panel" key="forgot-form" onSubmit={submitPasswordResetRequest} aria-busy={isLoading}>
             <FormTitle icon={KeyRound} title="استعادة كلمة المرور" />
             <p className="auth-help-text">
-              أدخل رقم الهاتف المسجل. إذا كان الحساب معتمدًا سنرشدك لطريقة إعادة التعيين الآمنة من الحساب الرئيسي.
+              أدخل رقم الهاتف بصيغته الدولية أو المحلية، وسيتم تنظيفه والتحقق منه دون عرض أي معلومات حساسة عن الحساب.
             </p>
             <input
               value={resetPhone}
@@ -5114,9 +5091,13 @@ function LoginPassword({
               required
             />
             <button className="primary-button" type="submit" disabled={isLoading}>
-              <RefreshCw size={18} />
-              {isLoading ? "جاري التحقق..." : "متابعة إعادة التعيين"}
+              <Send size={18} />
+              {isLoading ? "جاري الإرسال..." : "إرسال رمز التحقق"}
             </button>
+            <div className="otp-preview" aria-hidden="true">
+              <span>مثال الرمز</span>
+              <strong>348921</strong>
+            </div>
             <button className="auth-inline-switch" type="button" onPointerDown={(event) => touchAuthMode(event, "login")} onClick={() => switchAuthMode("login")}>
               العودة إلى تسجيل الدخول
             </button>
