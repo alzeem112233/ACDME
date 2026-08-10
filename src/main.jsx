@@ -427,6 +427,7 @@ function accountFromApprovedRequest(request) {
     role: ROLE_OWNER,
     academyId: requestAcademyId(request),
     academyName: request.academyName,
+    city: request.city || "",
     passwordHash: request.passwordHash,
     passwordStatus: request.passwordStatus || "مشفرة",
     passwordUpdatedAt: request.passwordUpdatedAt || today,
@@ -572,6 +573,7 @@ function buildAccountAcademyData(account = {}, value = {}) {
     academyName: account.academyName || "",
     academyNameEn: account.academyNameEn || "",
     academyLogo: account.academyLogo || "",
+    city: account.city || "",
     permissions: account.permissions || PERMISSION_FULL,
     passwordHash: account.passwordHash || "",
     passwordStatus: account.passwordStatus || "مشفرة",
@@ -592,6 +594,7 @@ function buildAccountAcademyData(account = {}, value = {}) {
         ...baseData.academy,
         name: baseData.academy.name || account.academyName || "",
         nameEn: baseData.academy.nameEn || account.academyNameEn || "",
+        location: baseData.academy.location || account.city || "",
         ownerPhone: baseData.academy.ownerPhone || phone,
         logo: baseData.academy.logo || account.academyLogo || "",
       },
@@ -710,6 +713,14 @@ function hasAcademyContent(value = {}) {
   );
 }
 
+function isAcademyOnboardingComplete(value = {}) {
+  const data = normalizeAcademyData(value);
+  return Boolean(
+    data.academy?.onboardingCompletedAt ||
+      (data.ageGroups.length > 0 && data.teams.length > 0 && data.academy?.name && data.coach?.name),
+  );
+}
+
 function getUserPermission(session) {
   if (!session) return PERMISSION_READ_ONLY;
   if (isSuperAdminSession(session) || session.role === ROLE_OWNER) return PERMISSION_FULL;
@@ -754,6 +765,18 @@ const navItems = [
   { id: "notifications", label: "التنبيهات", icon: Bell },
 ];
 const setupNavIds = new Set(["coachSetup", "coaches", "settings", "ageGroups", "teams", "accountProfile"]);
+const onboardingSteps = ["accountProfile", "coachSetup", "settings", "ageGroups", "teams"];
+const onboardingStepLabels = {
+  accountProfile: "الملف الشخصي",
+  coachSetup: "إعدادات المدرب",
+  settings: "إعدادات الأكاديمية",
+  ageGroups: "إعدادات الفئات",
+  teams: "إدارة الفرق",
+};
+
+function activeOnboardingStep(session) {
+  return onboardingSteps.includes(session?.onboardingStep) ? session.onboardingStep : onboardingSteps[0];
+}
 
 const pageGuides = {
   platformDashboard: {
@@ -2248,10 +2271,10 @@ function App() {
             await upsertRemoteAcademyData(currentAcademyId, cloudPayload);
           }
 
-          if (session?.isFirstLogin) {
+          if (session?.isFirstLogin && isAcademyOnboardingComplete(mergedData)) {
             const onboardingKey = currentAcademyId || normalizePhone(session.phone);
             setOnboardingState((prev) => ({ ...prev, [onboardingKey]: { completed: true, completedAt: new Date().toISOString() } }));
-            setSession((prev) => (prev ? { ...prev, isFirstLogin: false } : prev));
+            setSession((prev) => (prev ? { ...prev, isFirstLogin: false, onboardingStep: "complete" } : prev));
             setActiveView("home");
           }
         } else if (hasAcademyContent(localData)) {
@@ -2347,10 +2370,8 @@ function App() {
     event.currentTarget.reset();
 
     if (session?.isFirstLogin && submitAction === "finish") {
-      const onboardingKey = session.academyId || normalizePhone(session.phone);
-      setOnboardingState((prev) => ({ ...prev, [onboardingKey]: { completed: true, completedAt: new Date().toISOString() } }));
-      setSession((prev) => ({ ...prev, isFirstLogin: false }));
-      setActiveView("home");
+      setSession((prev) => (prev ? { ...prev, onboardingStep: "teams" } : prev));
+      setActiveView("teams");
     } else if (!session?.isFirstLogin && submitAction === "finish") {
       setActiveView("home");
     }
@@ -2382,9 +2403,9 @@ function App() {
 
   const finishOnboarding = () => {
     if (session?.isFirstLogin) {
-      const onboardingKey = session.academyId || normalizePhone(session.phone);
-      setOnboardingState((prev) => ({ ...prev, [onboardingKey]: { completed: true, completedAt: new Date().toISOString() } }));
-      setSession((prev) => ({ ...prev, isFirstLogin: false }));
+      setSession((prev) => (prev ? { ...prev, onboardingStep: "teams" } : prev));
+      setActiveView("teams");
+      return;
     }
 
     setActiveView("home");
@@ -2761,9 +2782,21 @@ function App() {
       goalsFor: 0,
       goalsAgainst: 0,
     };
+    const completedAt = new Date().toISOString();
     setSelectedTeamId(team.id);
-    setData((prev) => ({ ...prev, teams: [team, ...prev.teams] }));
+    setData((prev) => ({
+      ...prev,
+      academy: session?.isFirstLogin ? { ...prev.academy, onboardingCompletedAt: completedAt } : prev.academy,
+      teams: [team, ...prev.teams],
+    }));
     event.currentTarget.reset();
+
+    if (session?.isFirstLogin) {
+      const onboardingKey = session.academyId || normalizePhone(session.phone);
+      setOnboardingState((prev) => ({ ...prev, [onboardingKey]: { completed: true, completedAt } }));
+      setSession((prev) => (prev ? { ...prev, isFirstLogin: false, onboardingStep: "complete" } : prev));
+      setActiveView("home");
+    }
   };
 
   const updateTeamKitFee = (teamId, kitFee) => {
@@ -2959,6 +2992,7 @@ function App() {
     }));
 
     if (session?.isFirstLogin) {
+      setSession((prev) => (prev ? { ...prev, name: coachName || prev.name, photo: photo || prev.photo || "", onboardingStep: "settings" } : prev));
       setActiveView("settings");
     } else {
       setActiveView("home");
@@ -3025,6 +3059,7 @@ function App() {
     }
 
     if (session?.isFirstLogin) {
+      setSession((prev) => (prev ? { ...prev, onboardingStep: "ageGroups" } : prev));
       setActiveView("ageGroups");
     } else {
       setActiveView("home");
@@ -3123,6 +3158,7 @@ function App() {
             role: ROLE_OWNER,
             academyId,
             academyName: currentRequest.academyName,
+            city: currentRequest.city || "",
             passwordHash: currentRequest.passwordHash,
             passwordStatus: "مشفرة",
             passwordUpdatedAt: currentRequest.passwordUpdatedAt || today,
@@ -3245,6 +3281,7 @@ function App() {
       role: ROLE_OWNER,
       academyId: request.academyId,
       academyName,
+      city,
       passwordHash,
       passwordStatus: "مشفرة",
       passwordUpdatedAt: today,
@@ -3490,8 +3527,20 @@ function App() {
       return { ok: true, message: "تم تغيير كلمة المرور بنجاح. سيتم إعادتك إلى تسجيل الدخول." };
     }
 
-    setSession((prev) => (prev ? { ...prev, name: nextName, photo: nextPhoto || prev.photo || "" } : prev));
-    return { ok: true, message: "تم تحديث اسم المستخدم." };
+    setSession((prev) =>
+      prev
+        ? {
+            ...prev,
+            name: nextName,
+            photo: nextPhoto || prev.photo || "",
+            onboardingStep: prev.isFirstLogin ? "coachSetup" : prev.onboardingStep,
+          }
+        : prev,
+    );
+    if (session?.isFirstLogin) {
+      setActiveView("coachSetup");
+    }
+    return { ok: true, message: session?.isFirstLogin ? "تم حفظ الملف الشخصي. انتقل الآن إلى إعدادات المدرب." : "تم تحديث اسم المستخدم." };
   };
 
   const exportLocalBackup = async (passphrase = "") => {
@@ -3708,14 +3757,15 @@ function App() {
     isFirstLogin: Boolean(session?.isFirstLogin),
   };
 
-  const fallbackView = isSuperAdmin ? "platformDashboard" : session?.isFirstLogin ? "coachSetup" : "home";
+  const onboardingView = session?.isFirstLogin ? activeOnboardingStep(session) : "";
+  const fallbackView = isSuperAdmin ? "platformDashboard" : onboardingView || "home";
   const renewalInfo = academyRenewalInfo(data.academy, renewalTimers[currentAcademyId]);
   const isRenewalExpired = !isSuperAdmin && session?.verified && !session?.isFirstLogin && renewalInfo.isExpired;
   const visibleNavItems = isSuperAdmin
     ? navItems
     : navItems.filter((item) => canAccessView(item.id, session));
   const bottomNavItems = visibleNavItems.filter((item) => !setupNavIds.has(item.id));
-  const displayedView = visibleNavItems.some((item) => item.id === activeView) ? activeView : fallbackView;
+  const displayedView = onboardingView || (visibleNavItems.some((item) => item.id === activeView) ? activeView : fallbackView);
   const customScreenViews = new Set(["home", "coachSetup", "coaches", "settings", "ageGroups", "attendance", "reports", "accountProfile"]);
   const showGlobalHeader = !customScreenViews.has(displayedView);
   const showScreenTitle = !customScreenViews.has(displayedView);
@@ -3746,7 +3796,16 @@ function App() {
     session?.academyLogo ||
     "";
   const profileDisplayName = session?.name || sessionCoach?.name || data.coach?.name || "الملف الشخصي";
-  const profileMenuItems = [
+  const profileMenuItems = (
+    session?.isFirstLogin
+      ? [
+          {
+            id: onboardingView || "accountProfile",
+            label: onboardingStepLabels[onboardingView || "accountProfile"] || "إكمال الإعداد",
+            icon: UserCircle,
+          },
+        ]
+      : [
     { id: "platformDashboard", label: "لوحة المنصة", icon: ClipboardCheck },
     { id: "platformReports", label: "تقارير الأكاديميات", icon: ClipboardList },
     { id: "accountProfile", label: "الملف الشخصي", icon: UserCircle },
@@ -3755,7 +3814,8 @@ function App() {
     { id: "settings", label: "إعدادات الأكاديمية", icon: Settings },
     { id: "ageGroups", label: "إعدادات الفئات", icon: Layers },
     { id: "teams", label: "إدارة الفرق", icon: ShieldCheck },
-  ].filter((item) => canAccessView(item.id, session));
+        ]
+  ).filter((item) => canAccessView(item.id, session));
   const handleLogout = () => {
     setIsProfileMenuOpen(false);
     setSession(null);
@@ -3780,7 +3840,8 @@ function App() {
           const hasCompletedOnboarding = Boolean(onboardingState[onboardingKey]?.completed);
           const nextIsSuperAdmin = isSuperAdminSession(nextSession);
           const shouldCompleteSetup = !nextIsSuperAdmin && nextSession.role === ROLE_OWNER && !hasCompletedOnboarding;
-          const nextView = nextIsSuperAdmin ? "platformDashboard" : shouldCompleteSetup ? "coachSetup" : "home";
+          const nextOnboardingStep = shouldCompleteSetup ? "accountProfile" : "";
+          const nextView = nextIsSuperAdmin ? "platformDashboard" : shouldCompleteSetup ? nextOnboardingStep : "home";
 
           if (!nextIsSuperAdmin && nextSession.academyId) {
             setAcademyDataById((prev) => ({
@@ -3789,7 +3850,7 @@ function App() {
             }));
           }
 
-          setSession({ ...nextSession, verified: true, isFirstLogin: shouldCompleteSetup });
+          setSession({ ...nextSession, verified: true, isFirstLogin: shouldCompleteSetup, onboardingStep: nextOnboardingStep });
           navigateToView(nextView);
         }}
       />
@@ -5181,6 +5242,7 @@ function LoginPassword({
       passwordHash: approvedRequest.passwordHash,
       role: ROLE_OWNER,
       academyName: approvedRequest.academyName,
+      city: approvedRequest.city || "",
       permissions: PERMISSION_FULL,
       status: "نشط",
     };
@@ -5223,6 +5285,7 @@ function LoginPassword({
     setIsLoading(true);
     try {
       const account = await authenticateRemoteAccount(normalizedPhone, password);
+      const registrationSource = findRequestByPhone(normalizedPhone);
 
       if (!account) {
         setMessage("هذا الرقم غير مسجل كحساب معتمد. إذا كنت مالك أكاديمية جديدة فاضغط إنشاء حساب لإرسال طلب الموافقة.");
@@ -5243,6 +5306,7 @@ function LoginPassword({
         academyName: account.academyName || data.academy.name,
         academyNameEn: account.academyNameEn || data.academy.nameEn,
         academyLogo: account.academyLogo || data.academy.logo,
+        city: account.city || registrationSource?.city || "",
         permissions: account.permissions || PERMISSION_FULL,
         roleKey: account.roleKey || "",
         permissionsJson: account.permissionsJson || {},
@@ -5560,7 +5624,7 @@ function LoginPassword({
   );
 }
 
-function AccountProfile({ data, session, updateAccountProfile }) {
+function AccountProfile({ data, session, updateAccountProfile, isFirstLogin }) {
   const [message, setMessage] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [newPasswordPreview, setNewPasswordPreview] = useState("");
@@ -5572,6 +5636,7 @@ function AccountProfile({ data, session, updateAccountProfile }) {
   const [photoPreview, setPhotoPreview] = useState(profilePhoto);
   const displayName = session?.name || data.coach?.name || "مستخدم الأكاديمية";
   const academyName = session?.academyName || data.academy.name || "الأكاديمية";
+  const accountCity = session?.city || data.academy.location || "غير محدد";
   const accountUsername = session?.username || session?.userId || currentPhone || "غير محدد";
   const accountRows = [
     ["اسم المستخدم", accountUsername],
@@ -5579,6 +5644,7 @@ function AccountProfile({ data, session, updateAccountProfile }) {
     ["رقم الهاتف", session?.phone || currentPhone || "غير متوفر"],
     ["نوع الحساب", session?.role || "غير محدد"],
     ["الأكاديمية", academyName],
+    ["المدينة", accountCity],
     ["آخر تسجيل دخول", readableDateTime(session?.signedInAt || session?.lastLoginAt)],
   ];
 
@@ -5614,7 +5680,7 @@ function AccountProfile({ data, session, updateAccountProfile }) {
         <div>
           <span>الملف الشخصي</span>
           <h1>{displayName}</h1>
-          <p>{academyName}</p>
+          <p>{isFirstLogin ? "الخطوة 1 من 5 - راجع بيانات التسجيل ثم احفظ للمتابعة" : academyName}</p>
         </div>
         <UserCircle size={32} />
       </header>
@@ -5672,7 +5738,7 @@ function AccountProfile({ data, session, updateAccountProfile }) {
         </label>
         </div>
         <button className="gold-button" type="submit" disabled={isSaving}>
-          {isSaving ? "جاري الحفظ..." : "حفظ التغييرات"}
+          {isSaving ? "جاري الحفظ..." : isFirstLogin ? "حفظ والمتابعة لإعداد المدرب" : "حفظ التغييرات"}
         </button>
         {message && <p className="account-profile-message">{message}</p>}
       </form>
@@ -5680,7 +5746,7 @@ function AccountProfile({ data, session, updateAccountProfile }) {
   );
 }
 
-function CoachSetup({ data, updateCoach }) {
+function CoachSetup({ data, updateCoach, isFirstLogin }) {
   const coach = data.coach || seedData.coach;
   const [photoPreview, setPhotoPreview] = useState(coach.photo || "");
   const [formError, setFormError] = useState("");
@@ -5704,7 +5770,7 @@ function CoachSetup({ data, updateCoach }) {
   return (
     <section className="setup-screen coach-setup-screen">
       <header className="setup-header light">
-        <span>إعداد بيانات المدرب</span>
+        <span>{isFirstLogin ? "الخطوة 2 من 5 - إعداد بيانات المدرب" : "إعداد بيانات المدرب"}</span>
         <span aria-hidden="true">?</span>
       </header>
 
@@ -5929,7 +5995,7 @@ function CoachesSettings({ data, addAcademyCoach, toggleAcademyCoachStatus }) {
   );
 }
 
-function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBackup, syncCurrentAcademyNow, cloudSyncState, isOnline }) {
+function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBackup, syncCurrentAcademyNow, cloudSyncState, isOnline, isFirstLogin }) {
   const [logoPreview, setLogoPreview] = useState(data.academy.logo || "");
   const [locationText, setLocationText] = useState(data.academy.location || "");
   const [gpsLocation, setGpsLocation] = useState(data.academy.gpsLocation || "");
@@ -6036,11 +6102,11 @@ function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBa
   return (
     <section className="setup-screen academy-setup-screen">
       <header className="setup-header dark">
-        <span>الإعدادات والنسخ الاحتياطي</span>
+        <span>{isFirstLogin ? "الخطوة 3 من 5 - إعدادات الأكاديمية" : "الإعدادات والنسخ الاحتياطي"}</span>
         <span aria-hidden="true">?</span>
       </header>
 
-      <section className="setup-card backup-card backup-card-prominent">
+      {!isFirstLogin && <section className="setup-card backup-card backup-card-prominent">
         <section className="age-hero-card">
           <span>نسخة احتياطية</span>
           <h2>حفظ آمن لكل بيانات التطبيق</h2>
@@ -6093,7 +6159,7 @@ function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBa
         </small>
 
         {backupMessage && <p className={backupMessage.startsWith("تم") ? "setup-success" : "setup-error"}>{backupMessage}</p>}
-      </section>
+      </section>}
 
       <form className="setup-card academy-card" onSubmit={handleAcademySubmit}>
         <div className="logo-uploader">
@@ -6144,12 +6210,12 @@ function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBa
 
         <button className="yellow-button" type="submit">
           <CheckCircle2 size={18} />
-          إتمام الإعداد
+          {isFirstLogin ? "حفظ الأكاديمية والمتابعة للفئات" : "إتمام الإعداد"}
         </button>
         <small className="setup-footnote">يمكنك تعديل هذه البيانات لاحقًا من قسم الإعدادات.</small>
       </form>
 
-      <section className="setup-card sync-card">
+      {!isFirstLogin && <section className="setup-card sync-card">
         <section className="age-hero-card">
           <span>مزامنة</span>
           <h2>رفع الإعدادات إلى الإنترنت</h2>
@@ -6167,7 +6233,7 @@ function AcademySettings({ data, updateAcademy, exportLocalBackup, importLocalBa
         </button>
 
         {syncMessage && <p className={syncMessage.startsWith("تم") ? "setup-success" : "setup-error"}>{syncMessage}</p>}
-      </section>
+      </section>}
 
     </section>
   );
@@ -6266,7 +6332,7 @@ function AgeGroups({ data, addAgeGroup, updateAgeGroup, removeAgeGroup, finishOn
 
       <form className="setup-card age-card" key={formKey} onSubmit={handleAgeGroupSubmit}>
         <section className="age-hero-card">
-          <span>{isFirstLogin ? "الخطوة 3" : "إدارة الفئات"}</span>
+          <span>{isFirstLogin ? "الخطوة 4 من 5" : "إدارة الفئات"}</span>
           <h2>{editingGroup ? "تعديل الفئة العمرية" : "تخصيص الفئات العمرية"}</h2>
           <p>اختر الفئة، ثم حدد أيام ومواعيد التدريب. كل الفئات المحفوظة تظهر أسفل الصفحة مباشرة.</p>
         </section>
@@ -6335,11 +6401,17 @@ function AgeGroups({ data, addAgeGroup, updateAgeGroup, removeAgeGroup, finishOn
           {editingGroup ? "حفظ التعديل والبقاء هنا" : "حفظ الفئة وإضافة فئة جديدة"}
         </button>
         <button className="gold-button" name="ageAction" value="finish" type="submit">
-          {editingGroup ? "حفظ التعديل والانتقال للرئيسية" : "حفظ الفئة والانتقال للرئيسية"}
+          {editingGroup
+            ? isFirstLogin
+              ? "حفظ التعديل والانتقال لإدارة الفرق"
+              : "حفظ التعديل والانتقال للرئيسية"
+            : isFirstLogin
+              ? "حفظ الفئة والانتقال لإدارة الفرق"
+              : "حفظ الفئة والانتقال للرئيسية"}
         </button>
       </form>
 
-      {data.ageGroups.length > 0 && (
+      {!isFirstLogin && data.ageGroups.length > 0 && (
         <button className="age-home-button" type="button" onClick={() => setActiveView?.("home")}>
           <ArrowRight size={17} />
           العودة إلى الشاشة الرئيسية
@@ -6386,11 +6458,11 @@ function AgeGroups({ data, addAgeGroup, updateAgeGroup, removeAgeGroup, finishOn
   );
 }
 
-function Teams({ data, helpers, addTeam, updateTeamKitFee, setSelectedTeamId, setActiveView }) {
+function Teams({ data, helpers, addTeam, updateTeamKitFee, setSelectedTeamId, setActiveView, isFirstLogin }) {
   return (
     <section className="view-grid">
       <form className="panel form-panel" onSubmit={addTeam}>
-        <FormTitle icon={ShieldCheck} title="إنشاء فريق" />
+        <FormTitle icon={ShieldCheck} title={isFirstLogin ? "الخطوة 5 من 5 - إنشاء أول فريق" : "إنشاء فريق"} />
         <input name="name" placeholder="اسم الفريق" required />
         <select name="ageGroupId" required>
           {data.ageGroups.map((group) => (
@@ -6401,7 +6473,7 @@ function Teams({ data, helpers, addTeam, updateTeamKitFee, setSelectedTeamId, se
         <input name="kitFee" type="number" min="0" placeholder="قيمة الطقم الرياضي" />
         <button className="primary-button" type="submit">
           <Plus size={18} />
-          إنشاء الفريق
+          {isFirstLogin ? "إنشاء الفريق والدخول للرئيسية" : "إنشاء الفريق"}
         </button>
       </form>
       <section className="team-grid">
@@ -7348,8 +7420,15 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
   const saveAttendancePayment = (event, player) => {
     event.preventDefault();
     if (!isScheduledTrainingDay || isSavingAttendancePayment) return;
-    const amount = Number(paymentDrafts[player.id] || DEFAULT_ATTENDANCE_PAYMENT);
-    if (amount <= 0) return;
+    const rawAmount = paymentDrafts[player.id];
+    const amount = rawAmount === "" || rawAmount === null || rawAmount === undefined ? 0 : Number(rawAmount);
+    if (amount <= 0) {
+      recordAttendance(player.id, "متأخر", attendanceDate, "لم يتم دفع مبلغ التحضير");
+      setTransferDrafts((prev) => ({ ...prev, [player.id]: false }));
+      setActivePaymentPlayerId("");
+      setLastAttendanceAction(`تم تسجيل تأخير مالي على اللاعب ${player.name} بدون دفعة`);
+      return;
+    }
 
     setIsSavingAttendancePayment(true);
     addPayment({
@@ -7533,8 +7612,9 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
                     className={`transfer-toggle ${transferDrafts[player.id] || paymentKind(payment) === "transfer" ? "active" : ""}`}
                     disabled={!isPaymentOpen && Boolean(payment)}
                     onClick={() => setTransferDrafts((prev) => ({ ...prev, [player.id]: !prev[player.id] }))}
-                    title="تحديد الدفعة كحوالة"
-                    aria-label="تحديد الدفعة كحوالة"
+                    title={transferDrafts[player.id] ? "إلغاء الحوالة واحتسابها نقدًا" : "تحديد الدفعة كحوالة"}
+                    aria-label={transferDrafts[player.id] ? "إلغاء الحوالة واحتسابها نقدًا" : "تحديد الدفعة كحوالة"}
+                    aria-pressed={Boolean(transferDrafts[player.id])}
                   >
                     <Send size={14} />
                   </button>

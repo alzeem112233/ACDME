@@ -293,6 +293,7 @@ function publicAccount(row: Record<string, any>, fallback: Record<string, any> =
     academyName: row.academy_name || fallback.academyName || "",
     academyNameEn: row.academy_name_en || fallback.academyNameEn || "",
     academyLogo: row.academy_logo || fallback.academyLogo || "",
+    city: row.city || fallback.city || "",
     permissionsJson: permissionsJson(row, key),
     permissions: row.permissions || fallback.permissions || "إدارة كاملة",
     status: row.status || fallback.status || "نشط",

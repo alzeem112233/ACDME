@@ -156,6 +156,7 @@ function mapPlatformAccount(row) {
     roleKey: row.role_key || "",
     academyId: row.academy_id,
     academyName: row.academy_name,
+    city: row.city || "",
     permissions: row.permissions || "",
     permissionsJson: row.permissions_json || {},
     authProvider: row.auth_provider || "",
