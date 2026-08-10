@@ -103,7 +103,7 @@ function mapRegistrationRequest(row) {
     contact: phone,
     phone,
     academyId: row.academy_id || "",
-    passwordHash: row.password_hash || "",
+    passwordHash: "",
     city: row.city || "",
     status: toArabicStatus(row.status),
     createdAt: row.created_at ? row.created_at.slice(0, 10) : "",
@@ -119,7 +119,7 @@ function mapPlatformAccount(row) {
     academyId: row.academy_id,
     academyName: row.academy_name,
     permissions: row.permissions || "",
-    passwordHash: row.password_hash || "",
+    passwordHash: "",
     passwordStatus: row.password_status || "مشفرة",
     passwordUpdatedAt: row.password_updated_at || "",
     status: normalizePlatformStatus(row.status),
@@ -129,9 +129,17 @@ function mapPlatformAccount(row) {
 function mapAcademyCloudData(row) {
   return {
     academyId: row.academy_id,
-    data: row.payload || {},
+    data: stripFrontendSecrets(row.payload || {}),
     updatedAt: row.updated_at || "",
   };
+}
+
+function stripFrontendSecrets(value) {
+  if (!value || typeof value !== "object") return value;
+  return JSON.parse(JSON.stringify(value, (key, fieldValue) => {
+    if (key === "password" || key === "passwordHash" || key === "password_hash") return undefined;
+    return fieldValue;
+  }));
 }
 
 function platformAccountPayload(account) {
@@ -165,6 +173,27 @@ export async function getRemoteAcademyData(academyId) {
 
   if (error) throw error;
   return data ? mapAcademyCloudData(data) : null;
+}
+
+export async function authenticateRemoteAccount(phone, password) {
+  if (!isSupabaseConfigured) return null;
+
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase.functions.invoke("qz-auth", {
+      body: {
+        action: "login",
+        phone,
+        password,
+      },
+    }),
+  );
+
+  if (error) throw error;
+  if (!data?.ok) {
+    throw new Error(data?.message || "تعذر تسجيل الدخول.");
+  }
+
+  return data.account || null;
 }
 
 export async function listRemoteAcademyData() {
@@ -266,7 +295,7 @@ export async function listRegistrationRequests() {
   const { data, error } = await withWeakNetworkRetry(() =>
     supabase
       .from("registration_requests")
-      .select("*")
+      .select("id,academy_name,owner_name,contact,phone,academy_id,city,status,created_at")
       .order("created_at", { ascending: false }),
   );
 
@@ -282,7 +311,7 @@ export async function getRemoteRegistrationRequestByPhone(phone) {
   const { data, error } = await withWeakNetworkRetry(() =>
     supabase
       .from("registration_requests")
-      .select("*")
+      .select("id,academy_name,owner_name,contact,phone,academy_id,city,status,created_at")
       .or(`phone.eq.${normalizedPhone},contact.eq.${normalizedPhone},phone.eq.${legacyPhone},contact.eq.${legacyPhone}`)
       .order("created_at", { ascending: false })
       .limit(1)
@@ -299,7 +328,7 @@ export async function listPlatformAccounts() {
   const { data, error } = await withWeakNetworkRetry(() =>
     supabase
       .from("platform_accounts")
-      .select("*")
+      .select("id,name,phone,role,academy_id,academy_name,permissions,password_status,password_updated_at,status,created_at,updated_at")
       .order("created_at", { ascending: false }),
   );
 
@@ -315,7 +344,7 @@ export async function getRemotePlatformAccountByPhone(phone) {
   const { data, error } = await withWeakNetworkRetry(() =>
     supabase
       .from("platform_accounts")
-      .select("*")
+      .select("id,name,phone,role,academy_id,academy_name,permissions,password_status,password_updated_at,status,created_at,updated_at")
       .or(`phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`)
       .limit(1)
       .maybeSingle(),
@@ -332,7 +361,7 @@ export async function upsertPlatformAccount(account) {
     supabase
       .from("platform_accounts")
       .upsert(platformAccountPayload(account), { onConflict: "phone" })
-      .select()
+      .select("id,name,phone,role,academy_id,academy_name,permissions,password_status,password_updated_at,status,created_at,updated_at")
       .single(),
   );
 
@@ -380,7 +409,7 @@ export async function createRegistrationRequest(request) {
     supabase
       .from("registration_requests")
       .insert(payload)
-      .select()
+      .select("id,academy_name,owner_name,contact,phone,academy_id,city,status,created_at")
       .single(),
   );
 
@@ -389,7 +418,7 @@ export async function createRegistrationRequest(request) {
       supabase
         .from("registration_requests")
         .insert(legacyPayload)
-        .select()
+        .select("id,academy_name,owner_name,contact,phone,academy_id,city,status,created_at")
         .single(),
     );
 
@@ -416,7 +445,7 @@ export async function createRegistrationRequest(request) {
         .from("registration_requests")
         .update(updatePayload)
         .or(candidates)
-        .select(),
+        .select("id,academy_name,owner_name,contact,phone,academy_id,city,status,created_at"),
     );
 
     data = updated.data?.[0] || null;
@@ -439,7 +468,7 @@ export async function updateRemoteRegistrationRequest(requestId, status) {
         reviewed_at: new Date().toISOString(),
       })
       .eq("id", requestId)
-      .select()
+      .select("id,academy_name,owner_name,contact,phone,academy_id,city,status,created_at")
       .single(),
   );
 
@@ -492,7 +521,7 @@ export async function updateRemoteRegistrationPassword(phone, passwordHash) {
       .from("registration_requests")
       .update(updatePayload)
       .or(`phone.eq.${normalizedPhone},contact.eq.${normalizedPhone},phone.eq.${legacyPhone},contact.eq.${legacyPhone}`)
-      .select(),
+      .select("id,academy_name,owner_name,contact,phone,academy_id,city,status,created_at"),
   );
 
   if (error) throw error;
@@ -514,7 +543,7 @@ export async function updateRemotePlatformAccountPassword(phone, passwordHash) {
       updated_at: new Date().toISOString(),
       })
       .or(`phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`)
-      .select(),
+      .select("id,name,phone,role,academy_id,academy_name,permissions,password_status,password_updated_at,status,created_at,updated_at"),
   );
 
   if (error) throw error;
@@ -534,7 +563,7 @@ export async function updateRemotePlatformAccountStatus(phone, status) {
       updated_at: new Date().toISOString(),
       })
       .or(`phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`)
-      .select(),
+      .select("id,name,phone,role,academy_id,academy_name,permissions,password_status,password_updated_at,status,created_at,updated_at"),
   );
 
   if (error) throw error;

@@ -53,6 +53,7 @@ import {
   createRegistrationRequest,
   deleteRemoteAcademyData,
   deleteRemotePlatformAccount,
+  authenticateRemoteAccount,
   getRemoteAcademyData,
   getRemotePlatformAccountByPhone,
   getRemoteRegistrationRequestByPhone,
@@ -81,8 +82,6 @@ function normalizeDigits(value = "") {
 }
 
 const today = currentDateKey();
-const SUPER_ADMIN_PHONE = "+967772227092";
-const SUPER_ADMIN_PASSWORD = "772227092";
 const STATUS_PENDING = "قيد المراجعة";
 const STATUS_APPROVED = "مقبول";
 const STATUS_REJECTED = "مرفوض";
@@ -141,7 +140,7 @@ function normalizeText(value = "") {
 }
 
 function isSuperAdminSession(session) {
-  return session?.role === ROLE_SUPER_ADMIN && normalizePhone(session?.phone) === SUPER_ADMIN_PHONE;
+  return session?.role === ROLE_SUPER_ADMIN;
 }
 
 function accountCountForAcademy(users = [], academyId = "") {
@@ -3004,7 +3003,7 @@ function App() {
       }
       const syncedAccount = await upsertPlatformAccount(account);
       const confirmedAccount = await getRemotePlatformAccountByPhone(normalizedPhone);
-      if (!syncedAccount || !confirmedAccount?.passwordHash) {
+      if (!syncedAccount || !confirmedAccount?.phone) {
         throw new Error("لم يتم تأكيد وجود الحساب في السحابة.");
       }
       const cloudAcademyData = buildAccountAcademyData(confirmedAccount, accountAcademyData);
@@ -4773,20 +4772,6 @@ function LoginPassword({
   };
 
   const findAccountByPhone = (normalizedPhone, requests = registrationRequests, userList = users) => {
-    if (normalizedPhone === SUPER_ADMIN_PHONE) {
-      return {
-        id: "super-admin",
-        name: "مدير المنصة",
-        phone: SUPER_ADMIN_PHONE,
-        password: SUPER_ADMIN_PASSWORD,
-        role: ROLE_SUPER_ADMIN,
-        academyId: "platform",
-        academyName: "إدارة المنصة",
-        permissions: PERMISSION_FULL,
-        status: "نشط",
-      };
-    }
-
     const localUser = (userList || []).find((user) => normalizePhone(user.phone) === normalizedPhone);
     if (localUser) {
       return localUser.status === "معطل" ? { ...localUser, blocked: true } : localUser;
@@ -4834,27 +4819,6 @@ function LoginPassword({
     return null;
   };
 
-  const passwordMatches = async (account, enteredPassword) => {
-    const normalizedEnteredPassword = normalizeDigits(enteredPassword).trim();
-
-    if (account.passwordHash) {
-      const enteredHash = await hashPassword(enteredPassword);
-      if (enteredHash === account.passwordHash) return true;
-
-      if (normalizedEnteredPassword !== enteredPassword) {
-        return (await hashPassword(normalizedEnteredPassword)) === account.passwordHash;
-      }
-
-      return false;
-    }
-
-    if (!account.password) {
-      return false;
-    }
-
-    return enteredPassword === account.password || normalizedEnteredPassword === normalizeDigits(account.password).trim();
-  };
-
   const submitLogin = async (event) => {
     event.preventDefault();
     setMessage("");
@@ -4868,86 +4832,16 @@ function LoginPassword({
 
     setIsLoading(true);
     try {
-      let account = findAccountByPhone(normalizedPhone, registrationRequests, users);
-      let existingRequest = findRequestByPhone(normalizedPhone, registrationRequests);
-
-      if (account?.role === ROLE_SUPER_ADMIN) {
-        const isCorrectPassword = await passwordMatches(account, password);
-        if (!isCorrectPassword) {
-          setMessage("كلمة السر غير صحيحة.");
-          return;
-        }
-
-        onVerified({
-          userId: account.id,
-          name: account.name,
-          phone: normalizedPhone,
-          role: account.role || ROLE_OWNER,
-          academyId: account.academyId || makeAcademyId(normalizedPhone),
-          academyName: account.academyName || data.academy.name,
-          academyNameEn: account.academyNameEn || data.academy.nameEn,
-          academyLogo: account.academyLogo || data.academy.logo,
-          permissions: account.permissions || PERMISSION_FULL,
-          signedInAt: new Date().toISOString(),
-        });
-        return;
-      }
-
-      const liveRegistrationRequests = await refreshRegistrationRequests?.().catch(() => null);
-      const liveUsers = await refreshPlatformUsers?.().catch(() => null);
-      const requestsForLogin = Array.isArray(liveRegistrationRequests) ? liveRegistrationRequests : registrationRequests;
-      const usersForLogin = Array.isArray(liveUsers) ? liveUsers : users;
-      account = findAccountByPhone(normalizedPhone, requestsForLogin, usersForLogin);
-      existingRequest = findRequestByPhone(normalizedPhone, requestsForLogin);
+      const account = await authenticateRemoteAccount(normalizedPhone, password);
 
       if (!account) {
-        const remoteAccount = await getRemotePlatformAccountByPhone(normalizedPhone).catch(() => null);
-        if (remoteAccount) {
-          account = remoteAccount;
-        }
-      }
-
-      if (!existingRequest) {
-        existingRequest = await getRemoteRegistrationRequestByPhone(normalizedPhone).catch(() => null);
-        if (existingRequest?.status === STATUS_APPROVED && !account) {
-          account = findAccountByPhone(normalizedPhone, [existingRequest], usersForLogin);
-        }
-      }
-
-      if (!account) {
-        account = await findCloudAcademyAccountByPhone(normalizedPhone).catch(() => null);
-      }
-
-      if (!account) {
-        if (existingRequest?.status === STATUS_PENDING) {
-          setMessage("طلب التسجيل لهذا الرقم ما زال بانتظار موافقة إدارة المنصة.");
-          return;
-        }
-
-        if (existingRequest?.status === STATUS_REJECTED) {
-          setMessage("تم رفض طلب هذا الرقم سابقًا. يمكنك إرسال طلب جديد ببيانات مكتملة.");
-        } else {
-          setMessage("هذا الرقم غير مسجل كحساب معتمد. إذا كنت مالك أكاديمية جديدة فاضغط إنشاء حساب لإرسال طلب الموافقة.");
-        }
-
+        setMessage("هذا الرقم غير مسجل كحساب معتمد. إذا كنت مالك أكاديمية جديدة فاضغط إنشاء حساب لإرسال طلب الموافقة.");
         return;
       }
 
       if (account.blocked || account.status === "معطل") {
         setMessage("تم تعطيل هذا الحساب من إدارة الأكاديمية.");
         return;
-      }
-
-      const isCorrectPassword = await passwordMatches(account, password);
-      if (!isCorrectPassword) {
-        setMessage("كلمة السر غير صحيحة.");
-        return;
-      }
-
-      if (account.passwordHash && account.academyId !== "platform") {
-        upsertPlatformAccount(account).catch(() => {
-          // The account was already valid for login; it can be indexed remotely on a later attempt.
-        });
       }
 
       onVerified({
@@ -5047,11 +4941,6 @@ function LoginPassword({
     const normalizedPhone = normalizePhone(resetPhone || phone);
     if (normalizedPhone.length < 8) {
       setMessage("أدخل رقم هاتف صحيحًا لإعادة تعيين كلمة المرور.");
-      return;
-    }
-
-    if (normalizedPhone === SUPER_ADMIN_PHONE) {
-      setMessage("لا يمكن إعادة تعيين كلمة مرور الحساب الرئيسي من شاشة الدخول. استخدم بيانات الحساب الرئيسي المعتمدة.");
       return;
     }
 
