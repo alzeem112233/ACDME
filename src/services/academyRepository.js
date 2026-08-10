@@ -417,6 +417,7 @@ export async function listRegistrationRequests() {
           headers: { "x-qz-session": sessionToken },
           body: {
             action: "list-registration-requests",
+            qzSessionToken: sessionToken,
           },
         }),
       );
@@ -425,9 +426,10 @@ export async function listRegistrationRequests() {
       if (data?.ok && Array.isArray(data.requests)) {
         return data.requests.map(mapRegistrationRequest);
       }
+      throw new Error(data?.message || "تعذر جلب طلبات التسجيل من السحابة.");
     } catch (error) {
       if (!isRegistrationFunctionUnavailable(error)) {
-        // Fall back to the table query below; older deployments can still read through RLS.
+        throw error;
       }
     }
   }

@@ -1658,10 +1658,13 @@ function App() {
   const [onlineSyncTick, setOnlineSyncTick] = useState(0);
   const [renewalClockTick, setRenewalClockTick] = useState(() => Date.now());
   const [lastView, setLastView] = useState("");
+  const qzSessionToken = session?.verified ? session.accessToken || "" : "";
+
+  setQzSessionToken(qzSessionToken);
 
   useEffect(() => {
-    setQzSessionToken(session?.verified ? session.accessToken || "" : "");
-  }, [session?.verified, session?.accessToken]);
+    setQzSessionToken(qzSessionToken);
+  }, [qzSessionToken]);
   const isSuperAdmin = isSuperAdminSession(session);
   const currentAcademyId = session?.academyId || "";
   const data = useMemo(() => {
@@ -1880,8 +1883,11 @@ function App() {
         }));
         return mergedForLogin;
       }
-    } catch {
-      // Keep the local copy available if the remote table is temporarily unreachable.
+    } catch (error) {
+      logDeveloperError("refresh-registration-requests", error);
+      if (isSuperAdmin) {
+        throw new Error("تعذر جلب طلبات التسجيل من السحابة. سجل الخروج ثم ادخل للحساب الرئيسي مرة أخرى لتحديث الجلسة.");
+      }
     }
 
     return platformRegistrationRequests || [];

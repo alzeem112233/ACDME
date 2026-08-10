@@ -6,6 +6,8 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+const SESSION_DURATION_MS = 29 * 24 * 60 * 60 * 1000;
+
 const STATUS_APPROVED_VALUES = new Set(["approved", "مقبول", "ظ…ظ‚ط¨ظˆظ„"]);
 const STATUS_DISABLED_VALUES = new Set(["disabled", "معطل", "ظ…ط¹ط·ظ„"]);
 
@@ -91,7 +93,7 @@ function permissionsJson(row: Record<string, any>, key = roleKey(row)) {
 async function issueSession(supabase: any, account: Record<string, any>) {
   const token = randomToken();
   const key = roleKey(account, "academy_owner");
-  const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+  const expiresAt = new Date(Date.now() + SESSION_DURATION_MS).toISOString();
 
   const { error } = await supabase
     .from("qz_app_sessions")
@@ -109,19 +111,34 @@ async function issueSession(supabase: any, account: Record<string, any>) {
   return { token, expiresAt, roleKey: key, permissions: permissionsJson(account, key) };
 }
 
-async function findActiveSession(supabase: any, token = "") {
+async function findActiveSession(supabase: any, token = "", options: Record<string, boolean> = {}) {
   if (!token) return null;
 
   const { data, error } = await supabase
     .from("qz_app_sessions")
     .select("account_id,phone_e164,role_key,academy_id,permissions,expires_at")
     .eq("token_hash", await sha256Hex(token))
-    .gt("expires_at", new Date().toISOString())
     .limit(1)
     .maybeSingle();
 
   if (error) throw error;
-  return data || null;
+  if (!data) return null;
+
+  const isExpired = Date.parse(data.expires_at || "") <= Date.now();
+  if (!isExpired) return data;
+
+  if (options.renewExpiredSuperAdmin && data.role_key === "super_admin") {
+    const renewedExpiresAt = new Date(Date.now() + SESSION_DURATION_MS).toISOString();
+    const { error: renewError } = await supabase
+      .from("qz_app_sessions")
+      .update({ expires_at: renewedExpiresAt })
+      .eq("token_hash", await sha256Hex(token));
+
+    if (renewError) throw renewError;
+    return { ...data, expires_at: renewedExpiresAt };
+  }
+
+  return null;
 }
 
 function accountAcademyId(account: Record<string, any>) {
@@ -374,7 +391,7 @@ Deno.serve(async (request) => {
 
     if (action === "list-registration-requests") {
       const sessionToken = request.headers.get("x-qz-session") || String(body.qzSessionToken || body.sessionToken || "");
-      const qzSession = await findActiveSession(supabase, sessionToken);
+      const qzSession = await findActiveSession(supabase, sessionToken, { renewExpiredSuperAdmin: true });
       if (!qzSession) {
         return jsonResponse({ ok: false, message: "Unauthorized." }, 401);
       }

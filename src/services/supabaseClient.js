@@ -28,8 +28,10 @@ export function getQzSessionToken() {
 }
 
 export function setQzSessionToken(qzSessionToken = "") {
-  activeQzSessionToken = qzSessionToken || "";
   if (!isSupabaseConfigured) return null;
+  const nextToken = qzSessionToken || "";
+  if (activeQzSessionToken === nextToken && supabase) return supabase;
+  activeQzSessionToken = nextToken;
   supabase = createSupabaseClient(activeQzSessionToken);
   return supabase;
 }
