@@ -620,7 +620,7 @@ button {
 
 .auth-switch {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
   margin-bottom: 18px;
   padding: 5px;
@@ -630,7 +630,8 @@ button {
 }
 
 .auth-switch button {
-  height: 42px;
+  min-height: 42px;
+  height: auto;
   border: 0;
   border-radius: 10px;
   background: transparent;
@@ -638,6 +639,8 @@ button {
   font-weight: 800;
   cursor: pointer;
   transition: background 0.08s ease, color 0.08s ease, box-shadow 0.08s ease;
+  line-height: 1.35;
+  padding: 8px 6px;
 }
 
 .auth-switch button.active {
@@ -668,6 +671,25 @@ button {
   color: var(--primary-dark);
   font-weight: 900;
   cursor: pointer;
+}
+
+.auth-link-button {
+  width: 100%;
+  min-height: 36px;
+  border: 0;
+  background: transparent;
+  color: var(--primary-dark);
+  font-weight: 900;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.auth-help-text {
+  margin: -4px 0 2px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.8;
 }
 
 .login-message {

@@ -4750,6 +4750,7 @@ function LoginPassword({
   const [mode, setMode] = useState("login");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
+  const [resetPhone, setResetPhone] = useState("");
   const [registration, setRegistration] = useState({
     academyName: "",
     ownerName: "",
@@ -5039,6 +5040,57 @@ function LoginPassword({
     }
   };
 
+  const submitPasswordResetRequest = async (event) => {
+    event.preventDefault();
+    setMessage("");
+
+    const normalizedPhone = normalizePhone(resetPhone || phone);
+    if (normalizedPhone.length < 8) {
+      setMessage("أدخل رقم هاتف صحيحًا لإعادة تعيين كلمة المرور.");
+      return;
+    }
+
+    if (normalizedPhone === SUPER_ADMIN_PHONE) {
+      setMessage("لا يمكن إعادة تعيين كلمة مرور الحساب الرئيسي من شاشة الدخول. استخدم بيانات الحساب الرئيسي المعتمدة.");
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const liveRegistrationRequests = await refreshRegistrationRequests?.().catch(() => null);
+      const liveUsers = await refreshPlatformUsers?.().catch(() => null);
+      const requestsForReset = Array.isArray(liveRegistrationRequests) ? liveRegistrationRequests : registrationRequests;
+      const usersForReset = Array.isArray(liveUsers) ? liveUsers : users;
+
+      let account =
+        findAccountByPhone(normalizedPhone, requestsForReset, usersForReset) ||
+        (await getRemotePlatformAccountByPhone(normalizedPhone).catch(() => null)) ||
+        (await findCloudAcademyAccountByPhone(normalizedPhone).catch(() => null));
+
+      const existingRequest =
+        findRequestByPhone(normalizedPhone, requestsForReset) ||
+        (await getRemoteRegistrationRequestByPhone(normalizedPhone).catch(() => null));
+
+      if (!account && existingRequest?.status === STATUS_PENDING) {
+        setMessage("هذا الرقم لديه طلب تسجيل بانتظار الموافقة. بعد اعتماد الحساب يمكن إعادة تعيين كلمة المرور من الحساب الرئيسي.");
+        return;
+      }
+
+      if (!account || account.blocked || account.status === "معطل") {
+        setMessage("لم نجد حسابًا معتمدًا بهذا الرقم. تأكد من الرقم أو اطلب من إدارة المنصة مراجعة الحساب.");
+        return;
+      }
+
+      setPhone(normalizedPhone);
+      setPassword("");
+      setMessage("تم التحقق من الحساب. لإعادة تعيين كلمة المرور بأمان، افتح الحساب الرئيسي ثم الحسابات المسجلة واضغط: تعيين كلمة جديدة لهذا الرقم.");
+    } catch (error) {
+      setMessage(friendlyNetworkError(error, "تعذر التحقق من الحساب الآن."));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const updateRegistrationField = (field, value) => {
     setRegistration((prev) => ({ ...prev, [field]: value }));
   };
@@ -5055,6 +5107,10 @@ function LoginPassword({
 
     if (nextMode === "login" && registration.phone && !phone) {
       setPhone(normalizePhone(registration.phone));
+    }
+
+    if (nextMode === "forgot" && phone && !resetPhone) {
+      setResetPhone(normalizePhone(phone));
     }
   };
 
@@ -5104,6 +5160,15 @@ function LoginPassword({
             تسجيل الدخول
           </button>
           <button
+            className={mode === "forgot" ? "active" : ""}
+            type="button"
+            aria-pressed={mode === "forgot"}
+            onPointerDown={(event) => touchAuthMode(event, "forgot")}
+            onClick={() => switchAuthMode("forgot")}
+          >
+            نسيت كلمة المرور؟
+          </button>
+          <button
             className={mode === "register" ? "active" : ""}
             type="button"
             aria-pressed={mode === "register"}
@@ -5133,10 +5198,34 @@ function LoginPassword({
             />
             <button className="primary-button" type="submit" disabled={isLoading}>
               <KeyRound size={18} />
-              {isLoading ? "جاري التحقق..." : "دخول"}
+              {isLoading ? "جاري التحقق..." : "تسجيل الدخول"}
+            </button>
+            <button className="auth-link-button" type="button" onPointerDown={(event) => touchAuthMode(event, "forgot")} onClick={() => switchAuthMode("forgot")}>
+              نسيت كلمة المرور؟
             </button>
             <button className="auth-inline-switch" type="button" onPointerDown={(event) => touchAuthMode(event, "register")} onClick={() => switchAuthMode("register")}>
               إنشاء حساب جديد
+            </button>
+          </form>
+        ) : mode === "forgot" ? (
+          <form className="form-panel" key="forgot-form" onSubmit={submitPasswordResetRequest} aria-busy={isLoading}>
+            <FormTitle icon={KeyRound} title="استعادة كلمة المرور" />
+            <p className="auth-help-text">
+              أدخل رقم الهاتف المسجل. إذا كان الحساب معتمدًا سنرشدك لطريقة إعادة التعيين الآمنة من الحساب الرئيسي.
+            </p>
+            <input
+              value={resetPhone}
+              onChange={(event) => setResetPhone(event.target.value)}
+              placeholder="رقم الهاتف"
+              inputMode="tel"
+              required
+            />
+            <button className="primary-button" type="submit" disabled={isLoading}>
+              <RefreshCw size={18} />
+              {isLoading ? "جاري التحقق..." : "متابعة إعادة التعيين"}
+            </button>
+            <button className="auth-inline-switch" type="button" onPointerDown={(event) => touchAuthMode(event, "login")} onClick={() => switchAuthMode("login")}>
+              العودة إلى تسجيل الدخول
             </button>
           </form>
         ) : (
