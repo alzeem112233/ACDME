@@ -2,7 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-qz-session",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -107,6 +107,21 @@ async function issueSession(supabase: any, account: Record<string, any>) {
 
   if (error) throw error;
   return { token, expiresAt, roleKey: key, permissions: permissionsJson(account, key) };
+}
+
+async function findActiveSession(supabase: any, token = "") {
+  if (!token) return null;
+
+  const { data, error } = await supabase
+    .from("qz_app_sessions")
+    .select("account_id,phone_e164,role_key,academy_id,permissions,expires_at")
+    .eq("token_hash", await sha256Hex(token))
+    .gt("expires_at", new Date().toISOString())
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data || null;
 }
 
 function accountAcademyId(account: Record<string, any>) {
@@ -347,7 +362,7 @@ Deno.serve(async (request) => {
   try {
     const body = await request.json();
     const action = String(body.action || "login");
-    if (!["login", "register", "request-password-otp", "request-password-reset"].includes(action)) {
+    if (!["login", "register", "list-registration-requests", "request-password-otp", "request-password-reset"].includes(action)) {
       return jsonResponse({ ok: false, message: "الإجراء غير مدعوم." });
     }
 
@@ -356,6 +371,45 @@ Deno.serve(async (request) => {
     const password = String(body.password || "");
     const superAdminPhone = normalizePhone(Deno.env.get("QZ_SUPER_ADMIN_PHONE") || "");
     const superAdminPasswordHash = Deno.env.get("QZ_SUPER_ADMIN_PASSWORD_HASH") || "";
+
+    if (action === "list-registration-requests") {
+      const sessionToken = request.headers.get("x-qz-session") || String(body.qzSessionToken || body.sessionToken || "");
+      const qzSession = await findActiveSession(supabase, sessionToken);
+      if (!qzSession) {
+        return jsonResponse({ ok: false, message: "Unauthorized." }, 401);
+      }
+
+      const selectedColumns = "id,academy_name,owner_name,contact,phone,phone_e164,academy_id,city,status,role_key,auth_provider,created_at";
+      let query = supabase
+        .from("registration_requests")
+        .select(selectedColumns)
+        .order("created_at", { ascending: false });
+
+      if (qzSession.role_key !== "super_admin") {
+        const sessionPhone = normalizePhone(qzSession.phone_e164 || "");
+        const sessionLegacyPhone = legacyPhone(sessionPhone);
+        const sessionAcademyId = String(qzSession.academy_id || "");
+        const candidates = [
+          sessionAcademyId ? `academy_id.eq.${sessionAcademyId}` : "",
+          sessionPhone ? `phone_e164.eq.${sessionPhone}` : "",
+          sessionPhone ? `phone.eq.${sessionPhone}` : "",
+          sessionPhone ? `contact.eq.${sessionPhone}` : "",
+          sessionLegacyPhone ? `phone.eq.${sessionLegacyPhone}` : "",
+          sessionLegacyPhone ? `contact.eq.${sessionLegacyPhone}` : "",
+        ].filter(Boolean).join(",");
+
+        if (!candidates) {
+          return jsonResponse({ ok: true, requests: [] });
+        }
+
+        query = query.or(candidates);
+      }
+
+      const { data: requests, error: requestsError } = await query;
+      if (requestsError) throw requestsError;
+
+      return jsonResponse({ ok: true, requests: requests || [] });
+    }
 
     if (action === "register") {
       const academyName = String(body.academyName || body.academy_name || "").trim();

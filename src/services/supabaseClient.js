@@ -5,6 +5,8 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
 
+let activeQzSessionToken = "";
+
 function createSupabaseClient(qzSessionToken = "") {
   return createClient(supabaseUrl, supabaseAnonKey, {
       auth: {
@@ -21,8 +23,13 @@ export let supabase = isSupabaseConfigured
   ? createSupabaseClient()
   : null;
 
+export function getQzSessionToken() {
+  return activeQzSessionToken;
+}
+
 export function setQzSessionToken(qzSessionToken = "") {
+  activeQzSessionToken = qzSessionToken || "";
   if (!isSupabaseConfigured) return null;
-  supabase = createSupabaseClient(qzSessionToken);
+  supabase = createSupabaseClient(activeQzSessionToken);
   return supabase;
 }

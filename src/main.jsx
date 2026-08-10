@@ -257,7 +257,9 @@ function mergeRegistrationRequests(remoteRequests, localRequests = []) {
       phone: request.phone || localRequest?.phone || request.contact,
     };
   });
-  const localOnly = localRequests.filter((request) => !remotePhones.has(normalizePhone(request.phone || request.contact)));
+  const localOnly = localRequests.filter(
+    (request) => request.syncStatus !== "pending-upload" && !remotePhones.has(normalizePhone(request.phone || request.contact)),
+  );
 
   return [...mergedRemote, ...localOnly];
 }
@@ -266,7 +268,7 @@ async function syncMissingRemoteRegistrationRequests(remoteRequests = [], localR
   const remotePhones = new Set(remoteRequests.map((request) => normalizePhone(request.phone || request.contact)));
   const localRequestsToSync = localRequests.filter((request) => {
     const phone = normalizePhone(request.phone || request.contact);
-    return phone && request.passwordHash && !remotePhones.has(phone) && request.status !== STATUS_REJECTED;
+    return phone && request.passwordHash && request.syncStatus !== "pending-upload" && !remotePhones.has(phone) && request.status !== STATUS_REJECTED;
   });
 
   if (!localRequestsToSync.length) return remoteRequests;
@@ -297,7 +299,7 @@ async function syncMissingRemoteRegistrationRequests(remoteRequests = [], localR
   const syncedPhones = new Set(syncedRequests.map((request) => normalizePhone(request.phone || request.contact)));
   const remainingLocalRequests = localRequests.filter((request) => {
     const phone = normalizePhone(request.phone || request.contact);
-    return phone && !remotePhones.has(phone) && !syncedPhones.has(phone);
+    return phone && request.syncStatus !== "pending-upload" && !remotePhones.has(phone) && !syncedPhones.has(phone);
   });
 
   return [...syncedRequests, ...remoteRequests, ...remainingLocalRequests];
@@ -1898,25 +1900,6 @@ function App() {
 
     return passwordResetRequests || [];
   };
-
-  useEffect(() => {
-    const hasQueuedRegistration = (platformRegistrationRequests || []).some((request) => {
-      const phone = normalizePhone(request.phone || request.contact);
-      return phone && request.passwordHash && request.status !== STATUS_REJECTED && request.syncStatus === "pending-upload";
-    });
-
-    if (!hasQueuedRegistration || !isOnline) return undefined;
-
-    const retryQueuedRegistrations = () => {
-      refreshRegistrationRequests().catch(() => {
-        // Weak connections can fail repeatedly; the queued request remains local for the next retry.
-      });
-    };
-
-    retryQueuedRegistrations();
-    const retryTimer = window.setInterval(retryQueuedRegistrations, 45000);
-    return () => window.clearInterval(retryTimer);
-  }, [platformRegistrationRequests, isOnline, onlineSyncTick]);
 
   const syncAcademyPlatformAccounts = async (usersToSync = [], academySnapshot = data) => {
     if (!isOnline || !currentAcademyId || isSuperAdmin) return [];
@@ -4306,31 +4289,46 @@ function PlatformDashboard({
   useEffect(() => {
     let isMounted = true;
 
-    setIsRefreshingRequests(true);
-    Promise.all([
-      refreshRegistrationRequests?.(),
-      refreshPlatformUsers?.(),
-      refreshPasswordResetRequests?.(),
-    ])
-      .then(([requests]) => {
+    const refreshDashboardRequests = async ({ silent = false } = {}) => {
+      if (!silent) {
+        setIsRefreshingRequests(true);
+      }
+
+      try {
+        const [requests] = await Promise.all([
+          refreshRegistrationRequests?.(),
+          refreshPlatformUsers?.(),
+          refreshPasswordResetRequests?.(),
+        ]);
         if (isMounted) {
-          setRequestsRefreshMessage(`تم تحديث الطلبات: ${Array.isArray(requests) ? requests.length : registrationRequests.length} طلب.`);
+          if (!silent) {
+            setRequestsRefreshMessage(`تم تحديث الطلبات: ${Array.isArray(requests) ? requests.length : registrationRequests.length} طلب.`);
+          }
         }
-      })
-      .catch((error) => {
+      } catch (error) {
         if (isMounted) {
           logDeveloperError("auto-refresh-registration-requests", error);
-          setRequestsRefreshMessage(safeUserMessage(error, "تعذر تحديث الطلبات."));
+          if (!silent) {
+            setRequestsRefreshMessage(safeUserMessage(error, "تعذر تحديث الطلبات."));
+          }
         }
-      })
-      .finally(() => {
+      } finally {
         if (isMounted) {
-          setIsRefreshingRequests(false);
+          if (!silent) {
+            setIsRefreshingRequests(false);
+          }
         }
-      });
+      }
+    };
+
+    refreshDashboardRequests();
+    const dashboardRefreshTimer = window.setInterval(() => {
+      refreshDashboardRequests({ silent: true });
+    }, 10000);
 
     return () => {
       isMounted = false;
+      window.clearInterval(dashboardRefreshTimer);
     };
   }, []);
 

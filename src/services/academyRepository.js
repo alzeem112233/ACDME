@@ -1,4 +1,4 @@
-import { isSupabaseConfigured, supabase } from "./supabaseClient";
+import { getQzSessionToken, isSupabaseConfigured, supabase } from "./supabaseClient";
 
 const NETWORK_RETRY_DELAYS = [1200, 2800, 5500, 9000];
 const REGISTRATION_RETRY_DELAYS = [500, 1200, 2500];
@@ -408,6 +408,29 @@ export async function createPayment(payment) {
 
 export async function listRegistrationRequests() {
   if (!isSupabaseConfigured) return null;
+
+  const sessionToken = getQzSessionToken();
+  if (sessionToken) {
+    try {
+      const { data, error } = await withFastRegistrationRetry(() =>
+        supabase.functions.invoke("qz-auth", {
+          headers: { "x-qz-session": sessionToken },
+          body: {
+            action: "list-registration-requests",
+          },
+        }),
+      );
+
+      if (error) throw error;
+      if (data?.ok && Array.isArray(data.requests)) {
+        return data.requests.map(mapRegistrationRequest);
+      }
+    } catch (error) {
+      if (!isRegistrationFunctionUnavailable(error)) {
+        // Fall back to the table query below; older deployments can still read through RLS.
+      }
+    }
+  }
 
   const { data, error } = await withWeakNetworkRetry(() =>
     supabase
