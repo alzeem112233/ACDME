@@ -170,7 +170,19 @@ function normalizeText(value = "") {
 }
 
 function isSuperAdminSession(session) {
-  return session?.role === ROLE_SUPER_ADMIN;
+  return (
+    session?.role === ROLE_SUPER_ADMIN ||
+    session?.roleKey === "super_admin" ||
+    session?.permissionsJson?.all === true
+  );
+}
+
+function displayRoleFromRoleKey(roleKey = "", fallback = "") {
+  if (roleKey === "super_admin") return ROLE_SUPER_ADMIN;
+  if (roleKey === "academy_owner") return ROLE_OWNER;
+  if (roleKey === "admin") return ROLE_ADMIN;
+  if (roleKey === "coach") return ROLE_COACH;
+  return fallback || ROLE_OWNER;
 }
 
 function accountCountForAcademy(users = [], academyId = "") {
@@ -1862,7 +1874,7 @@ function App() {
 
   const refreshRegistrationRequests = async () => {
     try {
-      const requests = await listRegistrationRequests();
+      const requests = await listRegistrationRequests({ requireSession: isSuperAdmin });
       if (Array.isArray(requests)) {
         const remoteRequests = await syncMissingRemoteRegistrationRequests(requests, platformRegistrationRequests || []);
         const accountsFromRequests = remoteRequests.map(accountFromApprovedRequest).filter(Boolean);
@@ -2126,7 +2138,7 @@ function App() {
         // The local copy keeps the app usable if the remote account table is not ready yet.
       });
 
-    listRegistrationRequests()
+    listRegistrationRequests({ requireSession: isSuperAdmin })
       .then(async (requests) => {
         if (isMounted && Array.isArray(requests)) {
           const remoteRequests = await syncMissingRemoteRegistrationRequests(requests, platformRegistrationRequests || []);
@@ -2149,14 +2161,14 @@ function App() {
           }));
         }
       })
-      .catch(() => {
-        // The local copy keeps the app usable if the remote table is not ready yet.
+      .catch((error) => {
+        logDeveloperError("background-registration-requests", error);
       });
 
     return () => {
       isMounted = false;
     };
-  }, [isOnline, onlineSyncTick]);
+  }, [isOnline, onlineSyncTick, isSuperAdmin, qzSessionToken]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -3747,7 +3759,7 @@ function App() {
         onVerified={(nextSession) => {
           const onboardingKey = nextSession.academyId || normalizePhone(nextSession.phone);
           const hasCompletedOnboarding = Boolean(onboardingState[onboardingKey]?.completed);
-          const nextIsSuperAdmin = nextSession.role === ROLE_SUPER_ADMIN;
+          const nextIsSuperAdmin = isSuperAdminSession(nextSession);
           const shouldCompleteSetup = !nextIsSuperAdmin && nextSession.role === ROLE_OWNER && !hasCompletedOnboarding;
           const nextView = nextIsSuperAdmin ? "platformDashboard" : shouldCompleteSetup ? "coachSetup" : "home";
 
@@ -5207,7 +5219,7 @@ function LoginPassword({
         userId: account.id,
         name: account.name,
         phone: normalizedPhone,
-        role: account.role || ROLE_OWNER,
+        role: displayRoleFromRoleKey(account.roleKey, account.role),
         academyId: account.academyId || makeAcademyId(normalizedPhone),
         academyName: account.academyName || data.academy.name,
         academyNameEn: account.academyNameEn || data.academy.nameEn,

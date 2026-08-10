@@ -406,7 +406,7 @@ export async function createPayment(payment) {
   return data;
 }
 
-export async function listRegistrationRequests() {
+export async function listRegistrationRequests(options = {}) {
   if (!isSupabaseConfigured) return null;
 
   const sessionToken = getQzSessionToken();
@@ -432,6 +432,10 @@ export async function listRegistrationRequests() {
         throw error;
       }
     }
+  }
+
+  if (options.requireSession) {
+    throw new Error("جلسة الحساب الرئيسي تحتاج تحديثًا. سجل الدخول مرة أخرى لعرض طلبات التسجيل.");
   }
 
   const { data, error } = await withWeakNetworkRetry(() =>
