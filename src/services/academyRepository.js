@@ -133,6 +133,18 @@ function mapPlatformAccount(row) {
   };
 }
 
+function mapPasswordResetRequest(row) {
+  return {
+    id: row.id,
+    phone: normalizePhoneForRemote(row.phone_e164),
+    status: row.status || "pending",
+    deliveryChannel: row.delivery_channel || "manual",
+    note: row.note || "",
+    createdAt: row.created_at ? row.created_at.slice(0, 16).replace("T", " ") : "",
+    handledAt: row.handled_at || "",
+  };
+}
+
 function mapAcademyCloudData(row) {
   return {
     academyId: row.academy_id,
@@ -222,6 +234,48 @@ export async function requestPasswordResetOtp(phone) {
   }
 
   return data;
+}
+
+export async function listPasswordResetRequests() {
+  if (!isSupabaseConfigured) return [];
+
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("password_reset_requests")
+      .select("id,phone_e164,status,delivery_channel,note,created_at,handled_at,updated_at")
+      .order("created_at", { ascending: false }),
+  );
+
+  if (error) {
+    if (error.code === "42P01" || String(error.message || "").includes("password_reset_requests")) return [];
+    throw error;
+  }
+
+  return data.map(mapPasswordResetRequest);
+}
+
+export async function updatePasswordResetRequest(requestId, status) {
+  if (!isSupabaseConfigured || !requestId) return null;
+
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("password_reset_requests")
+      .update({
+        status,
+        handled_at: status === "pending" ? null : new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", requestId)
+      .select("id,phone_e164,status,delivery_channel,note,created_at,handled_at,updated_at")
+      .single(),
+  );
+
+  if (error) {
+    if (error.code === "42P01" || String(error.message || "").includes("password_reset_requests")) return null;
+    throw error;
+  }
+
+  return mapPasswordResetRequest(data);
 }
 
 export async function listRemoteAcademyData() {

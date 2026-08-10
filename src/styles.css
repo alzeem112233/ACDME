@@ -685,6 +685,25 @@ button {
   text-underline-offset: 4px;
 }
 
+.whatsapp-help-button {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid rgba(34, 197, 94, 0.34);
+  border-radius: 12px;
+  background: #ecfdf5;
+  color: #166534;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.whatsapp-help-button:hover {
+  background: #dcfce7;
+}
+
 .auth-help-text {
   margin: -4px 0 2px;
   color: var(--muted);
@@ -3754,6 +3773,10 @@ th {
 
 .platform-renewal-alerts {
   border-color: rgba(185, 28, 28, 0.16);
+}
+
+.password-reset-request-card {
+  border-color: rgba(34, 197, 94, 0.18);
 }
 
 .renewal-alert-list {

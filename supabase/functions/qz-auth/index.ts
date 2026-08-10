@@ -118,6 +118,22 @@ async function sendWhatsAppOtp(phone: string, code: string) {
   return true;
 }
 
+async function queueManualPasswordReset(supabase: any, phone: string, note = "") {
+  const { error } = await supabase
+    .from("password_reset_requests")
+    .insert({
+      phone_e164: phone,
+      status: "pending",
+      delivery_channel: "manual",
+      note,
+      updated_at: new Date().toISOString(),
+    });
+
+  if (error && error.code !== "42P01" && error.code !== "23505") {
+    throw error;
+  }
+}
+
 async function verifyLegacyPassword(password: string, storedHash = "") {
   if (!storedHash) return false;
   const normalizedPassword = normalizeDigits(password).trim();
@@ -308,9 +324,14 @@ Deno.serve(async (request) => {
       const sent = await sendWhatsAppOtp(phone, otp);
       if (!sent) {
         console.warn("WhatsApp OTP provider is not configured.");
+        await queueManualPasswordReset(supabase, phone, "WhatsApp provider is not configured; manual password reset is required.");
       }
 
-      return jsonResponse(genericResponse);
+      return jsonResponse({
+        ...genericResponse,
+        deliveryConfigured: sent,
+        fallback: sent ? null : "manual_admin_reset",
+      });
     }
 
     if (phone.length < 8 || !password) {

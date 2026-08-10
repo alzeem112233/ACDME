@@ -56,10 +56,12 @@ import {
   authenticateRemoteAccount,
   getRemoteAcademyData,
   getRemotePlatformAccountByPhone,
+  listPasswordResetRequests,
   listRemoteAcademyData,
   listPlatformAccounts,
   listRegistrationRequests,
   requestPasswordResetOtp,
+  updatePasswordResetRequest,
   updateRemotePlatformAccountPassword,
   updateRemotePlatformAccountStatus,
   updateRemoteRegistrationPassword,
@@ -98,6 +100,7 @@ const LOCAL_ONLY_ACADEMY_KEYS = ["players", "attendance", "payments", "expenses"
 const DEFAULT_ATTENDANCE_PAYMENT = 500;
 const RENEWAL_PERIOD_DAYS = 29;
 const PLATFORM_RENEWAL_DAYS = RENEWAL_PERIOD_DAYS;
+const SUPPORT_WHATSAPP_PHONE = normalizePhone(import.meta.env.VITE_SUPPORT_WHATSAPP_PHONE || "+967772227092");
 const footballPositionOptions = [
   { value: "حارس", label: "حارس" },
   { value: "مدافع", label: "مدافع" },
@@ -1432,6 +1435,7 @@ function App() {
   const [session, setSession] = useLocalState("acdme-session-v5", null);
   const [onboardingState, setOnboardingState] = useLocalState("acdme-onboarding-v4", {});
   const [platformData, setPlatformData] = useLocalState("acdme-platform-data-v1", platformSeedData);
+  const [passwordResetRequests, setPasswordResetRequests] = useLocalState("qz-password-reset-requests-v1", []);
   const [academyDataById, setAcademyDataById] = useLocalState("acdme-academy-data-by-id-v1", {});
   const [renewalTimers, setRenewalTimers] = useLocalState("acdme-renewal-timers-v1", {});
   const [themeMode, setThemeMode] = useLocalState("acdme-theme-v1", "light");
@@ -1668,6 +1672,20 @@ function App() {
     }
 
     return platformRegistrationRequests || [];
+  };
+
+  const refreshPasswordResetRequests = async () => {
+    try {
+      const requests = await listPasswordResetRequests();
+      if (Array.isArray(requests)) {
+        setPasswordResetRequests(requests);
+        return requests;
+      }
+    } catch {
+      // Manual reset requests remain available from the last successful fetch.
+    }
+
+    return passwordResetRequests || [];
   };
 
   useEffect(() => {
@@ -3383,6 +3401,7 @@ function App() {
     filteredPlayers,
     platformUsers,
     registrationRequests,
+    passwordResetRequests,
     setActiveView: navigateToView,
     selectedPlayerId,
     setSelectedPlayerId,
@@ -3413,10 +3432,12 @@ function App() {
     renewalTimers,
     refreshPlatformUsers,
     refreshRegistrationRequests,
+    refreshPasswordResetRequests,
     addPlatformUserFromDashboard,
     renewAcademyAccess,
     renewAcademyFromPlatform,
     updateRegistrationRequest,
+    updatePasswordResetRequest,
     resetPlatformUserPassword,
     togglePlatformUserStatus,
     deletePlatformUser,
@@ -3924,12 +3945,15 @@ function PlatformDashboard({
   stats,
   platformUsers,
   registrationRequests,
+  passwordResetRequests,
   renewalTimers,
   refreshPlatformUsers,
   refreshRegistrationRequests,
+  refreshPasswordResetRequests,
   addPlatformUserFromDashboard,
   renewAcademyFromPlatform,
   updateRegistrationRequest,
+  updatePasswordResetRequest,
   resetPlatformUserPassword,
   togglePlatformUserStatus,
   deletePlatformUser,
@@ -3948,6 +3972,7 @@ function PlatformDashboard({
   const approved = registrationRequests.filter((request) => request.status === "مقبول").length;
   const rejected = registrationRequests.filter((request) => request.status === "مرفوض").length;
   const approvedAccounts = platformUsers || [];
+  const pendingPasswordResetRequests = (passwordResetRequests || []).filter((request) => request.status === "pending");
   const requestStatusOrder = {
     [STATUS_PENDING]: 0,
     [STATUS_APPROVED]: 1,
@@ -4027,6 +4052,7 @@ function PlatformDashboard({
       const [requests] = await Promise.all([
         refreshRegistrationRequests?.(),
         refreshPlatformUsers?.(),
+        refreshPasswordResetRequests?.(),
       ]);
       setRequestsRefreshMessage(`تم تحديث الطلبات: ${Array.isArray(requests) ? requests.length : registrationRequests.length} طلب.`);
     } catch (error) {
@@ -4043,6 +4069,7 @@ function PlatformDashboard({
     Promise.all([
       refreshRegistrationRequests?.(),
       refreshPlatformUsers?.(),
+      refreshPasswordResetRequests?.(),
     ])
       .then(([requests]) => {
         if (isMounted) {
@@ -4084,6 +4111,20 @@ function PlatformDashboard({
     setIsAddingManualAccount(false);
   };
 
+  const handlePasswordResetRequest = async (request) => {
+    const user = approvedAccounts.find((account) => normalizePhone(account.phone) === normalizePhone(request.phone));
+    if (!user) {
+      await updatePasswordResetRequest?.(request.id, "dismissed");
+      await refreshPasswordResetRequests?.();
+      setRequestsRefreshMessage("لم يتم العثور على حساب معتمد لهذا الرقم، وتم إغلاق الطلب.");
+      return;
+    }
+
+    await handlePasswordReset(user);
+    await updatePasswordResetRequest?.(request.id, "handled");
+    await refreshPasswordResetRequests?.();
+  };
+
   const handlePlatformRenewal = async (academy) => {
     setRenewingAcademies((prev) => ({ ...prev, [academy.academyId]: true }));
     setRenewalMessages((prev) => ({ ...prev, [academy.academyId]: "" }));
@@ -4120,7 +4161,7 @@ function PlatformDashboard({
         <Metric title="طلبات بانتظار الموافقة" value={pending} icon={ClipboardCheck} tone="amber" />
         <Metric title="أكاديميات مسجلة" value={activeAcademiesCount} icon={BadgeCheck} tone="green" />
         <Metric title="طلبات مرفوضة" value={rejected} icon={Bell} tone="red" />
-        <Metric title="حسابات معتمدة" value={approvedAccounts.length} icon={CircleDollarSign} tone="blue" />
+        <Metric title="استعادة كلمة المرور" value={pendingPasswordResetRequests.length} icon={KeyRound} tone="blue" />
       </div>
 
       <div className="split-layout">
@@ -4189,6 +4230,55 @@ function PlatformDashboard({
             ))}
           </div>
         )}
+      </section>
+
+      <section className="panel table-panel platform-table-card password-reset-request-card">
+        <PanelHead
+          title="طلبات استعادة كلمة المرور"
+          text="إذا لم يكن إرسال واتساب الرسمي مفعّلًا، تظهر هنا طلبات الاستعادة ليتم تعيين كلمة مؤقتة من الحساب الرئيسي."
+          icon={KeyRound}
+        />
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>رقم الهاتف</th>
+                <th>القناة</th>
+                <th>وقت الطلب</th>
+                <th>الحالة</th>
+                <th>الإجراء</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pendingPasswordResetRequests.length === 0 && (
+                <tr>
+                  <td className="empty-table-cell" colSpan="5">لا توجد طلبات استعادة كلمة مرور مفتوحة.</td>
+                </tr>
+              )}
+              {pendingPasswordResetRequests.map((request) => (
+                <tr key={request.id}>
+                  <td>{request.phone}</td>
+                  <td>{request.deliveryChannel === "manual" ? "لوحة التحكم" : request.deliveryChannel}</td>
+                  <td>{request.createdAt}</td>
+                  <td><span className="status-badge">بانتظار المعالجة</span></td>
+                  <td>
+                    <div className="action-row">
+                      <button className="mini-button approve" type="button" onClick={() => handlePasswordResetRequest(request)}>
+                        تعيين كلمة جديدة
+                      </button>
+                      <button className="mini-button reject" type="button" onClick={async () => {
+                        await updatePasswordResetRequest?.(request.id, "dismissed");
+                        await refreshPasswordResetRequests?.();
+                      }}>
+                        إغلاق
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <form className="panel platform-manual-account-card" onSubmit={handleManualAccountSubmit}>
@@ -4950,15 +5040,26 @@ function LoginPassword({
 
     setIsLoading(true);
     try {
-      await requestPasswordResetOtp(normalizedPhone);
+      const result = await requestPasswordResetOtp(normalizedPhone);
       setPhone(normalizedPhone);
       setPassword("");
-      setMessage("إذا كان الرقم مرتبطًا بحساب معتمد، سيتم إرسال رمز تحقق مكون من 6 أرقام عبر واتساب. لا تشارك الرمز مع أي شخص.");
+      setMessage(
+        result?.fallback === "manual_admin_reset"
+          ? "تم تسجيل طلب استعادة في لوحة الحساب الرئيسي. يمكنك أيضًا فتح واتساب للتواصل مع الدعم ومتابعة الطلب."
+          : "إذا كان الرقم مرتبطًا بحساب معتمد، سيتم إرسال رمز تحقق مكون من 6 أرقام عبر واتساب. لا تشارك الرمز مع أي شخص.",
+      );
     } catch (error) {
       setMessage(friendlyNetworkError(error, "تعذر إرسال رمز التحقق الآن."));
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const openPasswordResetWhatsApp = () => {
+    const normalizedPhone = normalizePhone(resetPhone || phone);
+    const messageText = `طلب استعادة كلمة مرور QZ ACADEMY للرقم: ${normalizedPhone || "لم يتم إدخال الرقم"}`;
+    const supportDigits = SUPPORT_WHATSAPP_PHONE.replace(/\D/g, "");
+    window.open(`https://wa.me/${supportDigits}?text=${encodeURIComponent(messageText)}`, "_blank", "noopener,noreferrer");
   };
 
   const updateRegistrationField = (field, value) => {
@@ -5093,6 +5194,10 @@ function LoginPassword({
             <button className="primary-button" type="submit" disabled={isLoading}>
               <Send size={18} />
               {isLoading ? "جاري الإرسال..." : "إرسال رمز التحقق"}
+            </button>
+            <button className="whatsapp-help-button" type="button" onClick={openPasswordResetWhatsApp}>
+              <MessageSquare size={17} />
+              فتح واتساب للتواصل مع الدعم
             </button>
             <div className="otp-preview" aria-hidden="true">
               <span>مثال الرمز</span>
