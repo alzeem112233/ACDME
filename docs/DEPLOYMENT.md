@@ -3,7 +3,7 @@
 ## رابط الإنتاج الحالي
 
 ```text
-https://al-qaisar-dashboard.vercel.app
+https://qz-academy.vercel.app
 ```
 
 قاعدة البيانات الحالية على Supabase:
@@ -67,8 +67,8 @@ VITE_SUPABASE_ANON_KEY=...
 ## Docker
 
 ```bash
-docker build -t al-qaisar-dashboard .
-docker run -p 8080:80 al-qaisar-dashboard
+docker build -t qz-academy .
+docker run -p 8080:80 qz-academy
 ```
 
 ثم افتح:

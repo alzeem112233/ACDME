@@ -1,4 +1,4 @@
--- Online database schema for Al-Qaisar Master Dashboard.
+-- Online database schema for QZ ACADEMY.
 
 create extension if not exists "pgcrypto";
 

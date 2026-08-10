@@ -3239,7 +3239,7 @@ function App() {
       [currentAcademyId]: academyData,
     };
     const coreBackupPayload = {
-      app: "QZ Academy",
+      app: "QZ ACADEMY",
       version: 4,
       backupType: "full-app",
       createdAt: new Date().toISOString(),
@@ -3598,7 +3598,7 @@ function App() {
             <Dumbbell size={22} />
           </div>
           <div>
-            <strong>Al-Qaisar Master Dashboard</strong>
+            <strong>QZ ACADEMY</strong>
             <span>{session.academyName || data.academy.name || "الأكاديمية"}</span>
           </div>
         </div>
@@ -5071,7 +5071,7 @@ function LoginPassword({
             <Dumbbell size={24} />
           </div>
           <div>
-            <strong>Al-Qaisar Master Dashboard</strong>
+            <strong>QZ ACADEMY</strong>
             <span>منصة عامة لإدارة الأكاديميات الرياضية</span>
           </div>
         </div>

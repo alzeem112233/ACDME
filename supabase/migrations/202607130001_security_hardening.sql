@@ -1,4 +1,4 @@
--- QZ Academy security hardening.
+-- QZ ACADEMY security hardening.
 -- This keeps the current public API flow working while adding database-level
 -- guarantees against duplicate accounts and duplicate academy cloud rows.
 

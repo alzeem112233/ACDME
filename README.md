@@ -1,4 +1,4 @@
-# Al-Qaisar Master Dashboard
+# QZ ACADEMY
 
 تطبيق إدارة أكاديمية رياضية مبني بواجهة عربية RTL وقابل للنشر كتطبيق ويب.
 
