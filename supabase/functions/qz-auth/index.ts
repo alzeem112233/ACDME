@@ -347,7 +347,7 @@ Deno.serve(async (request) => {
   try {
     const body = await request.json();
     const action = String(body.action || "login");
-    if (!["login", "request-password-otp", "request-password-reset"].includes(action)) {
+    if (!["login", "register", "request-password-otp", "request-password-reset"].includes(action)) {
       return jsonResponse({ ok: false, message: "الإجراء غير مدعوم." });
     }
 
@@ -356,6 +356,77 @@ Deno.serve(async (request) => {
     const password = String(body.password || "");
     const superAdminPhone = normalizePhone(Deno.env.get("QZ_SUPER_ADMIN_PHONE") || "");
     const superAdminPasswordHash = Deno.env.get("QZ_SUPER_ADMIN_PASSWORD_HASH") || "";
+
+    if (action === "register") {
+      const academyName = String(body.academyName || body.academy_name || "").trim();
+      const ownerName = String(body.ownerName || body.owner_name || "").trim();
+      const academyId = String(body.academyId || body.academy_id || `academy-${phone.replace(/\D/g, "")}`).trim();
+      const city = String(body.city || "").trim();
+      const passwordHash = String(body.passwordHash || body.password_hash || "").trim();
+
+      if (phone.length < 8 || !academyName || !ownerName || !academyId || !passwordHash) {
+        return jsonResponse({ ok: false, message: "Registration request is incomplete." });
+      }
+
+      const selectedColumns = "id,academy_name,owner_name,contact,phone,phone_e164,academy_id,city,status,role_key,auth_provider,created_at";
+      const registrationPayload = {
+        academy_name: academyName,
+        owner_name: ownerName,
+        contact: phone,
+        phone,
+        phone_e164: phone,
+        academy_id: academyId,
+        city,
+        status: "pending",
+        role_key: "academy_owner",
+        auth_provider: "qz_auth",
+        password_hash: passwordHash,
+      };
+
+      let { data: requestRow, error: requestError } = await supabase
+        .from("registration_requests")
+        .insert(registrationPayload)
+        .select(selectedColumns)
+        .single();
+
+      if (requestError && (requestError.code === "23505" || String(requestError.message || "").toLowerCase().includes("duplicate"))) {
+        const candidates = [
+          `phone_e164.eq.${phone}`,
+          `phone.eq.${phone}`,
+          `contact.eq.${phone}`,
+          `phone.eq.${phoneWithoutPlus}`,
+          `contact.eq.${phoneWithoutPlus}`,
+          `academy_id.eq.${academyId}`,
+        ].join(",");
+
+        const updated = await supabase
+          .from("registration_requests")
+          .update({
+            ...registrationPayload,
+            reviewed_at: null,
+          })
+          .or(candidates)
+          .select(selectedColumns)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        requestRow = updated.data;
+        requestError = updated.error;
+      }
+
+      if (requestError) throw requestError;
+      if (!requestRow) {
+        return jsonResponse({ ok: false, message: "Registration request could not be confirmed." }, 500);
+      }
+
+      return jsonResponse({
+        ok: true,
+        message: "Registration request was sent to the dashboard.",
+        request: requestRow,
+      });
+    }
+
     if (action === "request-password-reset") {
       if (phone.length < 8) {
         return jsonResponse({ ok: false, message: "Invalid phone number." });

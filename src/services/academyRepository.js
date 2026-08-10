@@ -1,6 +1,7 @@
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 
 const NETWORK_RETRY_DELAYS = [1200, 2800, 5500, 9000];
+const REGISTRATION_RETRY_DELAYS = [500, 1200, 2500];
 
 function wait(ms) {
   return new Promise((resolve) => {
@@ -37,6 +38,37 @@ async function withWeakNetworkRetry(operation) {
   }
 
   throw lastError;
+}
+
+async function withFastRegistrationRetry(operation) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= REGISTRATION_RETRY_DELAYS.length; attempt += 1) {
+    try {
+      const result = await operation();
+      if (result?.error && isRetryableNetworkError(result.error) && attempt < REGISTRATION_RETRY_DELAYS.length) {
+        lastError = result.error;
+        await wait(REGISTRATION_RETRY_DELAYS[attempt]);
+        continue;
+      }
+
+      return result;
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableNetworkError(error) || attempt === REGISTRATION_RETRY_DELAYS.length) {
+        throw error;
+      }
+
+      await wait(REGISTRATION_RETRY_DELAYS[attempt]);
+    }
+  }
+
+  throw lastError;
+}
+
+function isRegistrationFunctionUnavailable(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return message.includes("function not found") || message.includes("404") || message.includes("not found");
 }
 
 const remoteStatusByArabic = {
@@ -490,6 +522,32 @@ export async function createRegistrationRequest(request) {
     academy_id: request.academyId,
     password_hash: request.passwordHash,
   };
+
+  try {
+    const { data, error } = await withFastRegistrationRetry(() =>
+      supabase.functions.invoke("qz-auth", {
+        body: {
+          action: "register",
+          academyName: request.academyName,
+          ownerName: request.ownerName,
+          phone,
+          academyId: request.academyId,
+          city: request.city,
+          status: toRemoteStatus(request.status),
+          passwordHash: request.passwordHash,
+        },
+      }),
+    );
+
+    if (error) throw error;
+    if (!data?.ok) {
+      throw new Error(data?.message || "طھط¹ط°ط± ط¥ط±ط³ط§ظ„ ط·ظ„ط¨ ط§ظ„طھط³ط¬ظٹظ„.");
+    }
+
+    if (data.request) return mapRegistrationRequest(data.request);
+  } catch (error) {
+    if (!isRegistrationFunctionUnavailable(error)) throw error;
+  }
 
   let { data, error } = await withWeakNetworkRetry(() =>
     supabase
