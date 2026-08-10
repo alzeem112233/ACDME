@@ -125,6 +125,7 @@ function mapPlatformAccount(row) {
     academyId: row.academy_id,
     academyName: row.academy_name,
     permissions: row.permissions || "",
+    permissionsJson: row.permissions_json || {},
     authProvider: row.auth_provider || "",
     passwordHash: "",
     passwordStatus: row.password_status || "مشفرة",
@@ -169,9 +170,11 @@ function platformAccountPayload(account) {
     phone,
     phone_e164: phone,
     role: account.role,
+    role_key: account.roleKey,
     academy_id: account.academyId,
     academy_name: account.academyName,
     permissions: account.permissions,
+    permissions_json: account.permissionsJson || {},
     password_hash: account.passwordHash,
     password_status: account.passwordStatus || "مشفرة",
     password_updated_at: account.passwordUpdatedAt || new Date().toISOString().slice(0, 10),
@@ -410,7 +413,7 @@ export async function listPlatformAccounts() {
   const { data, error } = await withWeakNetworkRetry(() =>
     supabase
       .from("platform_accounts")
-      .select("id,name,phone,phone_e164,role,role_key,auth_provider,academy_id,academy_name,permissions,password_status,password_updated_at,status,created_at,updated_at")
+      .select("id,name,phone,phone_e164,role,role_key,auth_provider,academy_id,academy_name,permissions,permissions_json,password_status,password_updated_at,status,created_at,updated_at")
       .order("created_at", { ascending: false }),
   );
 
@@ -426,7 +429,7 @@ export async function getRemotePlatformAccountByPhone(phone) {
   const { data, error } = await withWeakNetworkRetry(() =>
     supabase
       .from("platform_accounts")
-      .select("id,name,phone,phone_e164,role,role_key,auth_provider,academy_id,academy_name,permissions,password_status,password_updated_at,status,created_at,updated_at")
+      .select("id,name,phone,phone_e164,role,role_key,auth_provider,academy_id,academy_name,permissions,permissions_json,password_status,password_updated_at,status,created_at,updated_at")
       .or(`phone_e164.eq.${normalizedPhone},phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`)
       .limit(1)
       .maybeSingle(),
@@ -443,7 +446,7 @@ export async function upsertPlatformAccount(account) {
     supabase
       .from("platform_accounts")
       .upsert(platformAccountPayload(account), { onConflict: "phone" })
-      .select("id,name,phone,phone_e164,role,role_key,auth_provider,academy_id,academy_name,permissions,password_status,password_updated_at,status,created_at,updated_at")
+      .select("id,name,phone,phone_e164,role,role_key,auth_provider,academy_id,academy_name,permissions,permissions_json,password_status,password_updated_at,status,created_at,updated_at")
       .single(),
   );
 
@@ -627,7 +630,7 @@ export async function updateRemotePlatformAccountPassword(phone, passwordHash) {
       updated_at: new Date().toISOString(),
       })
       .or(`phone_e164.eq.${normalizedPhone},phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`)
-      .select("id,name,phone,phone_e164,role,role_key,auth_provider,academy_id,academy_name,permissions,password_status,password_updated_at,status,created_at,updated_at"),
+      .select("id,name,phone,phone_e164,role,role_key,auth_provider,academy_id,academy_name,permissions,permissions_json,password_status,password_updated_at,status,created_at,updated_at"),
   );
 
   if (error) throw error;
@@ -647,7 +650,7 @@ export async function updateRemotePlatformAccountStatus(phone, status) {
       updated_at: new Date().toISOString(),
       })
       .or(`phone_e164.eq.${normalizedPhone},phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`)
-      .select("id,name,phone,phone_e164,role,role_key,auth_provider,academy_id,academy_name,permissions,password_status,password_updated_at,status,created_at,updated_at"),
+      .select("id,name,phone,phone_e164,role,role_key,auth_provider,academy_id,academy_name,permissions,permissions_json,password_status,password_updated_at,status,created_at,updated_at"),
   );
 
   if (error) throw error;

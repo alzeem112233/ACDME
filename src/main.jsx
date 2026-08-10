@@ -49,6 +49,7 @@ import {
 } from "lucide-react";
 import { registerServiceWorker } from "./registerServiceWorker";
 import { readLocalData, writeLocalData } from "./services/localRepository";
+import { setQzSessionToken } from "./services/supabaseClient";
 import {
   createRegistrationRequest,
   deleteRemoteAcademyData,
@@ -1475,6 +1476,10 @@ function App() {
   const [onlineSyncTick, setOnlineSyncTick] = useState(0);
   const [renewalClockTick, setRenewalClockTick] = useState(() => Date.now());
   const [lastView, setLastView] = useState("");
+
+  useEffect(() => {
+    setQzSessionToken(session?.verified ? session.accessToken || "" : "");
+  }, [session?.verified, session?.accessToken]);
   const isSuperAdmin = isSuperAdminSession(session);
   const currentAcademyId = session?.academyId || "";
   const data = useMemo(() => {
@@ -5002,6 +5007,10 @@ function LoginPassword({
         academyNameEn: account.academyNameEn || data.academy.nameEn,
         academyLogo: account.academyLogo || data.academy.logo,
         permissions: account.permissions || PERMISSION_FULL,
+        roleKey: account.roleKey || "",
+        permissionsJson: account.permissionsJson || {},
+        accessToken: account.accessToken || "",
+        accessTokenExpiresAt: account.accessTokenExpiresAt || "",
         signedInAt: new Date().toISOString(),
       });
     } catch (error) {

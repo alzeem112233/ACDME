@@ -60,6 +60,55 @@ function otpMessage(code: string) {
   return `QZ ACADEMY password reset code: ${code}. It expires in 10 minutes.`;
 }
 
+function randomToken() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function roleKey(row: Record<string, any>, fallback = "coach") {
+  const key = String(row.role_key || row.roleKey || "").trim();
+  if (["super_admin", "academy_owner", "admin", "coach"].includes(key)) return key;
+
+  const role = String(row.role || fallback).trim().toLowerCase();
+  if (role.includes("super") || row.role === "سوبر أدمين") return "super_admin";
+  if (role.includes("owner") || row.role === "مالك أكاديمية") return "academy_owner";
+  if (role.includes("admin")) return "admin";
+  return fallback;
+}
+
+function permissionsJson(row: Record<string, any>, key = roleKey(row)) {
+  if (row.permissions_json && typeof row.permissions_json === "object") return row.permissions_json;
+  if (row.permissionsJson && typeof row.permissionsJson === "object") return row.permissionsJson;
+  if (key === "super_admin") return { all: true };
+  if (key === "academy_owner") return { academy: true, accounts: true, players: true, finance: true, reports: true };
+  if (key === "admin") return { players: true, attendance: true, finance: true, reports: true };
+  return { players: true, attendance: true };
+}
+
+async function issueSession(supabase: any, account: Record<string, any>) {
+  const token = randomToken();
+  const key = roleKey(account, "academy_owner");
+  const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+
+  const { error } = await supabase
+    .from("qz_app_sessions")
+    .insert({
+      token_hash: await sha256Hex(token),
+      account_id: String(account.id || ""),
+      phone_e164: normalizePhone(account.phone_e164 || account.phone || account.contact || ""),
+      role_key: key,
+      academy_id: key === "super_admin" ? "platform" : String(account.academy_id || account.academyId || ""),
+      permissions: permissionsJson(account, key),
+      expires_at: expiresAt,
+    });
+
+  if (error) throw error;
+  return { token, expiresAt, roleKey: key, permissions: permissionsJson(account, key) };
+}
+
 async function sendWhatsAppOtp(phone: string, code: string) {
   const message = otpMessage(code);
   const customApiUrl = Deno.env.get("QZ_WHATSAPP_API_URL") || "";
@@ -194,18 +243,45 @@ async function findApprovedAccount(supabase: any, phone: string, phoneWithoutPlu
 
 function publicAccount(row: Record<string, any>, fallback: Record<string, any> = {}) {
   const phone = normalizePhone(row.phone_e164 || row.phone || row.contact || fallback.phone || "");
+  const key = roleKey({ ...fallback, ...row }, fallback.roleKey || "academy_owner");
   return {
     id: row.id || fallback.id || `account-${phone.replace(/\W/g, "")}`,
     name: row.name || row.owner_name || fallback.name || "",
     phone,
     role: row.role || fallback.role || "مالك أكاديمية",
+    roleKey: key,
     academyId: row.academy_id || fallback.academyId || "",
     academyName: row.academy_name || fallback.academyName || "",
     academyNameEn: row.academy_name_en || fallback.academyNameEn || "",
     academyLogo: row.academy_logo || fallback.academyLogo || "",
+    permissionsJson: permissionsJson(row, key),
     permissions: row.permissions || fallback.permissions || "إدارة كاملة",
     status: row.status || fallback.status || "نشط",
   };
+}
+
+async function loginResponse(supabase: any, row: Record<string, any>, fallback: Record<string, any> = {}) {
+  const account = publicAccount(row, fallback);
+  const session = await issueSession(supabase, {
+    ...fallback,
+    ...row,
+    id: account.id,
+    phone: account.phone,
+    role_key: account.roleKey,
+    academy_id: account.academyId,
+    permissions_json: account.permissionsJson,
+  });
+
+  return jsonResponse({
+    ok: true,
+    account: {
+      ...account,
+      accessToken: session.token,
+      accessTokenExpiresAt: session.expiresAt,
+      roleKey: session.roleKey,
+      permissionsJson: session.permissions,
+    },
+  });
 }
 
 function accountFromCloudUser(user: Record<string, any>, academyData: Record<string, any>, academyId: string) {
@@ -366,9 +442,29 @@ Deno.serve(async (request) => {
         return jsonResponse({ ok: false, message: "رقم الهاتف أو كلمة السر غير صحيحة." });
       }
 
-      return jsonResponse({
-        ok: true,
-        account: {
+      await supabase
+        .from("platform_accounts")
+        .upsert(
+          {
+            id: "super-admin",
+            name: "Super Admin",
+            phone,
+            phone_e164: phone,
+            role: "Super Admin",
+            role_key: "super_admin",
+            academy_id: "platform",
+            academy_name: "QZ ACADEMY",
+            permissions: "Full system access",
+            permissions_json: { all: true },
+            password_hash: superAdminPasswordHash,
+            password_status: "encrypted",
+            status: "active",
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "phone" },
+        );
+
+      return await loginResponse(supabase, {
           id: "super-admin",
           name: "مدير المنصة",
           phone,
@@ -377,7 +473,11 @@ Deno.serve(async (request) => {
           academyName: "إدارة المنصة",
           permissions: "إدارة كاملة",
           status: "نشط",
-        },
+        phone_e164: phone,
+        role_key: "super_admin",
+        academy_id: "platform",
+        academy_name: "QZ ACADEMY",
+        permissions_json: { all: true },
       });
     }
 
@@ -400,7 +500,7 @@ Deno.serve(async (request) => {
         return jsonResponse({ ok: false, message: "رقم الهاتف أو كلمة السر غير صحيحة." });
       }
 
-      return jsonResponse({ ok: true, account: publicAccount(accountRow) });
+      return await loginResponse(supabase, accountRow);
     }
 
     const { data: requestRow, error: requestError } = await supabase
@@ -423,16 +523,14 @@ Deno.serve(async (request) => {
         return jsonResponse({ ok: false, message: "رقم الهاتف أو كلمة السر غير صحيحة." });
       }
 
-      return jsonResponse({
-        ok: true,
-        account: publicAccount(requestRow, {
+      return await loginResponse(supabase, requestRow, {
           id: `request-${requestRow.id}`,
           role: "مالك أكاديمية",
           academyId: requestRow.academy_id || `academy-${phone.replace(/\D/g, "")}`,
           academyName: requestRow.academy_name || "",
           permissions: "إدارة كاملة",
-        }),
-      });
+          roleKey: "academy_owner",
+        });
     }
 
     const { data: cloudRows, error: cloudError } = await supabase
@@ -457,7 +555,7 @@ Deno.serve(async (request) => {
         return jsonResponse({ ok: false, message: "رقم الهاتف أو كلمة السر غير صحيحة." });
       }
 
-      return jsonResponse({ ok: true, account: publicAccount(matched) });
+      return await loginResponse(supabase, matched);
     }
 
     return jsonResponse({ ok: false, message: "هذا الرقم غير مسجل كحساب معتمد." });
