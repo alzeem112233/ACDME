@@ -3142,8 +3142,8 @@ function App() {
       users:
         approvedAccount
           ? [
-              ...(prev.users || []).filter((user) => normalizePhone(user.phone) !== normalizePhone(currentRequest.phone)),
               approvedAccount,
+              ...(prev.users || []).filter((user) => normalizePhone(user.phone) !== normalizePhone(currentRequest.phone)),
             ]
           : prev.users,
     }));
@@ -3156,17 +3156,36 @@ function App() {
     }
 
     try {
-      await updateRemoteRegistrationRequest(requestId, status);
+      const reviewedRequest = await updateRemoteRegistrationRequest(requestId, status);
       if (approvedAccount) {
-        const syncedAccount = await upsertPlatformAccount(approvedAccount);
+        const syncedAccount = reviewedRequest?.account || await upsertPlatformAccount(approvedAccount);
+        setPlatformData((prev) => ({
+          ...prev,
+          registrationRequests: (prev.registrationRequests || platformSeedData.registrationRequests).map((request) =>
+            request.id === requestId ? { ...request, ...(reviewedRequest || {}), status } : request,
+          ),
+          users: [
+            syncedAccount || approvedAccount,
+            ...(prev.users || []).filter((user) => normalizePhone(user.phone) !== normalizePhone(currentRequest.phone)),
+          ],
+        }));
         const remoteAcademy = await getRemoteAcademyData(academyId).catch(() => null);
         const cloudAcademyData =
           remoteAcademy?.data && hasAcademyContent(remoteAcademy.data)
             ? mergeAcademyLocalAndRemote(approvedAcademyData, remoteAcademy.data, syncedAccount || approvedAccount)
             : approvedAcademyData;
         await upsertRemoteAcademyData(academyId, toCloudAcademyData(cloudAcademyData, syncedAccount || approvedAccount));
+        await refreshPlatformUsers();
+      } else if (reviewedRequest) {
+        setPlatformData((prev) => ({
+          ...prev,
+          registrationRequests: (prev.registrationRequests || platformSeedData.registrationRequests).map((request) =>
+            request.id === requestId ? { ...request, ...reviewedRequest, status } : request,
+          ),
+        }));
       }
-    } catch {
+    } catch (error) {
+      logDeveloperError("review-registration-request", error);
       // The visible dashboard state is kept locally if remote update is unavailable.
     }
   };

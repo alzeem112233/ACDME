@@ -1,4 +1,4 @@
-const CACHE_NAME = "qz-academy-v59";
+const CACHE_NAME = "qz-academy-v60";
 const APP_SHELL = ["/", "/index.html", "/manifest.webmanifest", "/icons/app-icon.svg"];
 
 self.addEventListener("install", (event) => {

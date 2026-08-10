@@ -379,7 +379,7 @@ Deno.serve(async (request) => {
   try {
     const body = await request.json();
     const action = String(body.action || "login");
-    if (!["login", "register", "list-registration-requests", "request-password-otp", "request-password-reset"].includes(action)) {
+    if (!["login", "register", "list-registration-requests", "review-registration-request", "request-password-otp", "request-password-reset"].includes(action)) {
       return jsonResponse({ ok: false, message: "الإجراء غير مدعوم." });
     }
 
@@ -426,6 +426,76 @@ Deno.serve(async (request) => {
       if (requestsError) throw requestsError;
 
       return jsonResponse({ ok: true, requests: requests || [] });
+    }
+
+    if (action === "review-registration-request") {
+      const sessionToken = request.headers.get("x-qz-session") || String(body.qzSessionToken || body.sessionToken || "");
+      const qzSession = await findActiveSession(supabase, sessionToken, { renewExpiredSuperAdmin: true });
+      if (!qzSession || qzSession.role_key !== "super_admin") {
+        return jsonResponse({ ok: false, message: "Unauthorized." }, 401);
+      }
+
+      const requestId = String(body.requestId || body.id || "").trim();
+      const reviewStatus = String(body.status || "pending").trim();
+      if (!requestId || !["pending", "approved", "rejected"].includes(reviewStatus)) {
+        return jsonResponse({ ok: false, message: "Invalid review request." }, 400);
+      }
+
+      const selectedRequestColumns = "id,academy_name,owner_name,contact,phone,phone_e164,academy_id,city,status,role_key,auth_provider,created_at";
+      const { data: reviewedRequest, error: reviewError } = await supabase
+        .from("registration_requests")
+        .update({
+          status: reviewStatus,
+          reviewed_at: new Date().toISOString(),
+        })
+        .eq("id", requestId)
+        .select("*")
+        .single();
+
+      if (reviewError) throw reviewError;
+
+      let approvedAccount = null;
+      if (reviewStatus === "approved") {
+        const accountPhone = normalizePhone(reviewedRequest.phone_e164 || reviewedRequest.phone || reviewedRequest.contact || "");
+        const academyId = String(reviewedRequest.academy_id || `academy-${accountPhone.replace(/\D/g, "")}`);
+        const { data: accountRow, error: accountError } = await supabase
+          .from("platform_accounts")
+          .upsert(
+            {
+              id: `user-${reviewedRequest.id}`,
+              name: reviewedRequest.owner_name || reviewedRequest.academy_name || "Academy Owner",
+              phone: accountPhone,
+              phone_e164: accountPhone,
+              role: "مالك أكاديمية",
+              role_key: "academy_owner",
+              academy_id: academyId,
+              academy_name: reviewedRequest.academy_name || "",
+              permissions: "إدارة كاملة",
+              permissions_json: { academy: true, accounts: true, players: true, finance: true, reports: true },
+              password_hash: reviewedRequest.password_hash || "",
+              password_status: "مشفرة",
+              password_updated_at: new Date().toISOString().slice(0, 10),
+              status: "نشط",
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: "phone" },
+          )
+          .select("id,name,phone,phone_e164,role,role_key,auth_provider,academy_id,academy_name,permissions,permissions_json,password_status,password_updated_at,status,created_at,updated_at")
+          .single();
+
+        if (accountError) throw accountError;
+        approvedAccount = accountRow;
+      }
+
+      const publicRequest = Object.fromEntries(
+        selectedRequestColumns.split(",").map((column) => [column, reviewedRequest[column]]),
+      );
+
+      return jsonResponse({
+        ok: true,
+        request: publicRequest,
+        account: approvedAccount,
+      });
     }
 
     if (action === "register") {

@@ -634,6 +634,33 @@ export async function createRegistrationRequest(request) {
 export async function updateRemoteRegistrationRequest(requestId, status) {
   if (!isSupabaseConfigured) return null;
 
+  const sessionToken = getQzSessionToken();
+  if (sessionToken) {
+    try {
+      const { data, error } = await withFastRegistrationRetry(() =>
+        supabase.functions.invoke("qz-auth", {
+          headers: { "x-qz-session": sessionToken },
+          body: {
+            action: "review-registration-request",
+            requestId,
+            status: toRemoteStatus(status),
+            qzSessionToken: sessionToken,
+          },
+        }),
+      );
+
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.message || "تعذر تحديث طلب التسجيل.");
+      const reviewedRequest = data.request ? mapRegistrationRequest(data.request) : null;
+      if (reviewedRequest && data.account) {
+        reviewedRequest.account = mapPlatformAccount(data.account);
+      }
+      if (reviewedRequest) return reviewedRequest;
+    } catch (error) {
+      if (!isRegistrationFunctionUnavailable(error)) throw error;
+    }
+  }
+
   const { data, error } = await withWeakNetworkRetry(() =>
     supabase
       .from("registration_requests")
