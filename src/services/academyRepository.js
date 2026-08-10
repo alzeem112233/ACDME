@@ -222,7 +222,7 @@ export async function requestPasswordResetOtp(phone) {
   const { data, error } = await withWeakNetworkRetry(() =>
     supabase.functions.invoke("qz-auth", {
       body: {
-        action: "request-password-otp",
+        action: "request-password-reset",
         phone,
       },
     }),

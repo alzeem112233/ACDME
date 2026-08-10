@@ -195,6 +195,47 @@ button {
   padding: 0;
 }
 
+.password-strength {
+  display: grid;
+  gap: 6px;
+  margin-top: -2px;
+}
+
+.password-strength > div {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.password-strength span {
+  display: block;
+  height: 5px;
+  border-radius: 999px;
+  background: #e5e7eb;
+}
+
+.password-strength span.filled {
+  background: #d97706;
+}
+
+.password-strength.fair span.filled {
+  background: #d2ae2d;
+}
+
+.password-strength.good span.filled {
+  background: #16a34a;
+}
+
+.password-strength.strong span.filled {
+  background: #0f766e;
+}
+
+.password-strength small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .field-with-icon .password-field {
   border: 0;
   background: transparent;

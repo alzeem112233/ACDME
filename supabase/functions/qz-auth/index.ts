@@ -264,7 +264,7 @@ Deno.serve(async (request) => {
   try {
     const body = await request.json();
     const action = String(body.action || "login");
-    if (!["login", "request-password-otp"].includes(action)) {
+    if (!["login", "request-password-otp", "request-password-reset"].includes(action)) {
       return jsonResponse({ ok: false, message: "الإجراء غير مدعوم." });
     }
 
@@ -273,6 +273,28 @@ Deno.serve(async (request) => {
     const password = String(body.password || "");
     const superAdminPhone = normalizePhone(Deno.env.get("QZ_SUPER_ADMIN_PHONE") || "");
     const superAdminPasswordHash = Deno.env.get("QZ_SUPER_ADMIN_PASSWORD_HASH") || "";
+    if (action === "request-password-reset") {
+      if (phone.length < 8) {
+        return jsonResponse({ ok: false, message: "Invalid phone number." });
+      }
+
+      const genericResponse = {
+        ok: true,
+        message: "If this phone belongs to an approved account, a password reset request will be sent to the platform dashboard.",
+        fallback: "manual_admin_reset",
+      };
+      const account = superAdminPhone && phone === superAdminPhone
+        ? { id: "super-admin", phone }
+        : await findApprovedAccount(supabase, phone, phoneWithoutPlus);
+
+      if (!account) {
+        return jsonResponse(genericResponse);
+      }
+
+      await queueManualPasswordReset(supabase, phone, "User requested password reset from the login page.");
+      return jsonResponse(genericResponse);
+    }
+
     if (action === "request-password-otp") {
       if (phone.length < 8) {
         return jsonResponse({ ok: false, message: "Invalid phone number." });

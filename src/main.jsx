@@ -457,10 +457,36 @@ function accountFromAcademyCloudCoach(coach, academyData, academyId) {
 function generateTemporaryPassword() {
   const bytes = new Uint8Array(6);
   crypto.getRandomValues(bytes);
-  const numericPart = Array.from(bytes)
+  return Array.from(bytes)
     .map((byte) => String(byte % 10))
     .join("");
-  return `QZ-${numericPart}`;
+}
+
+function passwordPolicy(password = "") {
+  const value = String(password);
+  const digitCount = (value.match(/\d/g) || []).length;
+  const hasLetters = /[A-Za-z\u0600-\u06FF]/.test(value);
+  const hasSymbols = /[^\dA-Za-z\u0600-\u06FF]/.test(value);
+  const isValid = digitCount >= 6;
+  let score = digitCount >= 6 ? 1 : 0;
+  if (value.length >= 8) score += 1;
+  if (hasLetters) score += 1;
+  if (hasSymbols) score += 1;
+
+  const levels = [
+    { label: "ضعيفة", className: "weak" },
+    { label: "مقبولة", className: "fair" },
+    { label: "جيدة", className: "good" },
+    { label: "قوية", className: "strong" },
+  ];
+
+  return {
+    isValid,
+    digitCount,
+    score: Math.min(score, 4),
+    ...(levels[Math.max(0, Math.min(score, 4)) - 1] || levels[0]),
+    message: isValid ? "مطابقة للشرط الأساسي" : "استخدم 6 أرقام على الأقل",
+  };
 }
 
 function normalizeAcademyData(value = {}, account = {}) {
@@ -2216,8 +2242,8 @@ function App() {
       return { ok: false, message: `لا يمكن ربط أكثر من ${MAX_ACADEMY_ACCOUNTS} حسابات بهذه الأكاديمية.` };
     }
 
-    if (!coachInput.password || coachInput.password.length < 6) {
-      return { ok: false, message: "كلمة السر المؤقتة يجب أن تكون 6 أحرف أو أرقام على الأقل." };
+    if (!passwordPolicy(coachInput.password).isValid) {
+      return { ok: false, message: "كلمة السر المؤقتة يجب أن تحتوي على 6 أرقام على الأقل." };
     }
 
     const passwordHash = await hashPassword(coachInput.password);
@@ -2974,8 +3000,8 @@ function App() {
       return { ok: false, message: "أدخل اسم الأكاديمية واسم المسؤول." };
     }
 
-    if (password.length < 6) {
-      return { ok: false, message: "كلمة السر يجب أن تكون 6 أحرف أو أرقام على الأقل." };
+    if (!passwordPolicy(password).isValid) {
+      return { ok: false, message: "كلمة السر يجب أن تحتوي على 6 أرقام على الأقل." };
     }
 
     const existingUser = platformUsers.find((user) => normalizePhone(user.phone) === normalizedPhone);
@@ -3179,8 +3205,9 @@ function App() {
         return { ok: false, message: "لا يمكن تغيير كلمة السر لهذا الحساب قبل مزامنة بياناته." };
       }
 
-      if (nextPassword.length < 6) {
-        return { ok: false, message: "كلمة السر الجديدة يجب أن تكون 6 أحرف أو أرقام على الأقل." };
+      const nextPasswordPolicy = passwordPolicy(nextPassword);
+      if (!nextPasswordPolicy.isValid) {
+        return { ok: false, message: "كلمة السر الجديدة يجب أن تحتوي على 6 أرقام على الأقل." };
       }
 
       if (nextPassword !== confirmPassword) {
@@ -3245,8 +3272,17 @@ function App() {
       }
     }
 
+    if (passwordWasChanged) {
+      setSession((prev) => (prev ? { ...prev, name: nextName, photo: nextPhoto || prev.photo || "" } : prev));
+      window.setTimeout(() => {
+        setSession((prev) => (prev ? { ...prev, verified: false, isFirstLogin: false } : prev));
+        setActiveView("home");
+      }, 1400);
+      return { ok: true, message: "تم تغيير كلمة المرور بنجاح. سيتم إعادتك إلى تسجيل الدخول." };
+    }
+
     setSession((prev) => (prev ? { ...prev, name: nextName, photo: nextPhoto || prev.photo || "" } : prev));
-    return { ok: true, message: passwordWasChanged ? "تم تحديث الاسم وكلمة السر." : "تم تحديث اسم المستخدم." };
+    return { ok: true, message: "تم تحديث اسم المستخدم." };
   };
 
   const exportLocalBackup = async () => {
@@ -4814,6 +4850,24 @@ function PasswordField({ value, onChange, name, placeholder, required = false, m
   );
 }
 
+function PasswordStrengthIndicator({ password = "" }) {
+  const policy = passwordPolicy(password);
+  const bars = [1, 2, 3, 4];
+
+  return (
+    <div className={`password-strength ${policy.className}`}>
+      <div>
+        {bars.map((bar) => (
+          <span key={bar} className={bar <= policy.score ? "filled" : ""} />
+        ))}
+      </div>
+      <small>
+        قوة كلمة المرور: {policy.label} - {policy.message}
+      </small>
+    </div>
+  );
+}
+
 function ImageSourceControls({ name, onChange }) {
   return (
     <div className="image-source-controls" aria-label="اختيار مصدر الصورة">
@@ -4967,8 +5021,8 @@ function LoginPassword({
       return;
     }
 
-    if (registration.password.length < 6) {
-      setMessage("كلمة السر يجب أن تكون 6 أحرف أو أرقام على الأقل.");
+    if (!passwordPolicy(registration.password).isValid) {
+      setMessage("كلمة السر يجب أن تحتوي على 6 أرقام على الأقل.");
       return;
     }
 
@@ -5040,14 +5094,10 @@ function LoginPassword({
 
     setIsLoading(true);
     try {
-      const result = await requestPasswordResetOtp(normalizedPhone);
+      await requestPasswordResetOtp(normalizedPhone);
       setPhone(normalizedPhone);
       setPassword("");
-      setMessage(
-        result?.fallback === "manual_admin_reset"
-          ? "تم تسجيل طلب استعادة في لوحة الحساب الرئيسي. يمكنك أيضًا فتح واتساب للتواصل مع الدعم ومتابعة الطلب."
-          : "إذا كان الرقم مرتبطًا بحساب معتمد، سيتم إرسال رمز تحقق مكون من 6 أرقام عبر واتساب. لا تشارك الرمز مع أي شخص.",
-      );
+      setMessage("إذا كان الرقم مرتبطًا بحساب معتمد، تم إرسال طلب استعادة كلمة المرور إلى لوحة التحكم. سيتم تغيير كلمة السر وإرسالها لك من الإدارة.");
     } catch (error) {
       setMessage(friendlyNetworkError(error, "تعذر إرسال رمز التحقق الآن."));
     } finally {
@@ -5182,7 +5232,7 @@ function LoginPassword({
           <form className="form-panel" key="forgot-form" onSubmit={submitPasswordResetRequest} aria-busy={isLoading}>
             <FormTitle icon={KeyRound} title="استعادة كلمة المرور" />
             <p className="auth-help-text">
-              أدخل رقم الهاتف بصيغته الدولية أو المحلية، وسيتم تنظيفه والتحقق منه دون عرض أي معلومات حساسة عن الحساب.
+              أدخل رقم الهاتف الخاص بالحساب. إذا كان الحساب موجودًا ومعتمدًا سيتم إرسال طلب إلى لوحة التحكم لتغيير كلمة السر.
             </p>
             <input
               value={resetPhone}
@@ -5193,16 +5243,12 @@ function LoginPassword({
             />
             <button className="primary-button" type="submit" disabled={isLoading}>
               <Send size={18} />
-              {isLoading ? "جاري الإرسال..." : "إرسال رمز التحقق"}
+              {isLoading ? "جاري إرسال الطلب..." : "إرسال طلب إلى لوحة التحكم"}
             </button>
             <button className="whatsapp-help-button" type="button" onClick={openPasswordResetWhatsApp}>
               <MessageSquare size={17} />
               فتح واتساب للتواصل مع الدعم
             </button>
-            <div className="otp-preview" aria-hidden="true">
-              <span>مثال الرمز</span>
-              <strong>348921</strong>
-            </div>
             <button className="auth-inline-switch" type="button" onPointerDown={(event) => touchAuthMode(event, "login")} onClick={() => switchAuthMode("login")}>
               العودة إلى تسجيل الدخول
             </button>
@@ -5237,6 +5283,7 @@ function LoginPassword({
               minLength="6"
               autoComplete="new-password"
             />
+            <PasswordStrengthIndicator password={registration.password} />
             <input
               value={registration.city}
               onChange={(event) => updateRegistrationField("city", event.target.value)}
@@ -5274,6 +5321,7 @@ function LoginPassword({
 function AccountProfile({ data, session, updateAccountProfile }) {
   const [message, setMessage] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [newPasswordPreview, setNewPasswordPreview] = useState("");
   const currentPhone = normalizePhone(session?.phone);
   const linkedCoach = (data.coaches || []).find((coach) => normalizePhone(coach.phone) === currentPhone);
   const primaryCoachPhoto =
@@ -5304,6 +5352,7 @@ function AccountProfile({ data, session, updateAccountProfile }) {
       event.currentTarget.elements.currentPassword.value = "";
       event.currentTarget.elements.newPassword.value = "";
       event.currentTarget.elements.confirmPassword.value = "";
+      setNewPasswordPreview("");
     }
   };
 
@@ -5351,8 +5400,15 @@ function AccountProfile({ data, session, updateAccountProfile }) {
         </label>
         <label>
           <span>كلمة السر الجديدة</span>
-          <PasswordField name="newPassword" placeholder="اتركها فارغة إذا لا تريد التغيير" minLength="6" autoComplete="new-password" />
+          <PasswordField
+            name="newPassword"
+            placeholder="اتركها فارغة إذا لا تريد التغيير"
+            minLength="6"
+            autoComplete="new-password"
+            onChange={(event) => setNewPasswordPreview(event.target.value)}
+          />
         </label>
+        {newPasswordPreview && <PasswordStrengthIndicator password={newPasswordPreview} />}
         <label>
           <span>تأكيد كلمة السر الجديدة</span>
           <PasswordField name="confirmPassword" placeholder="تأكيد كلمة السر الجديدة" minLength="6" autoComplete="new-password" />
