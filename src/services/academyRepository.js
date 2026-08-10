@@ -155,11 +155,13 @@ function platformAccountPayload(account) {
 export async function getRemoteAcademyData(academyId) {
   if (!isSupabaseConfigured || !academyId) return null;
 
-  const { data, error } = await supabase
-    .from("academy_cloud_data")
-    .select("*")
-    .eq("academy_id", academyId)
-    .maybeSingle();
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("academy_cloud_data")
+      .select("*")
+      .eq("academy_id", academyId)
+      .maybeSingle(),
+  );
 
   if (error) throw error;
   return data ? mapAcademyCloudData(data) : null;
@@ -168,10 +170,12 @@ export async function getRemoteAcademyData(academyId) {
 export async function listRemoteAcademyData() {
   if (!isSupabaseConfigured) return [];
 
-  const { data, error } = await supabase
-    .from("academy_cloud_data")
-    .select("*")
-    .order("updated_at", { ascending: false });
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("academy_cloud_data")
+      .select("*")
+      .order("updated_at", { ascending: false }),
+  );
 
   if (error) throw error;
   return data.map(mapAcademyCloudData);
@@ -180,18 +184,20 @@ export async function listRemoteAcademyData() {
 export async function upsertRemoteAcademyData(academyId, academyData) {
   if (!isSupabaseConfigured || !academyId) return null;
 
-  const { data, error } = await supabase
-    .from("academy_cloud_data")
-    .upsert(
-      {
-        academy_id: academyId,
-        payload: academyData,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "academy_id" },
-    )
-    .select()
-    .single();
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("academy_cloud_data")
+      .upsert(
+        {
+          academy_id: academyId,
+          payload: academyData,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "academy_id" },
+      )
+      .select()
+      .single(),
+  );
 
   if (error) throw error;
   return mapAcademyCloudData(data);
@@ -200,10 +206,12 @@ export async function upsertRemoteAcademyData(academyId, academyData) {
 export async function deleteRemoteAcademyData(academyId) {
   if (!isSupabaseConfigured || !academyId) return null;
 
-  const { error } = await supabase
-    .from("academy_cloud_data")
-    .delete()
-    .eq("academy_id", academyId);
+  const { error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("academy_cloud_data")
+      .delete()
+      .eq("academy_id", academyId),
+  );
 
   if (error) throw error;
   return true;
@@ -212,10 +220,12 @@ export async function deleteRemoteAcademyData(academyId) {
 export async function listPlayers() {
   if (!isSupabaseConfigured) return null;
 
-  const { data, error } = await supabase
-    .from("players")
-    .select("*, teams(name)")
-    .order("created_at", { ascending: false });
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("players")
+      .select("*, teams(name)")
+      .order("created_at", { ascending: false }),
+  );
 
   if (error) throw error;
   return data;
@@ -335,10 +345,12 @@ export async function deleteRemotePlatformAccount(phone) {
 
   const normalizedPhone = normalizePhoneForRemote(phone);
   const legacyPhone = legacyPhoneForRemote(normalizedPhone);
-  const { error } = await supabase
-    .from("platform_accounts")
-    .delete()
-    .or(`phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`);
+  const { error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("platform_accounts")
+      .delete()
+      .or(`phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`),
+  );
 
   if (error) throw error;
   return true;
@@ -419,15 +431,17 @@ export async function createRegistrationRequest(request) {
 export async function updateRemoteRegistrationRequest(requestId, status) {
   if (!isSupabaseConfigured) return null;
 
-  const { data, error } = await supabase
-    .from("registration_requests")
-    .update({
-      status: toRemoteStatus(status),
-      reviewed_at: new Date().toISOString(),
-    })
-    .eq("id", requestId)
-    .select()
-    .single();
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("registration_requests")
+      .update({
+        status: toRemoteStatus(status),
+        reviewed_at: new Date().toISOString(),
+      })
+      .eq("id", requestId)
+      .select()
+      .single(),
+  );
 
   if (error) throw error;
   return mapRegistrationRequest(data);
@@ -438,18 +452,22 @@ export async function deleteRemoteRegistrationRequestsByPhone(phone, academyId =
 
   const normalizedPhone = normalizePhoneForRemote(phone);
   const legacyPhone = legacyPhoneForRemote(normalizedPhone);
-  let { error } = await supabase
-    .from("registration_requests")
-    .delete()
-    .or(`phone.eq.${normalizedPhone},contact.eq.${normalizedPhone},phone.eq.${legacyPhone},contact.eq.${legacyPhone}`);
+  let { error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("registration_requests")
+      .delete()
+      .or(`phone.eq.${normalizedPhone},contact.eq.${normalizedPhone},phone.eq.${legacyPhone},contact.eq.${legacyPhone}`),
+  );
 
   if (error) throw error;
 
   if (academyId) {
-    const academyDelete = await supabase
-      .from("registration_requests")
-      .delete()
-      .eq("academy_id", academyId);
+    const academyDelete = await withWeakNetworkRetry(() =>
+      supabase
+        .from("registration_requests")
+        .delete()
+        .eq("academy_id", academyId),
+    );
 
     if (academyDelete.error && !String(academyDelete.error.message || "").includes("column")) {
       throw academyDelete.error;
@@ -469,11 +487,13 @@ export async function updateRemoteRegistrationPassword(phone, passwordHash) {
     reviewed_at: new Date().toISOString(),
   };
 
-  const { data, error } = await supabase
-    .from("registration_requests")
-    .update(updatePayload)
-    .or(`phone.eq.${normalizedPhone},contact.eq.${normalizedPhone},phone.eq.${legacyPhone},contact.eq.${legacyPhone}`)
-    .select();
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("registration_requests")
+      .update(updatePayload)
+      .or(`phone.eq.${normalizedPhone},contact.eq.${normalizedPhone},phone.eq.${legacyPhone},contact.eq.${legacyPhone}`)
+      .select(),
+  );
 
   if (error) throw error;
   return data?.map(mapRegistrationRequest) || [];
@@ -484,16 +504,18 @@ export async function updateRemotePlatformAccountPassword(phone, passwordHash) {
 
   const normalizedPhone = normalizePhoneForRemote(phone);
   const legacyPhone = legacyPhoneForRemote(normalizedPhone);
-  const { data, error } = await supabase
-    .from("platform_accounts")
-    .update({
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("platform_accounts")
+      .update({
       password_hash: passwordHash,
       password_status: "تم إعادة التعيين",
       password_updated_at: new Date().toISOString().slice(0, 10),
       updated_at: new Date().toISOString(),
-    })
-    .or(`phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`)
-    .select();
+      })
+      .or(`phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`)
+      .select(),
+  );
 
   if (error) throw error;
   return data.map(mapPlatformAccount);
@@ -504,14 +526,16 @@ export async function updateRemotePlatformAccountStatus(phone, status) {
 
   const normalizedPhone = normalizePhoneForRemote(phone);
   const legacyPhone = legacyPhoneForRemote(normalizedPhone);
-  const { data, error } = await supabase
-    .from("platform_accounts")
-    .update({
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("platform_accounts")
+      .update({
       status: normalizePlatformStatus(status),
       updated_at: new Date().toISOString(),
-    })
-    .or(`phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`)
-    .select();
+      })
+      .or(`phone.eq.${normalizedPhone},phone.eq.${legacyPhone}`)
+      .select(),
+  );
 
   if (error) throw error;
   return data.map(mapPlatformAccount);

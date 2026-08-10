@@ -125,6 +125,10 @@ function normalizePhone(value = "") {
 
 function friendlyNetworkError(error, fallback = "تعذر الاتصال بالسحابة الآن.") {
   const message = String(error?.message || error || "");
+  if (/invalid api key|api key|jwt|unauthorized|401/i.test(message)) {
+    return "إعدادات السحابة غير صحيحة. يجب تحديث رابط Supabase والمفتاح العام الصحيح حتى يعمل تسجيل الدخول وإنشاء الحساب أونلاين.";
+  }
+
   if (/failed to fetch|fetch failed|network|load failed/i.test(message)) {
     return `${fallback} تحقق من الإنترنت ثم أعد المحاولة، وسيحاول التطبيق المزامنة تلقائيًا عند توفر الاتصال.`;
   }
@@ -4958,7 +4962,7 @@ function LoginPassword({
         signedInAt: new Date().toISOString(),
       });
     } catch (error) {
-      setMessage(error.message || "تعذر تسجيل الدخول.");
+      setMessage(friendlyNetworkError(error, "تعذر تسجيل الدخول الآن."));
     } finally {
       setIsLoading(false);
     }
