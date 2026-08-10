@@ -70,6 +70,8 @@ html[data-theme="dark"] .finance-executive-panel,
 html[data-theme="dark"] .finance-filter-panel,
 html[data-theme="dark"] .platform-report-summary div,
 html[data-theme="dark"] .profile-dropdown,
+html[data-theme="dark"] .account-info-card,
+html[data-theme="dark"] .account-profile-form,
 html[data-theme="dark"] .academy-report-card,
 html[data-theme="dark"] .player-mobile-card,
 html[data-theme="dark"] .finance-player-ledger > article,
@@ -141,6 +143,19 @@ html[data-theme="dark"] .finance-ledger-money span,
 html[data-theme="dark"] .subscription-split div,
 html[data-theme="dark"] .finance-forecast-card div {
   background: rgba(255, 255, 255, 0.045);
+}
+
+html[data-theme="dark"] .account-info-row,
+html[data-theme="dark"] .account-password-box {
+  background: rgba(255, 255, 255, 0.045);
+  border-color: var(--line);
+}
+
+html[data-theme="dark"] .account-info-row strong,
+html[data-theme="dark"] .account-profile-form label,
+html[data-theme="dark"] .account-password-head,
+html[data-theme="dark"] .account-profile-message {
+  color: var(--ink);
 }
 
 html[data-theme="dark"] .collection-ring::before {
@@ -1352,7 +1367,7 @@ html[data-theme="dark"] .attendance-list-head h2 {
   color: #ffd75f;
 }
 
-.account-security-card,
+.account-info-card,
 .account-profile-form {
   border: 1px solid #eef1f5;
   border-radius: 16px;
@@ -1360,13 +1375,18 @@ html[data-theme="dark"] .attendance-list-head h2 {
   box-shadow: 0 10px 24px rgba(16, 24, 40, 0.055);
 }
 
-.account-security-card {
+.account-info-card {
   padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.account-info-grid {
   display: grid;
   gap: 8px;
 }
 
-.account-security-card div {
+.account-info-row {
   min-height: 46px;
   border-radius: 12px;
   background: #f8fafb;
@@ -1377,13 +1397,13 @@ html[data-theme="dark"] .attendance-list-head h2 {
   padding: 8px 10px;
 }
 
-.account-security-card span {
+.account-info-row span {
   color: var(--muted);
   font-size: 11px;
   font-weight: 900;
 }
 
-.account-security-card strong {
+.account-info-row strong {
   color: #111a4f;
   font-size: 12px;
   overflow-wrap: anywhere;
@@ -1402,6 +1422,42 @@ html[data-theme="dark"] .attendance-list-head h2 {
   color: #111a4f;
   font-size: 12px;
   font-weight: 900;
+}
+
+.account-password-box {
+  border: 1px solid #eef1f5;
+  border-radius: 14px;
+  background: #f8fafb;
+  display: grid;
+  gap: 11px;
+  padding: 12px;
+}
+
+.account-password-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #111a4f;
+}
+
+.account-password-head svg {
+  color: var(--primary);
+  flex: 0 0 auto;
+}
+
+.account-password-head div {
+  display: grid;
+  gap: 2px;
+}
+
+.account-password-head strong {
+  font-size: 13px;
+}
+
+.account-password-head span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .account-photo-block {

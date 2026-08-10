@@ -1369,6 +1369,19 @@ function readableDate(date) {
   }).format(new Date(`${date}T00:00:00`));
 }
 
+function readableDateTime(value) {
+  if (!value) return "غير متوفر";
+  const parsedDate = new Date(value);
+  if (Number.isNaN(parsedDate.getTime())) return "غير متوفر";
+  return new Intl.DateTimeFormat("ar-YE", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(parsedDate);
+}
+
 function weekdayFromDate(date) {
   if (!date) return "";
   const parsedDate = new Date(`${date}T00:00:00`);
@@ -5338,6 +5351,16 @@ function AccountProfile({ data, session, updateAccountProfile }) {
   const profilePhoto = session?.photo || linkedCoach?.photo || primaryCoachPhoto || "";
   const [photoPreview, setPhotoPreview] = useState(profilePhoto);
   const displayName = session?.name || data.coach?.name || "مستخدم الأكاديمية";
+  const academyName = session?.academyName || data.academy.name || "الأكاديمية";
+  const accountUsername = session?.username || session?.userId || currentPhone || "غير محدد";
+  const accountRows = [
+    ["اسم المستخدم", accountUsername],
+    ["الاسم", displayName],
+    ["رقم الهاتف", session?.phone || currentPhone || "غير متوفر"],
+    ["نوع الحساب", session?.role || "غير محدد"],
+    ["الأكاديمية", academyName],
+    ["آخر تسجيل دخول", readableDateTime(session?.signedInAt || session?.lastLoginAt)],
+  ];
 
   useEffect(() => {
     setPhotoPreview(profilePhoto);
@@ -5371,28 +5394,25 @@ function AccountProfile({ data, session, updateAccountProfile }) {
         <div>
           <span>الملف الشخصي</span>
           <h1>{displayName}</h1>
-          <p>{session?.academyName || data.academy.name || "الأكاديمية"}</p>
+          <p>{academyName}</p>
         </div>
         <UserCircle size={32} />
       </header>
 
-      <section className="account-security-card">
-        <div>
-          <span>رقم الهاتف المسجل</span>
-          <strong>{session?.phone}</strong>
-        </div>
-        <div>
-          <span>الدور</span>
-          <strong>{session?.role}</strong>
-        </div>
-        <div>
-          <span>كلمة السر</span>
-          <strong>•••••••• - مشفرة</strong>
+      <section className="account-info-card">
+        <FormTitle icon={UserCircle} title="معلومات الحساب" />
+        <div className="account-info-grid">
+          {accountRows.map(([label, value]) => (
+            <div className="account-info-row" key={label}>
+              <span>{label}</span>
+              <strong>{value}</strong>
+            </div>
+          ))}
         </div>
       </section>
 
       <form className="account-profile-form" onSubmit={handleSubmit}>
-        <FormTitle icon={Settings} title="تعديل بيانات الحساب" />
+        <FormTitle icon={Settings} title="تعديل الملف الشخصي" />
         <div className="account-photo-block">
           <div className="account-photo-preview">
             {photoPreview ? <img src={photoPreview} alt="صورة المدرب" decoding="async" /> : <UserRound size={34} />}
@@ -5400,9 +5420,17 @@ function AccountProfile({ data, session, updateAccountProfile }) {
           <ImageSourceControls name="accountPhoto" onChange={updatePhotoPreview} />
         </div>
         <label>
-          <span>اسم المستخدم</span>
-          <input name="accountName" defaultValue={displayName} placeholder="اسم المستخدم" required />
+          <span>الاسم</span>
+          <input name="accountName" defaultValue={displayName} placeholder="الاسم" required />
         </label>
+        <div className="account-password-box">
+          <div className="account-password-head">
+            <KeyRound size={18} />
+            <div>
+              <strong>تغيير كلمة المرور</strong>
+              <span>اترك الحقول فارغة إذا كنت تريد تعديل الاسم أو الصورة فقط.</span>
+            </div>
+          </div>
         <label>
           <span>كلمة السر الحالية</span>
           <PasswordField name="currentPassword" placeholder="مطلوبة عند تغيير كلمة السر فقط" autoComplete="current-password" />
@@ -5422,6 +5450,7 @@ function AccountProfile({ data, session, updateAccountProfile }) {
           <span>تأكيد كلمة السر الجديدة</span>
           <PasswordField name="confirmPassword" placeholder="تأكيد كلمة السر الجديدة" minLength="6" autoComplete="new-password" />
         </label>
+        </div>
         <button className="gold-button" type="submit" disabled={isSaving}>
           {isSaving ? "جاري الحفظ..." : "حفظ التغييرات"}
         </button>
