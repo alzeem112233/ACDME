@@ -3057,14 +3057,6 @@ function App() {
       createdAt: today,
     };
 
-    setPlatformData((prev) => ({
-      ...prev,
-      registrationRequests: [
-        request,
-        ...(prev.registrationRequests || []).filter((item) => normalizePhone(item.phone || item.contact) !== normalizedPhone),
-      ],
-    }));
-
     try {
       const remoteRequest = await createRegistrationRequest(request);
       if (remoteRequest) {
@@ -3072,7 +3064,7 @@ function App() {
           ...prev,
           registrationRequests: [
             { ...remoteRequest, academyId: request.academyId, passwordHash: remoteRequest.passwordHash || request.passwordHash },
-            ...(prev.registrationRequests || []).filter((item) => item.id !== request.id),
+            ...(prev.registrationRequests || []).filter((item) => normalizePhone(item.phone || item.contact) !== normalizedPhone),
           ],
         }));
         return remoteRequest;
@@ -3081,21 +3073,11 @@ function App() {
     } catch (error) {
       setPlatformData((prev) => ({
         ...prev,
-        registrationRequests: [
-          {
-            ...request,
-            syncStatus: "pending-upload",
-            syncMessage: friendlyNetworkError(error, "تم حفظ طلب التسجيل على هذا الجهاز، لكن لم يتم رفعه للسحابة الآن."),
-          },
-          ...(prev.registrationRequests || []).filter((item) => item.id !== request.id && normalizePhone(item.phone || item.contact) !== normalizedPhone),
-        ],
+        registrationRequests: (prev.registrationRequests || []).filter(
+          (item) => normalizePhone(item.phone || item.contact) !== normalizedPhone,
+        ),
       }));
-      return {
-        ...request,
-        queued: true,
-        syncStatus: "pending-upload",
-        syncMessage: friendlyNetworkError(error, "تم حفظ طلب التسجيل على هذا الجهاز، لكن لم يتم رفعه للسحابة الآن."),
-      };
+      throw new Error(friendlyNetworkError(error, "فشل إرسال طلب التسجيل. لم يتم حفظ الطلب، يرجى المحاولة مرة أخرى عند توفر اتصال جيد."));
     }
   };
 
@@ -5286,7 +5268,7 @@ function LoginPassword({
       }
 
       const passwordHash = await hashPassword(registration.password);
-      const requestResult = await onRequestRegistration({
+      await onRequestRegistration({
         academyName: registration.academyName,
         ownerName: registration.ownerName,
         phone: normalizedPhone,
@@ -5299,11 +5281,7 @@ function LoginPassword({
       setPassword("");
       setRegistration({ academyName: "", ownerName: "", phone: "", password: "", city: "" });
       setMode("login");
-      setMessage(
-        requestResult?.queued
-          ? "تم حفظ طلب التسجيل على الهاتف، وسيتم رفعه تلقائيًا عند توفر اتصال جيد بالسحابة."
-          : "تم إرسال طلب التسجيل. بعد موافقة السوبر أدمين يمكنك الدخول برقم الهاتف وكلمة السر.",
-      );
+      setMessage("تم إرسال طلب التسجيل. بعد موافقة السوبر أدمين يمكنك الدخول برقم الهاتف وكلمة السر.");
     } catch (error) {
       setMessage(friendlyNetworkError(error, "تعذر إرسال طلب التسجيل الآن."));
     } finally {
