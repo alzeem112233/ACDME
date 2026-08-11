@@ -280,6 +280,49 @@ async function findApprovedAccount(supabase: any, phone: string, phoneWithoutPlu
   return null;
 }
 
+async function findSuperAdminPlatformAccount(supabase: any, phone: string, phoneWithoutPlus: string) {
+  const { data, error } = await supabase
+    .from("platform_accounts")
+    .select("*")
+    .eq("role_key", "super_admin")
+    .or(`phone_e164.eq.${phone},phone.eq.${phone},phone.eq.${phoneWithoutPlus}`)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data || null;
+}
+
+async function refreshSuperAdminPlatformAccount(supabase: any, phone: string, passwordHash = "") {
+  if (!passwordHash) return;
+
+  const { error } = await supabase
+    .from("platform_accounts")
+    .upsert(
+      {
+        id: "super-admin",
+        name: "Super Admin",
+        phone,
+        phone_e164: phone,
+        role: "Super Admin",
+        role_key: "super_admin",
+        academy_id: "platform",
+        academy_name: "QZ ACADEMY",
+        permissions: "Full system access",
+        permissions_json: { all: true },
+        password_hash: passwordHash,
+        password_status: "encrypted",
+        status: "active",
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "phone" },
+    );
+
+  if (error) {
+    console.warn("Unable to refresh super admin platform account", error);
+  }
+}
+
 function publicAccount(row: Record<string, any>, fallback: Record<string, any> = {}) {
   const phone = normalizePhone(row.phone_e164 || row.phone || row.contact || fallback.phone || "");
   const key = roleKey({ ...fallback, ...row }, fallback.roleKey || "academy_owner");
@@ -669,34 +712,16 @@ Deno.serve(async (request) => {
     }
 
     if (superAdminPhone && phone === superAdminPhone) {
-      const passwordOk = await verifyLegacyPassword(password, superAdminPasswordHash);
+      const superAdminAccountRow = await findSuperAdminPlatformAccount(supabase, phone, phoneWithoutPlus);
+      const passwordOk = (await verifyLegacyPassword(password, superAdminPasswordHash)) ||
+        (superAdminAccountRow ? await verifyLegacyPassword(password, superAdminAccountRow.password_hash || "") : false);
       if (!passwordOk) {
         return jsonResponse({ ok: false, message: "رقم الهاتف أو كلمة السر غير صحيحة." });
       }
 
-      await supabase
-        .from("platform_accounts")
-        .upsert(
-          {
-            id: "super-admin",
-            name: "Super Admin",
-            phone,
-            phone_e164: phone,
-            role: "Super Admin",
-            role_key: "super_admin",
-            academy_id: "platform",
-            academy_name: "QZ ACADEMY",
-            permissions: "Full system access",
-            permissions_json: { all: true },
-            password_hash: superAdminPasswordHash,
-            password_status: "encrypted",
-            status: "active",
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "phone" },
-        );
+      await refreshSuperAdminPlatformAccount(supabase, phone, superAdminPasswordHash);
 
-      return await loginResponse(supabase, {
+      return await loginResponse(supabase, superAdminAccountRow || {
           id: "super-admin",
           name: "مدير المنصة",
           phone,

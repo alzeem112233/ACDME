@@ -1,4 +1,4 @@
-import { getQzSessionToken, isSupabaseConfigured, supabase } from "./supabaseClient";
+import { getQzSessionToken, isSupabaseConfigured, supabase, supabaseAnonKey, supabaseUrl } from "./supabaseClient";
 
 const NETWORK_RETRY_DELAYS = [1200, 2800, 5500, 9000];
 const REGISTRATION_RETRY_DELAYS = [500, 1200, 2500];
@@ -69,6 +69,70 @@ async function withFastRegistrationRetry(operation) {
 function isRegistrationFunctionUnavailable(error) {
   const message = String(error?.message || error || "").toLowerCase();
   return message.includes("function not found") || message.includes("404") || message.includes("not found");
+}
+
+async function invokeQzAuth(body, options = {}) {
+  const retry = options.retry || withWeakNetworkRetry;
+  const headers = options.headers || {};
+  let invokeError = null;
+
+  try {
+    const { data, error } = await retry(() =>
+      supabase.functions.invoke("qz-auth", {
+        headers,
+        body,
+      }),
+    );
+
+    if (!error) return data;
+    invokeError = error;
+  } catch (error) {
+    invokeError = error;
+  }
+
+  if (!supabaseUrl || !supabaseAnonKey || typeof fetch !== "function") {
+    throw invokeError;
+  }
+
+  try {
+    const directResult = await retry(async () => {
+      const sessionToken = headers["x-qz-session"] || getQzSessionToken();
+      const response = await fetch(`${String(supabaseUrl).replace(/\/+$/, "")}/functions/v1/qz-auth`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: supabaseAnonKey,
+          Authorization: `Bearer ${supabaseAnonKey}`,
+          ...(sessionToken ? { "x-qz-session": sessionToken } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+      const text = await response.text();
+      let data = null;
+
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        data = text ? { ok: false, message: text } : null;
+      }
+
+      if (!response.ok) {
+        const error = new Error(data?.message || `HTTP ${response.status}`);
+        error.status = response.status;
+        error.data = data;
+        throw error;
+      }
+
+      return { data, error: null };
+    });
+
+    return directResult.data;
+  } catch (fallbackError) {
+    if (!isRetryableNetworkError(fallbackError)) {
+      throw fallbackError;
+    }
+    throw invokeError || fallbackError;
+  }
 }
 
 const remoteStatusByArabic = {
@@ -234,17 +298,11 @@ export async function getRemoteAcademyData(academyId) {
 export async function authenticateRemoteAccount(phone, password) {
   if (!isSupabaseConfigured) return null;
 
-  const { data, error } = await withWeakNetworkRetry(() =>
-    supabase.functions.invoke("qz-auth", {
-      body: {
-        action: "login",
-        phone,
-        password,
-      },
-    }),
-  );
-
-  if (error) throw error;
+  const data = await invokeQzAuth({
+    action: "login",
+    phone,
+    password,
+  });
   if (!data?.ok) {
     throw new Error(data?.message || "تعذر تسجيل الدخول.");
   }
@@ -255,16 +313,10 @@ export async function authenticateRemoteAccount(phone, password) {
 export async function requestPasswordResetOtp(phone) {
   if (!isSupabaseConfigured) return null;
 
-  const { data, error } = await withWeakNetworkRetry(() =>
-    supabase.functions.invoke("qz-auth", {
-      body: {
-        action: "request-password-reset",
-        phone,
-      },
-    }),
-  );
-
-  if (error) throw error;
+  const data = await invokeQzAuth({
+    action: "request-password-reset",
+    phone,
+  });
   if (!data?.ok) {
     throw new Error(data?.message || "تعذر إرسال رمز التحقق.");
   }
@@ -413,17 +465,17 @@ export async function listRegistrationRequests(options = {}) {
   const sessionToken = getQzSessionToken();
   if (sessionToken) {
     try {
-      const { data, error } = await withFastRegistrationRetry(() =>
-        supabase.functions.invoke("qz-auth", {
+      const data = await invokeQzAuth(
+        {
+          action: "list-registration-requests",
+          qzSessionToken: sessionToken,
+        },
+        {
           headers: { "x-qz-session": sessionToken },
-          body: {
-            action: "list-registration-requests",
-            qzSessionToken: sessionToken,
-          },
-        }),
+          retry: withFastRegistrationRetry,
+        },
       );
 
-      if (error) throw error;
       if (data?.ok && Array.isArray(data.requests)) {
         return data.requests.map(mapRegistrationRequest);
       }
@@ -554,22 +606,20 @@ export async function createRegistrationRequest(request) {
   };
 
   try {
-    const { data, error } = await withFastRegistrationRetry(() =>
-      supabase.functions.invoke("qz-auth", {
-        body: {
-          action: "register",
-          academyName: request.academyName,
-          ownerName: request.ownerName,
-          phone,
-          academyId: request.academyId,
-          city: request.city,
-          status: toRemoteStatus(request.status),
-          passwordHash: request.passwordHash,
-        },
-      }),
+    const data = await invokeQzAuth(
+      {
+        action: "register",
+        academyName: request.academyName,
+        ownerName: request.ownerName,
+        phone,
+        academyId: request.academyId,
+        city: request.city,
+        status: toRemoteStatus(request.status),
+        passwordHash: request.passwordHash,
+      },
+      { retry: withFastRegistrationRetry },
     );
 
-    if (error) throw error;
     if (!data?.ok) {
       throw new Error(data?.message || "طھط¹ط°ط± ط¥ط±ط³ط§ظ„ ط·ظ„ط¨ ط§ظ„طھط³ط¬ظٹظ„.");
     }
@@ -638,19 +688,19 @@ export async function updateRemoteRegistrationRequest(requestId, status) {
   const sessionToken = getQzSessionToken();
   if (sessionToken) {
     try {
-      const { data, error } = await withFastRegistrationRetry(() =>
-        supabase.functions.invoke("qz-auth", {
+      const data = await invokeQzAuth(
+        {
+          action: "review-registration-request",
+          requestId,
+          status: toRemoteStatus(status),
+          qzSessionToken: sessionToken,
+        },
+        {
           headers: { "x-qz-session": sessionToken },
-          body: {
-            action: "review-registration-request",
-            requestId,
-            status: toRemoteStatus(status),
-            qzSessionToken: sessionToken,
-          },
-        }),
+          retry: withFastRegistrationRetry,
+        },
       );
 
-      if (error) throw error;
       if (!data?.ok) throw new Error(data?.message || "تعذر تحديث طلب التسجيل.");
       const reviewedRequest = data.request ? mapRegistrationRequest(data.request) : null;
       if (reviewedRequest && data.account) {
