@@ -1,4 +1,4 @@
-import { getQzSessionToken, isSupabaseConfigured, supabase, supabaseAnonKey, supabaseUrl } from "./supabaseClient";
+import { getQzSessionToken, isSupabaseConfigured, supabase, supabaseAnonKey, supabaseUrl, toSafeHeaderValue } from "./supabaseClient";
 
 const NETWORK_RETRY_DELAYS = [1200, 2800, 5500, 9000];
 const REGISTRATION_RETRY_DELAYS = [500, 1200, 2500];
@@ -73,7 +73,11 @@ function isRegistrationFunctionUnavailable(error) {
 
 async function invokeQzAuth(body, options = {}) {
   const retry = options.retry || withWeakNetworkRetry;
-  const headers = options.headers || {};
+  const headers = Object.fromEntries(
+    Object.entries(options.headers || {})
+      .map(([key, value]) => [key, toSafeHeaderValue(value)])
+      .filter(([, value]) => Boolean(value)),
+  );
   let invokeError = null;
 
   try {
@@ -96,7 +100,7 @@ async function invokeQzAuth(body, options = {}) {
 
   try {
     const directResult = await retry(async () => {
-      const sessionToken = headers["x-qz-session"] || getQzSessionToken();
+      const sessionToken = toSafeHeaderValue(headers["x-qz-session"] || getQzSessionToken());
       const response = await fetch(`${String(supabaseUrl).replace(/\/+$/, "")}/functions/v1/qz-auth`, {
         method: "POST",
         headers: {

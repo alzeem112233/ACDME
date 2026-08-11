@@ -7,14 +7,27 @@ export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
 
 let activeQzSessionToken = "";
 
+export function toSafeHeaderValue(value = "") {
+  const text = String(value || "").trim();
+  if (!text) return "";
+
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code < 32 || code > 126) return "";
+  }
+
+  return text;
+}
+
 function createSupabaseClient(qzSessionToken = "") {
+  const safeSessionToken = toSafeHeaderValue(qzSessionToken);
   return createClient(supabaseUrl, supabaseAnonKey, {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
       },
       global: {
-        headers: qzSessionToken ? { "x-qz-session": qzSessionToken } : {},
+        headers: safeSessionToken ? { "x-qz-session": safeSessionToken } : {},
       },
     });
 }
@@ -29,7 +42,7 @@ export function getQzSessionToken() {
 
 export function setQzSessionToken(qzSessionToken = "") {
   if (!isSupabaseConfigured) return null;
-  const nextToken = qzSessionToken || "";
+  const nextToken = toSafeHeaderValue(qzSessionToken);
   if (activeQzSessionToken === nextToken && supabase) return supabase;
   activeQzSessionToken = nextToken;
   supabase = createSupabaseClient(activeQzSessionToken);
