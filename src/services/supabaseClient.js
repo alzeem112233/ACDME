@@ -7,6 +7,27 @@ export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
 
 let activeQzSessionToken = "";
 
+function clearLegacySupabaseAuthStorage() {
+  if (typeof localStorage === "undefined" || !supabaseUrl) return;
+
+  try {
+    const projectRef = new URL(supabaseUrl).hostname.split(".")[0];
+    const legacyAuthKeys = [
+      `sb-${projectRef}-auth-token`,
+      `sb-${projectRef}-auth-token-code-verifier`,
+    ];
+
+    legacyAuthKeys.forEach((key) => {
+      localStorage.removeItem(key);
+      if (typeof sessionStorage !== "undefined") {
+        sessionStorage.removeItem(key);
+      }
+    });
+  } catch {
+    // Ignore storage cleanup errors; the client can still run without persisted auth.
+  }
+}
+
 export function toSafeHeaderValue(value = "") {
   const text = String(value || "").trim();
   if (!text) return "";
@@ -20,11 +41,13 @@ export function toSafeHeaderValue(value = "") {
 }
 
 function createSupabaseClient(qzSessionToken = "") {
+  clearLegacySupabaseAuthStorage();
   const safeSessionToken = toSafeHeaderValue(qzSessionToken);
   return createClient(supabaseUrl, supabaseAnonKey, {
       auth: {
-        persistSession: true,
-        autoRefreshToken: true,
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
       },
       global: {
         headers: safeSessionToken ? { "x-qz-session": safeSessionToken } : {},

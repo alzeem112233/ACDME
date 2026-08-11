@@ -71,6 +71,61 @@ function isRegistrationFunctionUnavailable(error) {
   return message.includes("function not found") || message.includes("404") || message.includes("not found");
 }
 
+function parseQzAuthResponse(text = "") {
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    return text ? { ok: false, message: text } : null;
+  }
+}
+
+function qzAuthEndpoint() {
+  return `${String(supabaseUrl).replace(/\/+$/, "")}/functions/v1/qz-auth`;
+}
+
+function requestQzAuthWithXhr(body, headers) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", qzAuthEndpoint(), true);
+    xhr.timeout = 20000;
+    Object.entries(headers).forEach(([key, value]) => {
+      xhr.setRequestHeader(key, value);
+    });
+    xhr.onload = () => {
+      const data = parseQzAuthResponse(xhr.responseText);
+      if (xhr.status < 200 || xhr.status >= 300) {
+        const error = new Error(data?.message || `HTTP ${xhr.status}`);
+        error.status = xhr.status;
+        error.data = data;
+        reject(error);
+        return;
+      }
+      resolve(data);
+    };
+    xhr.onerror = () => reject(new Error("تعذر الاتصال بخادم تسجيل الدخول. تحقق من الإنترنت ثم أعد المحاولة."));
+    xhr.ontimeout = () => reject(new Error("انتهت مهلة الاتصال بخادم تسجيل الدخول. أعد المحاولة."));
+    xhr.send(JSON.stringify(body));
+  });
+}
+
+async function requestQzAuthWithFetch(body, headers) {
+  const response = await fetch(qzAuthEndpoint(), {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+  const data = parseQzAuthResponse(await response.text());
+
+  if (!response.ok) {
+    const error = new Error(data?.message || `HTTP ${response.status}`);
+    error.status = response.status;
+    error.data = data;
+    throw error;
+  }
+
+  return data;
+}
+
 async function invokeQzAuth(body, options = {}) {
   const retry = options.retry || withWeakNetworkRetry;
   const headers = Object.fromEntries(
@@ -78,64 +133,38 @@ async function invokeQzAuth(body, options = {}) {
       .map(([key, value]) => [key, toSafeHeaderValue(value)])
       .filter(([, value]) => Boolean(value)),
   );
-  let invokeError = null;
+  const safeAnonKey = toSafeHeaderValue(supabaseAnonKey);
 
-  try {
-    const { data, error } = await retry(() =>
-      supabase.functions.invoke("qz-auth", {
-        headers,
-        body,
-      }),
-    );
-
-    if (!error) return data;
-    invokeError = error;
-  } catch (error) {
-    invokeError = error;
+  if (!supabaseUrl || !safeAnonKey) {
+    throw new Error("إعدادات السحابة غير مكتملة في نسخة المتصفح.");
   }
 
-  if (!supabaseUrl || !supabaseAnonKey || typeof fetch !== "function") {
-    throw invokeError;
+  if (typeof XMLHttpRequest !== "function" && typeof fetch !== "function") {
+    throw new Error("متصفحك لا يدعم اتصال تسجيل الدخول الحالي. حدّث المتصفح ثم أعد المحاولة.");
   }
 
   try {
     const directResult = await retry(async () => {
       const sessionToken = toSafeHeaderValue(headers["x-qz-session"] || getQzSessionToken());
-      const response = await fetch(`${String(supabaseUrl).replace(/\/+$/, "")}/functions/v1/qz-auth`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: supabaseAnonKey,
-          Authorization: `Bearer ${supabaseAnonKey}`,
-          ...(sessionToken ? { "x-qz-session": sessionToken } : {}),
-        },
-        body: JSON.stringify(body),
-      });
-      const text = await response.text();
-      let data = null;
-
-      try {
-        data = text ? JSON.parse(text) : null;
-      } catch {
-        data = text ? { ok: false, message: text } : null;
-      }
-
-      if (!response.ok) {
-        const error = new Error(data?.message || `HTTP ${response.status}`);
-        error.status = response.status;
-        error.data = data;
-        throw error;
-      }
+      const requestHeaders = {
+        "Content-Type": "application/json",
+        apikey: safeAnonKey,
+        Authorization: `Bearer ${safeAnonKey}`,
+        ...(sessionToken ? { "x-qz-session": sessionToken } : {}),
+      };
+      const data = typeof XMLHttpRequest === "function"
+        ? await requestQzAuthWithXhr(body, requestHeaders)
+        : await requestQzAuthWithFetch(body, requestHeaders);
 
       return { data, error: null };
     });
 
     return directResult.data;
-  } catch (fallbackError) {
-    if (!isRetryableNetworkError(fallbackError)) {
-      throw fallbackError;
+  } catch (error) {
+    if (String(error?.message || error).includes("ISO-8859-1")) {
+      throw new Error("تم تنظيف جلسة المتصفح القديمة. أعد تحميل الصفحة ثم حاول تسجيل الدخول مرة أخرى.");
     }
-    throw invokeError || fallbackError;
+    throw error;
   }
 }
 
