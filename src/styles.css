@@ -128,6 +128,7 @@ html[data-theme="dark"] .profile-dropdown::before {
 
 html[data-theme="dark"] .global-refresh-button,
 html[data-theme="dark"] .theme-toggle-button,
+html[data-theme="dark"] .guide-toggle-button,
 html[data-theme="dark"] .profile-menu-button,
 html[data-theme="dark"] .floating-logout-button {
   background: rgba(15, 25, 43, 0.94);
@@ -422,8 +423,27 @@ button {
   transition: transform 0.2s ease, background 0.2s ease, color 0.2s ease;
 }
 
+.guide-toggle-button {
+  position: fixed;
+  top: max(10px, calc(10px + env(safe-area-inset-top)));
+  inset-inline-start: 112px;
+  z-index: 1190;
+  width: 42px;
+  height: 42px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: #fff8df;
+  color: #735100;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  box-shadow: 0 10px 24px rgba(16, 24, 40, 0.14);
+  transition: transform 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+
 .theme-toggle-button:hover,
 .global-refresh-button:hover,
+.guide-toggle-button:hover,
 .profile-menu-button:hover {
   transform: translateY(-1px);
 }
@@ -431,7 +451,7 @@ button {
 .offline-banner {
   position: fixed;
   top: max(10px, calc(10px + env(safe-area-inset-top)));
-  inset-inline-start: 112px;
+  inset-inline-start: 162px;
   inset-inline-end: 12px;
   min-height: 42px;
   border: 1px solid rgba(189, 139, 4, 0.34);
@@ -459,6 +479,10 @@ button {
 }
 
 .app-shell.home-view .theme-toggle-button {
+  top: calc(16px + env(safe-area-inset-top));
+}
+
+.app-shell.home-view .guide-toggle-button {
   top: calc(16px + env(safe-area-inset-top));
 }
 
@@ -1261,6 +1285,212 @@ html[data-theme="dark"] .page-context-copy strong {
 html[data-theme="dark"] .page-context-actions button {
   background: rgba(255, 213, 105, 0.12);
   border-color: rgba(255, 213, 105, 0.28);
+  color: var(--amber);
+}
+
+.app-guide-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2200;
+  background: rgba(7, 14, 26, 0.62);
+  display: grid;
+  place-items: center;
+  padding: max(18px, env(safe-area-inset-top)) 14px max(18px, env(safe-area-inset-bottom));
+  backdrop-filter: blur(10px);
+}
+
+.app-guide-modal {
+  width: min(760px, 100%);
+  max-height: min(88dvh, 820px);
+  overflow-y: auto;
+  border: 1px solid rgba(216, 221, 229, 0.94);
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(7, 14, 26, 0.28);
+  position: relative;
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.app-guide-close {
+  position: sticky;
+  top: 0;
+  justify-self: end;
+  z-index: 2;
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(216, 221, 229, 0.94);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.95);
+  color: #111a4f;
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.app-guide-hero {
+  border-radius: 16px;
+  background: linear-gradient(135deg, #111a4f, #1f2c85);
+  color: #fff;
+  padding: 18px;
+  display: grid;
+  gap: 10px;
+}
+
+.app-guide-hero > span {
+  color: #ffd75f;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.app-guide-hero h2 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.35;
+}
+
+.app-guide-hero p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.82);
+  line-height: 1.8;
+  font-size: 13px;
+}
+
+.app-guide-renewal-note {
+  border: 1px solid rgba(255, 213, 95, 0.32);
+  border-radius: 14px;
+  background: rgba(255, 213, 95, 0.12);
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+}
+
+.app-guide-renewal-note svg {
+  width: 34px;
+  height: 34px;
+  padding: 7px;
+  border-radius: 999px;
+  background: rgba(255, 213, 95, 0.18);
+  color: #ffd75f;
+}
+
+.app-guide-renewal-note strong,
+.app-guide-renewal-note small {
+  display: block;
+}
+
+.app-guide-renewal-note strong {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.app-guide-renewal-note small {
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.app-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.app-guide-card {
+  border: 1px solid rgba(216, 221, 229, 0.94);
+  border-radius: 14px;
+  background: #f8fafb;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.app-guide-card-head {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  align-items: start;
+  gap: 10px;
+}
+
+.app-guide-card-head svg {
+  width: 34px;
+  height: 34px;
+  padding: 8px;
+  border-radius: 999px;
+  background: #eef1f5;
+  color: #111a4f;
+}
+
+.app-guide-card strong,
+.app-guide-card span {
+  display: block;
+}
+
+.app-guide-card strong {
+  color: #111a4f;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.app-guide-card span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.7;
+}
+
+.app-guide-card ul {
+  margin: 0;
+  padding: 0 18px 0 0;
+  color: #273144;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.8;
+}
+
+.app-guide-footer {
+  position: sticky;
+  bottom: 0;
+  border-top: 1px solid rgba(216, 221, 229, 0.94);
+  background: rgba(255, 255, 255, 0.94);
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+  backdrop-filter: blur(12px);
+}
+
+.app-guide-footer small {
+  color: var(--muted);
+  text-align: center;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.6;
+}
+
+html[data-theme="dark"] .app-guide-modal,
+html[data-theme="dark"] .app-guide-close,
+html[data-theme="dark"] .app-guide-footer {
+  background: rgba(13, 23, 40, 0.98);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+html[data-theme="dark"] .app-guide-card {
+  background: rgba(255, 255, 255, 0.045);
+  border-color: var(--line);
+}
+
+html[data-theme="dark"] .app-guide-card strong,
+html[data-theme="dark"] .app-guide-card ul,
+html[data-theme="dark"] .app-guide-close {
+  color: var(--ink);
+}
+
+html[data-theme="dark"] .app-guide-card-head svg {
+  background: rgba(145, 183, 255, 0.12);
   color: var(--amber);
 }
 
@@ -6318,6 +6548,37 @@ html[data-theme="dark"] .expense-list button {
 
   .main-panel {
     padding: 16px;
+  }
+
+  .offline-banner,
+  .app-shell.home-view .offline-banner {
+    top: max(60px, calc(60px + env(safe-area-inset-top)));
+    inset-inline-start: 12px;
+    inset-inline-end: 12px;
+  }
+
+  .app-guide-overlay {
+    align-items: stretch;
+    padding-inline: 10px;
+  }
+
+  .app-guide-modal {
+    max-height: calc(100dvh - 20px);
+    border-radius: 14px;
+    padding: 10px;
+  }
+
+  .app-guide-hero {
+    padding: 15px;
+    border-radius: 13px;
+  }
+
+  .app-guide-hero h2 {
+    font-size: 20px;
+  }
+
+  .app-guide-grid {
+    grid-template-columns: 1fr;
   }
 
   .screen-titlebar,

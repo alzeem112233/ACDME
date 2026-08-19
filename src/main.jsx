@@ -102,6 +102,7 @@ const DEFAULT_ATTENDANCE_PAYMENT = 500;
 const RENEWAL_PERIOD_DAYS = 29;
 const PLATFORM_RENEWAL_DAYS = RENEWAL_PERIOD_DAYS;
 const APP_RELEASE_VERSION = "QZ Academy Release 8";
+const APP_GUIDE_VERSION = 1;
 const BACKUP_FORMAT_VERSION = 8;
 const BACKUP_KDF_ITERATIONS = 250000;
 const SUPPORT_WHATSAPP_PHONE = normalizePhone(import.meta.env.VITE_SUPPORT_WHATSAPP_PHONE || "+967772227092");
@@ -793,15 +794,53 @@ const pageGuides = {
   },
   home: {
     title: "الرئيسية",
-    text: "ابدأ من إضافة لاعب، التحضير، أو مراجعة الوضع المالي. البحث والفلاتر هنا تعمل مباشرة.",
+    text: "الرئيسية تعطيك ملخص الأكاديمية. من هنا تنتقل لإضافة لاعب، التحضير، أو مراجعة الوضع المالي.",
     primaryView: "players",
     primaryLabel: "إضافة لاعب",
     secondaryView: "attendance",
     secondaryLabel: "التحضير",
   },
+  coachSetup: {
+    title: "إعداد المدرب",
+    text: "اكتب بيانات المدرب المسؤول وصورته ورقم التواصل. هذه البيانات تظهر في الحساب والتقارير.",
+    primaryView: "settings",
+    primaryLabel: "إعداد الأكاديمية",
+  },
+  coaches: {
+    title: "إدارة المدربين",
+    text: "أضف حسابات المدربين وحدد صلاحياتهم. الحساب المعتمد يستطيع الدخول برقم الهاتف وكلمة السر.",
+    primaryView: "players",
+    primaryLabel: "اللاعبون",
+    secondaryView: "settings",
+    secondaryLabel: "الإعدادات",
+  },
+  settings: {
+    title: "إعدادات الأكاديمية",
+    text: "من هنا تضبط اسم الأكاديمية والشعار، المزامنة، النسخة الاحتياطية، واستيراد البيانات.",
+    primaryView: "ageGroups",
+    primaryLabel: "الفئات",
+    secondaryView: "teams",
+    secondaryLabel: "الفرق",
+  },
+  ageGroups: {
+    title: "إدارة الفئات",
+    text: "أنشئ الفئات العمرية وحدد أيام التدريب. هذه الفئات تنظم الفرق واللاعبين والتحضير.",
+    primaryView: "teams",
+    primaryLabel: "إدارة الفرق",
+    secondaryView: "home",
+    secondaryLabel: "الرئيسية",
+  },
+  teams: {
+    title: "إدارة الفرق",
+    text: "أضف الفرق، اختر الفئة والمدرب، وحدد قيمة الطقم الرياضي التي تظهر في ملف كل لاعب.",
+    primaryView: "players",
+    primaryLabel: "إضافة لاعب",
+    secondaryView: "ageGroups",
+    secondaryLabel: "الفئات",
+  },
   players: {
     title: "إدارة اللاعبين",
-    text: "ابحث، صف حسب الفئة، أضف لاعبًا، ثم افتح ملفه بضغطة واحدة من البطاقة.",
+    text: "أضف اللاعبين وصورهم، رتب القائمة، وافتح ملف اللاعب لتعديل بياناته أو بطاقة اللاعب.",
     primaryView: "attendance",
     primaryLabel: "التحضير",
     secondaryView: "playerProfile",
@@ -809,7 +848,7 @@ const pageGuides = {
   },
   attendance: {
     title: "التحضير",
-    text: "اختر التاريخ والفئة. الحضور أو التأخر يفتح الدفع، والغياب يحفظ مباشرة.",
+    text: "اختر التاريخ والفئة. الحضور أو التأخر يفتح الدفع، وزر الحوالة يحسب المبلغ كتحويل.",
     primaryView: "reports",
     primaryLabel: "التقارير",
     secondaryView: "players",
@@ -831,7 +870,7 @@ const pageGuides = {
   },
   reports: {
     title: "التقارير المالية",
-    text: "راجع التحصيل والمصروفات والمتأخرات، ثم اطبع التقارير عند الحاجة.",
+    text: "راجع التحصيل والمصروفات والمتأخرات والحوالات، ثم اطبع أو احفظ التقرير PDF.",
     primaryView: "attendance",
     primaryLabel: "التحضير",
     secondaryView: "players",
@@ -850,6 +889,90 @@ const pageGuides = {
     primaryLabel: "الرئيسية",
   },
 };
+
+const appGuideSections = [
+  {
+    title: "الدخول والحسابات",
+    icon: LockKeyhole,
+    text: "الدخول يكون برقم الهاتف وكلمة السر بعد اعتماد الحساب من لوحة التحكم.",
+    items: [
+      "تسجيل الدخول: يفتح الحساب المعتمد فقط.",
+      "إنشاء حساب: يرسل طلبًا إلى الحساب الرئيسي للموافقة.",
+      "نسيت كلمة المرور: يرسل طلب استعادة إلى لوحة التحكم.",
+    ],
+  },
+  {
+    title: "الأزرار العامة",
+    icon: Activity,
+    text: "الأزرار العلوية والسفلية تساعد المستخدم على التنقل بسرعة.",
+    items: [
+      "زر التحديث يعيد تحميل الصفحة الحالية عند الحاجة.",
+      "زر الشمس أو القمر يبدل بين الوضع النهاري والليلي.",
+      "زر البروفايل يفتح الملف الشخصي والإعدادات وتسجيل الخروج.",
+      "القائمة السفلية تنقلك بين الرئيسية، اللاعبين، التحضير، التقارير، والتنبيهات.",
+    ],
+  },
+  {
+    title: "الإعداد الأول",
+    icon: ShieldCheck,
+    text: "أول دخول للحساب الجديد يمر بخطوات إلزامية حتى تكتمل بيانات الأكاديمية.",
+    items: [
+      "الملف الشخصي ثم إعداد المدرب ثم إعداد الأكاديمية.",
+      "بعدها تضيف الفئات العمرية والفرق قبل الدخول للرئيسية.",
+      "يمكن تعديل هذه البيانات لاحقًا من الإعدادات.",
+    ],
+  },
+  {
+    title: "اللاعبون والبطاقة",
+    icon: UserCircle,
+    text: "ملف اللاعب هو المكان الأساسي لتعديل بيانات اللاعب وصورته وبطاقته.",
+    items: [
+      "إدارة اللاعبين: إضافة لاعب جديد وترتيب اللاعبين حسب الاسم أو العمر.",
+      "ملف اللاعب: تعديل الرقم، المركز، الاشتراك، الطقم، والصورة.",
+      "بطاقة اللاعب يمكن حفظها بعد تعبئة البيانات.",
+    ],
+  },
+  {
+    title: "التحضير والمدفوعات",
+    icon: CalendarCheck,
+    text: "التحضير يسجل حضور اللاعبين ويربطه بالدفع اليومي.",
+    items: [
+      "عند عدم دفع الاشتراك كاملًا يظهر مبلغ افتراضي 500 ريال ويمكن تغييره.",
+      "إذا تركت مبلغ الدفع فارغًا يعتبر اللاعب لم يدفع وتسجل عليه متأخرات.",
+      "زر الحوالة يحسب المبلغ كحوالة، والضغط عليه مرة أخرى يرجعه نقدًا.",
+    ],
+  },
+  {
+    title: "التقارير والنسخ",
+    icon: ClipboardList,
+    text: "التقارير والنسخ الاحتياطية تحفظ لك صورة واضحة عن الأكاديمية.",
+    items: [
+      "التقارير المالية تعرض المدفوع والمتبقي والمتأخرات والمصروفات والحوالات.",
+      "زر الطباعة يصدر التقرير PDF أو يرسله للطباعة حسب الجهاز.",
+      "النسخة الاحتياطية تحفظ بيانات التطبيق، ويمكن استيرادها من الإعدادات.",
+    ],
+  },
+  {
+    title: "المزامنة والعمل بدون إنترنت",
+    icon: RefreshCw,
+    text: "التطبيق يعمل بدون إنترنت ويحفظ بيانات اللاعبين محليًا على الهاتف.",
+    items: [
+      "عند توفر الإنترنت تتم مزامنة الإعدادات تلقائيًا.",
+      "زر المزامنة يرفع البيانات المتاحة للسحابة فورًا.",
+      "صور وبيانات اللاعبين الأساسية تبقى محلية لتقليل استهلاك السحابة.",
+    ],
+  },
+  {
+    title: "مدة التشغيل والتجديد",
+    icon: Clock,
+    text: `يعمل التطبيق لمدة ${RENEWAL_PERIOD_DAYS} يومًا من آخر تجديد، ثم يقفل ويطلب التجديد من الحساب الرئيسي.`,
+    items: [
+      "يتم حساب المدة على الجهاز حتى إذا لم يكن هناك إنترنت.",
+      "عند انتهاء المدة تظهر شاشة التجديد بدل صفحات التطبيق.",
+      `زر التجديد يضيف ${RENEWAL_PERIOD_DAYS} يومًا جديدًا للحساب.`,
+    ],
+  },
+];
 
 function useLocalState(key, initialValue) {
   const [value, setValue] = useState(() => readLocalData(key, initialValue));
@@ -1853,6 +1976,7 @@ function App() {
   const [passwordResetRequests, setPasswordResetRequests] = useLocalState("qz-password-reset-requests-v1", []);
   const [academyDataById, setAcademyDataById] = useLocalState("acdme-academy-data-by-id-v1", {});
   const [renewalTimers, setRenewalTimers] = useLocalState("acdme-renewal-timers-v1", {});
+  const [appGuideState, setAppGuideState] = useLocalState("acdme-app-guide-v1", { version: APP_GUIDE_VERSION, seenBy: {} });
   const [themeMode, setThemeMode] = useLocalState("acdme-theme-v1", "light");
   const [cloudSyncState, setCloudSyncState] = useState({ academyId: "", loaded: false, saving: false, error: "", syncedAt: "" });
   const lastCloudPayloadRef = useRef("");
@@ -1864,6 +1988,7 @@ function App() {
   const [onlineSyncTick, setOnlineSyncTick] = useState(0);
   const [renewalClockTick, setRenewalClockTick] = useState(() => Date.now());
   const [lastView, setLastView] = useState("");
+  const [isAppGuideOpen, setIsAppGuideOpen] = useState(false);
   const qzSessionToken = session?.verified ? session.accessToken || "" : "";
 
   setQzSessionToken(qzSessionToken);
@@ -3942,10 +4067,19 @@ function App() {
   const showScreenTitle = !customScreenViews.has(displayedView);
   const showBottomNav = !session?.isFirstLogin && !setupNavIds.has(displayedView);
   const currentPageGuide = pageGuides[displayedView];
+  const appGuideAccountKey = session?.userId || normalizePhone(session?.phone) || "guest";
   const canGoBack = Boolean(lastView && visibleNavItems.some((item) => item.id === lastView));
   const goBackToPreviousView = () => {
     navigateToView(canGoBack ? lastView : fallbackView, { replace: true });
   };
+
+  useEffect(() => {
+    if (!session?.verified || isRenewalExpired) return;
+    const hasSeenGuide = appGuideState?.version === APP_GUIDE_VERSION && Boolean(appGuideState?.seenBy?.[appGuideAccountKey]);
+    if (!hasSeenGuide) {
+      setIsAppGuideOpen(true);
+    }
+  }, [appGuideAccountKey, appGuideState, isRenewalExpired, session?.verified]);
 
   useEffect(() => {
     if (!showBottomNav) return;
@@ -3995,6 +4129,21 @@ function App() {
   const handleProfileHome = () => {
     navigateToView(isSuperAdmin ? "platformDashboard" : "home");
     setIsProfileMenuOpen(false);
+  };
+  const markAppGuideSeen = () => {
+    setAppGuideState((prev) => ({
+      ...prev,
+      version: APP_GUIDE_VERSION,
+      seenBy: {
+        ...(prev?.seenBy || {}),
+        [appGuideAccountKey]: new Date().toISOString(),
+      },
+    }));
+    setIsAppGuideOpen(false);
+  };
+  const openAppGuide = () => {
+    setIsProfileMenuOpen(false);
+    setIsAppGuideOpen(true);
   };
 
   if (!session?.verified) {
@@ -4052,6 +4201,9 @@ function App() {
       </button>
       <button className="theme-toggle-button" type="button" onClick={toggleThemeMode} aria-label={themeMode === "dark" ? "تفعيل الوضع النهاري" : "تفعيل الوضع الليلي"}>
         {themeMode === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+      </button>
+      <button className="guide-toggle-button" type="button" onClick={openAppGuide} aria-label="فتح دليل استخدام التطبيق">
+        <MessageSquare size={18} />
       </button>
 
       {!isOnline && (
@@ -4167,6 +4319,8 @@ function App() {
         </div>
       </main>
 
+      <AppGuideModal open={isAppGuideOpen} onClose={markAppGuideSeen} />
+
       {showBottomNav && <nav className="bottom-nav" aria-label="التنقل السفلي">
         <div className="bottom-nav-track" ref={bottomNavRef}>
           {bottomNavItems.map((item) => {
@@ -4220,6 +4374,64 @@ function PageContextBar({ guide, canGoBack, canAccessView, onBack, onNavigate })
         </div>
       )}
     </section>
+  );
+}
+
+function AppGuideModal({ open, onClose }) {
+  if (!open) return null;
+
+  return (
+    <div className="app-guide-overlay" role="dialog" aria-modal="true" aria-labelledby="app-guide-title">
+      <section className="app-guide-modal">
+        <button className="app-guide-close" type="button" onClick={onClose} aria-label="إغلاق دليل التطبيق">
+          <X size={18} />
+        </button>
+
+        <header className="app-guide-hero">
+          <span>دليل سريع للمستخدم</span>
+          <h2 id="app-guide-title">كيف يعمل QZ ACADEMY؟</h2>
+          <p>
+            هذا الشرح يظهر لمساعدة المستخدمين على فهم وظيفة كل مكان والأزرار المهمة. بعد إغلاقه يعمل التطبيق بشكل طبيعي، ويمكن فتحه مرة أخرى من زر الدليل أعلى الشاشة.
+          </p>
+          <div className="app-guide-renewal-note">
+            <Clock size={18} />
+            <div>
+              <strong>مدة تشغيل التطبيق {RENEWAL_PERIOD_DAYS} يومًا</strong>
+              <small>بعد انتهاء المدة يقفل التطبيق ويطلب التجديد من الحساب الرئيسي، حتى إذا كان الجهاز بدون إنترنت.</small>
+            </div>
+          </div>
+        </header>
+
+        <div className="app-guide-grid">
+          {appGuideSections.map((section) => {
+            const Icon = section.icon;
+            return (
+              <article className="app-guide-card" key={section.title}>
+                <div className="app-guide-card-head">
+                  <Icon size={18} />
+                  <div>
+                    <strong>{section.title}</strong>
+                    <span>{section.text}</span>
+                  </div>
+                </div>
+                <ul>
+                  {section.items.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </article>
+            );
+          })}
+        </div>
+
+        <footer className="app-guide-footer">
+          <button className="primary-button" type="button" onClick={onClose}>
+            فهمت - متابعة استخدام التطبيق
+          </button>
+          <small>يمكن إعادة فتح الدليل من زر الرسالة أعلى الشاشة في أي وقت.</small>
+        </footer>
+      </section>
+    </div>
   );
 }
 
