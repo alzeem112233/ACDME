@@ -4513,6 +4513,11 @@ th {
   margin: 16px 0 0;
 }
 
+.platform-admin-screen {
+  width: min(100%, 1120px);
+  margin-inline: auto;
+}
+
 .platform-admin-hero {
   min-height: 150px;
   border-radius: 18px;
@@ -4541,6 +4546,14 @@ th {
   margin: 0;
   color: rgba(255, 255, 255, 0.78);
   line-height: 1.7;
+}
+
+.platform-admin-hero p small {
+  display: block;
+  margin-top: 8px;
+  color: rgba(255, 215, 95, 0.92);
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .platform-admin-hero svg {
@@ -4587,6 +4600,91 @@ th {
   font-weight: 900;
 }
 
+.platform-dashboard-toolbar {
+  position: sticky;
+  top: 10px;
+  z-index: 12;
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(240px, 0.85fr);
+  gap: 12px;
+  align-items: center;
+  border: 1px solid rgba(17, 26, 121, 0.1);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 14px 32px rgba(17, 26, 79, 0.1);
+  padding: 10px;
+  backdrop-filter: blur(18px);
+}
+
+.platform-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.platform-tabs button,
+.platform-search-box {
+  min-height: 46px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.platform-tabs button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  padding: 0 10px;
+  font-weight: 900;
+}
+
+.platform-tabs button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: start;
+}
+
+.platform-tabs button b {
+  min-width: 26px;
+  height: 24px;
+  border-radius: 999px;
+  background: #f1f4f8;
+  color: var(--primary);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+}
+
+.platform-tabs button.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+  box-shadow: 0 12px 26px rgba(17, 26, 121, 0.18);
+}
+
+.platform-tabs button.active b {
+  background: rgba(255, 215, 95, 0.2);
+  color: #ffd75f;
+}
+
+.platform-search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-inline: 12px;
+  color: var(--muted);
+}
+
+.platform-search-box input {
+  border: 0;
+  outline: 0;
+  padding-inline: 0;
+  background: transparent;
+}
+
 .platform-manual-account-card {
   display: grid;
   gap: 12px;
@@ -4605,6 +4703,64 @@ th {
 
 .platform-table-card {
   border-color: rgba(17, 26, 121, 0.12);
+}
+
+.platform-mobile-card-list {
+  display: none;
+}
+
+.platform-mobile-card,
+.platform-empty-card {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  padding: 13px;
+  display: grid;
+  gap: 10px;
+}
+
+.platform-mobile-card.pending {
+  border-color: rgba(217, 119, 6, 0.24);
+  background: #fffaf0;
+}
+
+.platform-mobile-card.rejected {
+  border-color: rgba(185, 28, 28, 0.22);
+  background: #fff1f2;
+}
+
+.platform-mobile-card span,
+.platform-mobile-card small,
+.platform-empty-card {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.6;
+}
+
+.platform-mobile-card strong {
+  display: block;
+  color: var(--primary-dark);
+  font-size: 16px;
+  margin: 2px 0;
+}
+
+.platform-mobile-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.platform-mobile-meta > span:not(.status-badge) {
+  border-radius: 999px;
+  background: #f4f6f9;
+  color: var(--primary-dark);
+  padding: 5px 10px;
+}
+
+.platform-card-message {
+  color: #166534;
 }
 
 .platform-renewal-alerts {
@@ -4684,6 +4840,34 @@ th {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+html[data-theme="dark"] .platform-dashboard-toolbar,
+html[data-theme="dark"] .platform-tabs button,
+html[data-theme="dark"] .platform-search-box,
+html[data-theme="dark"] .platform-mobile-card,
+html[data-theme="dark"] .platform-empty-card {
+  background: rgba(255, 255, 255, 0.045);
+  border-color: var(--line);
+}
+
+html[data-theme="dark"] .platform-tabs button.active {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+html[data-theme="dark"] .platform-mobile-card strong,
+html[data-theme="dark"] .platform-mobile-meta > span:not(.status-badge) {
+  color: var(--ink);
+}
+
+html[data-theme="dark"] .platform-mobile-meta > span:not(.status-badge) {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+html[data-theme="dark"] .platform-mobile-card.pending,
+html[data-theme="dark"] .platform-mobile-card.rejected {
+  background: rgba(226, 180, 59, 0.06);
 }
 
 .platform-report-screen {
@@ -6660,6 +6844,87 @@ html[data-theme="dark"] .expense-list button {
 }
 
 @media (max-width: 640px) {
+  .platform-admin-screen {
+    gap: 12px;
+  }
+
+  .platform-admin-hero {
+    min-height: 170px;
+    align-items: stretch;
+    flex-direction: column;
+    padding: 16px;
+  }
+
+  .platform-admin-hero h1 {
+    font-size: 22px;
+  }
+
+  .platform-hero-actions {
+    grid-template-columns: minmax(0, 1fr) auto;
+    justify-items: stretch;
+    align-items: center;
+  }
+
+  .platform-hero-actions button {
+    width: 100%;
+  }
+
+  .platform-dashboard-toolbar {
+    position: static;
+    grid-template-columns: 1fr;
+    padding: 9px;
+    border-radius: 15px;
+  }
+
+  .platform-tabs {
+    grid-template-columns: 1fr;
+  }
+
+  .platform-tabs button {
+    min-height: 44px;
+  }
+
+  .platform-admin-screen .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .platform-admin-screen .split-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .platform-admin-screen .status-row {
+    grid-template-columns: 1fr;
+  }
+
+  .platform-admin-screen .platform-table-card .table-scroll {
+    display: none;
+  }
+
+  .platform-admin-screen .platform-mobile-card-list {
+    display: grid;
+    gap: 10px;
+  }
+
+  .platform-admin-screen .action-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .platform-admin-screen .mini-button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .renewal-alert-list article {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .renewal-alert-list small,
+  .renewal-alert-list b {
+    white-space: normal;
+  }
+
   .platform-manual-account-grid {
     grid-template-columns: 1fr;
   }

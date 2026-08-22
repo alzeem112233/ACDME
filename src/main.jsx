@@ -5090,6 +5090,8 @@ function PlatformDashboard({
   togglePlatformUserStatus,
   deletePlatformUser,
 }) {
+  const [platformTab, setPlatformTab] = useState("overview");
+  const [platformSearch, setPlatformSearch] = useState("");
   const [visiblePasswordRows, setVisiblePasswordRows] = useState({});
   const [temporaryPasswords, setTemporaryPasswords] = useState({});
   const [resettingRows, setResettingRows] = useState({});
@@ -5100,17 +5102,21 @@ function PlatformDashboard({
   const [isAddingManualAccount, setIsAddingManualAccount] = useState(false);
   const [renewingAcademies, setRenewingAcademies] = useState({});
   const [renewalMessages, setRenewalMessages] = useState({});
-  const pending = registrationRequests.filter((request) => request.status === "قيد المراجعة").length;
-  const approved = registrationRequests.filter((request) => request.status === "مقبول").length;
-  const rejected = registrationRequests.filter((request) => request.status === "مرفوض").length;
-  const approvedAccounts = platformUsers || [];
-  const pendingPasswordResetRequests = (passwordResetRequests || []).filter((request) => request.status === "pending");
+  const [lastDashboardRefreshAt, setLastDashboardRefreshAt] = useState("");
+  const safeRegistrationRequests = Array.isArray(registrationRequests) ? registrationRequests : [];
+  const approvedAccounts = Array.isArray(platformUsers) ? platformUsers : [];
+  const safePasswordResetRequests = Array.isArray(passwordResetRequests) ? passwordResetRequests : [];
+  const normalizedPlatformSearch = normalizeText(platformSearch);
+  const pending = safeRegistrationRequests.filter((request) => request.status === "قيد المراجعة").length;
+  const approved = safeRegistrationRequests.filter((request) => request.status === "مقبول").length;
+  const rejected = safeRegistrationRequests.filter((request) => request.status === "مرفوض").length;
+  const pendingPasswordResetRequests = safePasswordResetRequests.filter((request) => request.status === "pending");
   const requestStatusOrder = {
     [STATUS_PENDING]: 0,
     [STATUS_APPROVED]: 1,
     [STATUS_REJECTED]: 2,
   };
-  const displayedRegistrationRequests = [...registrationRequests].sort((first, second) => {
+  const displayedRegistrationRequests = [...safeRegistrationRequests].sort((first, second) => {
     const firstOrder = requestStatusOrder[first.status] ?? 3;
     const secondOrder = requestStatusOrder[second.status] ?? 3;
     if (firstOrder !== secondOrder) return firstOrder - secondOrder;
@@ -5121,7 +5127,7 @@ function PlatformDashboard({
   const academyIds = new Set(
     [
       ...approvedAccounts.map((user) => user.academyId),
-      ...registrationRequests.filter((request) => request.status === STATUS_APPROVED).map((request) => requestAcademyId(request)),
+      ...safeRegistrationRequests.filter((request) => request.status === STATUS_APPROVED).map((request) => requestAcademyId(request)),
       ...Object.keys(academyDataById || {}),
     ].filter((academyId) => academyId && academyId !== "platform"),
   );
@@ -5130,7 +5136,7 @@ function PlatformDashboard({
     const owner =
       approvedAccounts.find((user) => user.academyId === academyId && user.role === ROLE_OWNER) ||
       approvedAccounts.find((user) => user.academyId === academyId) ||
-      registrationRequests.find((request) => requestAcademyId(request) === academyId);
+      safeRegistrationRequests.find((request) => requestAcademyId(request) === academyId);
     const renewalInfo = academyRenewalInfo(academyData.academy, renewalTimers?.[academyId]);
     const summary = academyData.cloudSummary || {};
     const playerCount = academyData.players.length || Number(summary.playersCount || 0);
@@ -5157,6 +5163,27 @@ function PlatformDashboard({
   const renewalAlertRows = academyRows
     .filter((academy) => academy.renewalInfo.isExpired || academy.renewalInfo.remainingDays <= 3)
     .sort((first, second) => first.renewalInfo.remainingDays - second.renewalInfo.remainingDays);
+  const matchesPlatformSearch = (...fields) => {
+    if (!normalizedPlatformSearch) return true;
+    return normalizeText(fields.filter(Boolean).join(" ")).includes(normalizedPlatformSearch);
+  };
+  const approvedAccountsForDisplay = approvedAccounts.filter((user) =>
+    matchesPlatformSearch(user.name, user.phone, user.academyName, user.role, user.permissions, user.status),
+  );
+  const pendingRegistrationRequestsForDisplay = pendingRegistrationRequests.filter((request) =>
+    matchesPlatformSearch(request.academyName, request.ownerName, request.contact, request.phone, request.city),
+  );
+  const rejectedRegistrationRequestsForDisplay = rejectedRegistrationRequests.filter((request) =>
+    matchesPlatformSearch(request.academyName, request.ownerName, request.contact, request.phone, request.city, request.rejectionReason),
+  );
+  const passwordResetRequestsForDisplay = pendingPasswordResetRequests.filter((request) =>
+    matchesPlatformSearch(request.phone, request.deliveryChannel, request.createdAt),
+  );
+  const platformTabs = [
+    { id: "overview", label: "النظرة العامة", icon: Activity, count: activeAcademiesCount },
+    { id: "accounts", label: "الحسابات", icon: LockKeyhole, count: approvedAccounts.length },
+    { id: "requests", label: "الطلبات", icon: ClipboardCheck, count: pendingRegistrationRequests.length },
+  ];
 
   const handlePasswordReset = async (user) => {
     const rowKey = user.id || user.phone;
@@ -5187,7 +5214,8 @@ function PlatformDashboard({
         refreshPlatformUsers?.(),
         refreshPasswordResetRequests?.(),
       ]);
-      setRequestsRefreshMessage(`تم تحديث الطلبات: ${Array.isArray(requests) ? requests.length : registrationRequests.length} طلب.`);
+      setLastDashboardRefreshAt(new Date().toISOString());
+      setRequestsRefreshMessage(`تم تحديث الطلبات: ${Array.isArray(requests) ? requests.length : safeRegistrationRequests.length} طلب.`);
     } catch (error) {
       logDeveloperError("refresh-registration-requests", error);
       setRequestsRefreshMessage(safeUserMessage(error, "تعذر تحديث الطلبات."));
@@ -5211,8 +5239,9 @@ function PlatformDashboard({
           refreshPasswordResetRequests?.(),
         ]);
         if (isMounted) {
+          setLastDashboardRefreshAt(new Date().toISOString());
           if (!silent) {
-            setRequestsRefreshMessage(`تم تحديث الطلبات: ${Array.isArray(requests) ? requests.length : registrationRequests.length} طلب.`);
+            setRequestsRefreshMessage(`تم تحديث الطلبات: ${Array.isArray(requests) ? requests.length : safeRegistrationRequests.length} طلب.`);
           }
         }
       } catch (error) {
@@ -5234,7 +5263,7 @@ function PlatformDashboard({
     refreshDashboardRequests();
     const dashboardRefreshTimer = window.setInterval(() => {
       refreshDashboardRequests({ silent: true });
-    }, 10000);
+    }, 30000);
 
     return () => {
       isMounted = false;
@@ -5291,12 +5320,15 @@ function PlatformDashboard({
   };
 
   return (
-    <section className="view-stack">
+    <section className="platform-admin-screen view-stack">
       <header className="platform-admin-hero">
         <div>
           <span>الحساب الرئيسي</span>
           <h1>إدارة الحسابات والطلبات</h1>
-          <p>تحكم في الحسابات المعتمدة، كلمات السر، طلبات التسجيل، وتنظيف بيانات التجربة.</p>
+          <p>
+            تحكم في الحسابات المعتمدة، كلمات السر، طلبات التسجيل، وتنظيف بيانات التجربة.
+            {lastDashboardRefreshAt && <small>آخر تحديث {new Date(lastDashboardRefreshAt).toLocaleTimeString("ar", { hour: "2-digit", minute: "2-digit" })}</small>}
+          </p>
         </div>
         <div className="platform-hero-actions">
           <button type="button" onClick={handleRefreshRequests} disabled={isRefreshingRequests}>
@@ -5308,6 +5340,36 @@ function PlatformDashboard({
       </header>
       {requestsRefreshMessage && <p className="platform-refresh-message">{requestsRefreshMessage}</p>}
 
+      <section className="platform-dashboard-toolbar" aria-label="تنظيم لوحة الحساب الرئيسي">
+        <div className="platform-tabs" role="tablist" aria-label="أقسام لوحة التحكم">
+          {platformTabs.map((tab) => {
+            const Icon = tab.icon;
+            return (
+              <button
+                className={platformTab === tab.id ? "active" : ""}
+                key={tab.id}
+                type="button"
+                onClick={() => setPlatformTab(tab.id)}
+                role="tab"
+                aria-selected={platformTab === tab.id}
+              >
+                <Icon size={16} />
+                <span>{tab.label}</span>
+                <b>{tab.count}</b>
+              </button>
+            );
+          })}
+        </div>
+        <label className="platform-search-box">
+          <Search size={16} />
+          <input
+            value={platformSearch}
+            onChange={(event) => setPlatformSearch(event.target.value)}
+            placeholder="بحث باسم الأكاديمية، المسؤول، أو رقم الهاتف"
+          />
+        </label>
+      </section>
+
       <div className="metric-grid">
         <Metric title="طلبات بانتظار الموافقة" value={pending} icon={ClipboardCheck} tone="amber" />
         <Metric title="أكاديميات مسجلة" value={activeAcademiesCount} icon={BadgeCheck} tone="green" />
@@ -5315,6 +5377,7 @@ function PlatformDashboard({
         <Metric title="استعادة كلمة المرور" value={pendingPasswordResetRequests.length} icon={KeyRound} tone="blue" />
       </div>
 
+      {platformTab === "overview" && <>
       <div className="split-layout">
         <section className="panel">
           <PanelHead
@@ -5401,12 +5464,12 @@ function PlatformDashboard({
               </tr>
             </thead>
             <tbody>
-              {pendingPasswordResetRequests.length === 0 && (
+              {passwordResetRequestsForDisplay.length === 0 && (
                 <tr>
                   <td className="empty-table-cell" colSpan="5">لا توجد طلبات استعادة كلمة مرور مفتوحة.</td>
                 </tr>
               )}
-              {pendingPasswordResetRequests.map((request) => (
+              {passwordResetRequestsForDisplay.map((request) => (
                 <tr key={request.id}>
                   <td>{request.phone}</td>
                   <td>{request.deliveryChannel === "manual" ? "لوحة التحكم" : request.deliveryChannel}</td>
@@ -5430,8 +5493,33 @@ function PlatformDashboard({
             </tbody>
           </table>
         </div>
+        <div className="platform-mobile-card-list">
+          {passwordResetRequestsForDisplay.length === 0 && <div className="platform-empty-card">لا توجد طلبات استعادة كلمة مرور مفتوحة.</div>}
+          {passwordResetRequestsForDisplay.map((request) => (
+            <article className="platform-mobile-card" key={request.id}>
+              <div>
+                <span>طلب استعادة كلمة المرور</span>
+                <strong>{request.phone}</strong>
+                <small>{request.createdAt || "بدون وقت"} - {request.deliveryChannel === "manual" ? "لوحة التحكم" : request.deliveryChannel}</small>
+              </div>
+              <div className="action-row">
+                <button className="mini-button approve" type="button" onClick={() => handlePasswordResetRequest(request)}>
+                  تعيين كلمة جديدة
+                </button>
+                <button className="mini-button reject" type="button" onClick={async () => {
+                  await updatePasswordResetRequest?.(request.id, "dismissed");
+                  await refreshPasswordResetRequests?.();
+                }}>
+                  إغلاق
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
       </section>
+      </>}
 
+      {platformTab === "accounts" && <>
       <form className="panel platform-manual-account-card" onSubmit={handleManualAccountSubmit}>
         <PanelHead
           title="إضافة حساب يدويًا"
@@ -5475,12 +5563,12 @@ function PlatformDashboard({
               </tr>
             </thead>
             <tbody>
-              {approvedAccounts.length === 0 && (
+              {approvedAccountsForDisplay.length === 0 && (
                 <tr>
                   <td className="empty-table-cell" colSpan="8">لا توجد حسابات معتمدة بعد</td>
                 </tr>
               )}
-              {approvedAccounts.map((user) => {
+              {approvedAccountsForDisplay.map((user) => {
                 const rowKey = user.id || user.phone;
                 const isPasswordVisible = Boolean(visiblePasswordRows[rowKey]);
                 const PasswordIcon = isPasswordVisible ? EyeOff : Eye;
@@ -5553,8 +5641,64 @@ function PlatformDashboard({
             </tbody>
           </table>
         </div>
-      </section>
+        <div className="platform-mobile-card-list">
+          {approvedAccountsForDisplay.length === 0 && <div className="platform-empty-card">لا توجد حسابات معتمدة مطابقة.</div>}
+          {approvedAccountsForDisplay.map((user) => {
+            const rowKey = user.id || user.phone;
+            const isPasswordVisible = Boolean(visiblePasswordRows[rowKey]);
+            const PasswordIcon = isPasswordVisible ? EyeOff : Eye;
+            const visiblePassword = temporaryPasswords[rowKey];
 
+            return (
+              <article className="platform-mobile-card" key={rowKey}>
+                <div>
+                  <span>{user.academyName || "أكاديمية"}</span>
+                  <strong>{user.name}</strong>
+                  <small>{user.phone} - {user.role} - {user.permissions}</small>
+                </div>
+                <div className="platform-mobile-meta">
+                  <span className={`status-badge ${user.status === "نشط" ? "ok" : "danger"}`}>{user.status || "نشط"}</span>
+                  <span>{isPasswordVisible ? visiblePassword || "عيّن كلمة جديدة" : "••••••••"}</span>
+                </div>
+                {passwordMessages[rowKey] && <small className="platform-card-message">{passwordMessages[rowKey]}</small>}
+                <div className="action-row">
+                  <button
+                    className="mini-button password-reset-button"
+                    type="button"
+                    onClick={() => handlePasswordReset(user)}
+                    disabled={Boolean(resettingRows[rowKey])}
+                  >
+                    {resettingRows[rowKey] ? "جاري التعيين..." : "كلمة جديدة"}
+                  </button>
+                  <button
+                    className="mini-button"
+                    type="button"
+                    onClick={() => setVisiblePasswordRows((prev) => ({ ...prev, [rowKey]: !prev[rowKey] }))}
+                    aria-label={isPasswordVisible ? "إخفاء كلمة السر" : "عرض كلمة السر"}
+                  >
+                    <PasswordIcon size={14} />
+                    {isPasswordVisible ? "إخفاء" : "عرض"}
+                  </button>
+                  <button
+                    className={user.status === "معطل" ? "mini-button approve" : "mini-button reject"}
+                    type="button"
+                    onClick={() => togglePlatformUserStatus(user)}
+                  >
+                    {user.status === "معطل" ? "تفعيل" : "إيقاف"}
+                  </button>
+                  <button className="mini-button danger" type="button" onClick={() => deletePlatformUser(user)}>
+                    <Trash2 size={14} />
+                    حذف
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+      </>}
+
+      {platformTab === "requests" && <>
       <section className="panel table-panel platform-table-card">
         <PanelHead
           title="طلبات تسجيل جديدة"
@@ -5575,14 +5719,14 @@ function PlatformDashboard({
               </tr>
             </thead>
             <tbody>
-              {pendingRegistrationRequests.length === 0 && (
+              {pendingRegistrationRequestsForDisplay.length === 0 && (
                 <tr>
                   <td className="empty-table-cell" colSpan="7">
                     لا توجد طلبات جديدة الآن. اضغط تحديث الطلبات للتأكد من جلب آخر الطلبات من السحابة.
                   </td>
                 </tr>
               )}
-              {pendingRegistrationRequests.map((request) => (
+              {pendingRegistrationRequestsForDisplay.map((request) => (
                 <tr key={request.id}>
                   <td>{request.academyName}</td>
                   <td>{request.ownerName}</td>
@@ -5609,6 +5753,32 @@ function PlatformDashboard({
             </tbody>
           </table>
         </div>
+        <div className="platform-mobile-card-list">
+          {pendingRegistrationRequestsForDisplay.length === 0 && (
+            <div className="platform-empty-card">لا توجد طلبات جديدة الآن. اضغط تحديث الطلبات للتأكد من جلب آخر الطلبات.</div>
+          )}
+          {pendingRegistrationRequestsForDisplay.map((request) => (
+            <article className="platform-mobile-card pending" key={request.id}>
+              <div>
+                <span>طلب تسجيل جديد</span>
+                <strong>{request.academyName}</strong>
+                <small>{request.ownerName} - {request.contact || request.phone} - {request.city || "بدون مدينة"}</small>
+              </div>
+              <div className="platform-mobile-meta">
+                <span className="status-badge">{request.status}</span>
+                <span>{request.createdAt || "بدون تاريخ"}</span>
+              </div>
+              <div className="action-row">
+                <button className="mini-button approve" type="button" onClick={() => updateRegistrationRequest(request.id, "مقبول")}>
+                  موافقة
+                </button>
+                <button className="mini-button reject" type="button" onClick={() => updateRegistrationRequest(request.id, "مرفوض")}>
+                  رفض
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
       </section>
 
       <section className="panel table-panel platform-table-card">
@@ -5631,12 +5801,12 @@ function PlatformDashboard({
               </tr>
             </thead>
             <tbody>
-              {rejectedRegistrationRequests.length === 0 && (
+              {rejectedRegistrationRequestsForDisplay.length === 0 && (
                 <tr>
                   <td className="empty-table-cell" colSpan="7">لا توجد حسابات مرفوضة أو محذوفة بعد</td>
                 </tr>
               )}
-              {rejectedRegistrationRequests.map((request) => (
+              {rejectedRegistrationRequestsForDisplay.map((request) => (
                 <tr key={request.id}>
                   <td>{request.academyName}</td>
                   <td>{request.ownerName}</td>
@@ -5654,7 +5824,27 @@ function PlatformDashboard({
             </tbody>
           </table>
         </div>
+        <div className="platform-mobile-card-list">
+          {rejectedRegistrationRequestsForDisplay.length === 0 && <div className="platform-empty-card">لا توجد حسابات مرفوضة أو محذوفة مطابقة.</div>}
+          {rejectedRegistrationRequestsForDisplay.map((request) => (
+            <article className="platform-mobile-card rejected" key={request.id}>
+              <div>
+                <span>حساب مرفوض أو محذوف</span>
+                <strong>{request.academyName}</strong>
+                <small>{request.ownerName} - {request.contact || request.phone} - {request.city || "بدون مدينة"}</small>
+              </div>
+              <div className="platform-mobile-meta">
+                <span className="status-badge danger">{request.status}</span>
+                <span>{request.rejectionReason || "تم رفض الطلب"}</span>
+              </div>
+              <button className="mini-button approve" type="button" onClick={() => updateRegistrationRequest(request.id, "مقبول")}>
+                إعادة اعتماد
+              </button>
+            </article>
+          ))}
+        </div>
       </section>
+      </>}
     </section>
   );
 }
