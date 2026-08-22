@@ -101,12 +101,12 @@ const PERMISSION_ATTENDANCE_PLAYERS = "الحضور واللاعبين";
 const PERMISSION_TEAM_FOLLOW = "متابعة فريق محدد";
 const PERMISSION_READ_ONLY = "قراءة فقط";
 const MAX_ACADEMY_ACCOUNTS = 3;
-const LOCAL_ONLY_ACADEMY_KEYS = ["players", "attendance", "payments", "expenses", "badges"];
+const LOCAL_ONLY_ACADEMY_KEYS = ["players", "attendance", "payments", "expenses", "badges", "playerEvaluations"];
 const DEFAULT_ATTENDANCE_PAYMENT = 500;
 const RENEWAL_PERIOD_DAYS = 29;
 const PLATFORM_RENEWAL_DAYS = RENEWAL_PERIOD_DAYS;
 const APP_RELEASE_VERSION = "QZ Academy Release 8";
-const APP_GUIDE_VERSION = 3;
+const APP_GUIDE_VERSION = 4;
 const INTERACTIVE_GUIDE_VERSION = 1;
 const BACKUP_FORMAT_VERSION = 8;
 const BACKUP_KDF_ITERATIONS = 250000;
@@ -117,6 +117,13 @@ const footballPositionOptions = [
   { value: "وسط", label: "وسط" },
   { value: "مهاجم", label: "مهاجم" },
 ];
+const evaluationTypeOptions = [
+  { value: "positive", label: "إيجابية", tone: "positive" },
+  { value: "negative", label: "ملاحظة سلبية", tone: "negative" },
+  { value: "violation", label: "مخالفة", tone: "violation" },
+];
+const positiveEvaluationTags = ["التزام", "روح الفريق", "تطور مهاري", "احترام المدرب", "انضباط"];
+const disciplineEvaluationTags = ["تأخر", "غياب بدون عذر", "سلوك غير مناسب", "عدم الالتزام بالزي", "اعتراض"];
 const ageGroupPresets = [
   { key: "hope", name: "الأمل", years: "2014-now", from: 2014, to: new Date().getFullYear() },
   { key: "buds", name: "البراعم", years: "2012-2013", from: 2012, to: 2013 },
@@ -401,6 +408,7 @@ const seedData = {
   expenses: [],
   matches: [],
   badges: [],
+  playerEvaluations: [],
   notifications: [],
   posts: [],
   registrationRequests: [],
@@ -561,6 +569,7 @@ function normalizeAcademyData(value = {}, account = {}) {
     expenses: Array.isArray(value.expenses) ? value.expenses : [],
     matches: Array.isArray(value.matches) ? value.matches : [],
     badges: Array.isArray(value.badges) ? value.badges : [],
+    playerEvaluations: Array.isArray(value.playerEvaluations) ? value.playerEvaluations : [],
     notifications: Array.isArray(value.notifications) ? value.notifications : [],
     posts: Array.isArray(value.posts) ? value.posts : [],
     registrationRequests: [],
@@ -801,9 +810,9 @@ function canAccessView(viewId, session) {
   const permission = getUserPermission(session);
   if (permission === PERMISSION_FULL) return true;
 
-  const attendanceAndPlayers = new Set(["home", "players", "playerProfile", "attendance", "teamProfile", "reports", "matches"]);
-  const teamFollow = new Set(["home", "teamProfile", "players", "playerProfile", "attendance", "reports", "matches"]);
-  const readOnly = new Set(["home", "teamProfile", "playerProfile", "reports", "matches"]);
+  const attendanceAndPlayers = new Set(["home", "players", "playerProfile", "attendance", "evaluations", "teamProfile", "reports", "matches"]);
+  const teamFollow = new Set(["home", "teamProfile", "players", "playerProfile", "attendance", "evaluations", "reports", "matches"]);
+  const readOnly = new Set(["home", "teamProfile", "playerProfile", "evaluations", "reports", "matches"]);
 
   if (permission === PERMISSION_ATTENDANCE_PLAYERS) return attendanceAndPlayers.has(viewId);
   if (permission === PERMISSION_TEAM_FOLLOW) return teamFollow.has(viewId);
@@ -823,6 +832,7 @@ const navItems = [
   { id: "teams", label: "إدارة الفرق", icon: ShieldCheck },
   { id: "players", label: "إدارة اللاعبين", icon: Users },
   { id: "attendance", label: "التحضير", icon: CalendarCheck },
+  { id: "evaluations", label: "تقييم اللاعبين", icon: Star },
   { id: "playerProfile", label: "ملف اللاعب", icon: UserCircle },
   { id: "teamProfile", label: "ملف الفريق", icon: Trophy },
   { id: "reports", label: "التقارير المالية", icon: Wallet },
@@ -919,6 +929,14 @@ const pageGuides = {
     secondaryView: "players",
     secondaryLabel: "اللاعبون",
   },
+  evaluations: {
+    title: "تقييم اللاعبين",
+    text: "سجل الإيجابيات والملاحظات والمخالفات لكل لاعب، ثم اطبع تقريرًا مرتبًا بصورة اللاعب وبياناته.",
+    primaryView: "players",
+    primaryLabel: "اللاعبون",
+    secondaryView: "reports",
+    secondaryLabel: "التقارير",
+  },
   playerProfile: {
     title: "ملف اللاعب",
     text: "عدّل البيانات، راجع الحضور والمدفوعات، واحفظ بطاقة اللاعب أو شاركها.",
@@ -982,7 +1000,7 @@ const appGuideSections = [
       "زر التحديث يعيد تحميل الصفحة الحالية عند الحاجة.",
       "زر الشمس أو القمر يبدل بين الوضع النهاري والليلي.",
       "زر البروفايل يفتح الملف الشخصي والإعدادات وتسجيل الخروج.",
-      "القائمة السفلية تنقلك بين الرئيسية، اللاعبين، التحضير، التقارير، المباريات، والتنبيهات.",
+      "القائمة السفلية تنقلك بين الرئيسية، اللاعبين، التحضير، التقييم، التقارير، المباريات، والتنبيهات.",
     ],
   },
   {
@@ -1003,6 +1021,16 @@ const appGuideSections = [
       "إدارة اللاعبين: إضافة لاعب جديد وترتيب اللاعبين حسب الاسم أو العمر.",
       "ملف اللاعب: تعديل الرقم، المركز، الاشتراك، الطقم، والصورة.",
       "بطاقة اللاعب يمكن حفظها بعد تعبئة البيانات.",
+    ],
+  },
+  {
+    title: "التقييم والمخالفات",
+    icon: Star,
+    text: "هذه الصفحة تحفظ ملاحظات المدرب على كل لاعب داخل الهاتف فقط.",
+    items: [
+      "سجل إيجابية أو ملاحظة سلبية أو مخالفة مع درجة وتفاصيل مختصرة.",
+      "التقرير يعرض صورة اللاعب وبياناته والمخالفات والإيجابيات برسوم واضحة.",
+      "هذه السجلات تدخل في النسخة الاحتياطية ولا ترفع للسحابة تلقائيًا.",
     ],
   },
   {
@@ -1093,6 +1121,13 @@ const interactiveGuideSteps = [
     actionLabel: "اضغط تبويب التحضير",
   },
   {
+    targetId: "nav-evaluations",
+    viewId: "evaluations",
+    title: "تقييم اللاعبين",
+    text: "هنا يسجل المدرب الإيجابيات والملاحظات والمخالفات، ثم يطبع تقرير اللاعب عند الحاجة.",
+    actionLabel: "اضغط تبويب التقييم",
+  },
+  {
     targetId: "nav-reports",
     viewId: "reports",
     title: "التقارير",
@@ -1166,6 +1201,18 @@ function paymentKind(payment = {}) {
 
 function paymentMethodLabel(payment = {}) {
   return paymentKind(payment) === "transfer" ? "حوالة" : "نقدي";
+}
+
+function evaluationTypeMeta(type = "positive") {
+  return evaluationTypeOptions.find((option) => option.value === type) || evaluationTypeOptions[0];
+}
+
+function evaluationTypeLabel(type = "positive") {
+  return evaluationTypeMeta(type).label;
+}
+
+function evaluationTone(type = "positive") {
+  return evaluationTypeMeta(type).tone;
 }
 
 function receiptSequenceNumber(payments = [], receiptNumber = "") {
@@ -1723,6 +1770,7 @@ function backupMetadataFor(data, academyId, academyName) {
     paymentsCount: (data.payments || []).length,
     attendanceCount: (data.attendance || []).length,
     expensesCount: (data.expenses || []).length,
+    playerEvaluationsCount: (data.playerEvaluations || []).length,
   };
 }
 
@@ -3382,6 +3430,44 @@ function App() {
     }));
   };
 
+  const addPlayerEvaluation = (entryInput = {}) => {
+    const playerId = entryInput.playerId || "";
+    const player = data.players.find((item) => item.id === playerId);
+    if (!player) return { ok: false, message: "اختر اللاعب أولًا." };
+
+    const type = evaluationTypeOptions.some((option) => option.value === entryInput.type) ? entryInput.type : "positive";
+    const title = String(entryInput.title || "").trim();
+    const note = String(entryInput.note || "").trim();
+    if (!title && !note) return { ok: false, message: "اكتب عنوانًا أو ملاحظة مختصرة قبل الحفظ." };
+
+    const rawScore = Number(entryInput.score || 0);
+    const score = Number.isFinite(rawScore) ? Math.max(0, Math.min(100, Math.round(rawScore))) : 0;
+    const evaluation = {
+      id: crypto.randomUUID(),
+      playerId,
+      type,
+      title: title || evaluationTypeLabel(type),
+      note,
+      score,
+      date: entryInput.date || today,
+      tags: Array.isArray(entryInput.tags) ? entryInput.tags.filter(Boolean) : [],
+      createdAt: new Date().toISOString(),
+    };
+
+    setData((prev) => ({
+      ...prev,
+      playerEvaluations: [evaluation, ...(prev.playerEvaluations || [])],
+    }));
+    return { ok: true, message: "تم حفظ التقييم محليًا على الهاتف." };
+  };
+
+  const deletePlayerEvaluation = (evaluationId) => {
+    setData((prev) => ({
+      ...prev,
+      playerEvaluations: (prev.playerEvaluations || []).filter((evaluation) => evaluation.id !== evaluationId),
+    }));
+  };
+
   const addMatch = async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -4317,6 +4403,8 @@ function App() {
     addPayment,
     addExpense,
     deleteExpense,
+    addPlayerEvaluation,
+    deletePlayerEvaluation,
     addMatch,
     acceptMatchRequest,
     recordMatchResult,
@@ -4360,7 +4448,7 @@ function App() {
   const visibleNavItems = allowedNavItems.filter((item) => item.id !== "matches" || isOnline);
   const bottomNavItems = visibleNavItems.filter((item) => !setupNavIds.has(item.id));
   const displayedView = onboardingView || (visibleNavItems.some((item) => item.id === activeView) ? activeView : fallbackView);
-  const customScreenViews = new Set(["home", "coachSetup", "coaches", "settings", "ageGroups", "attendance", "reports", "matches", "accountProfile"]);
+  const customScreenViews = new Set(["home", "coachSetup", "coaches", "settings", "ageGroups", "attendance", "evaluations", "reports", "matches", "accountProfile"]);
   const showGlobalHeader = !customScreenViews.has(displayedView);
   const showScreenTitle = !customScreenViews.has(displayedView);
   const showBottomNav = !session?.isFirstLogin && !setupNavIds.has(displayedView);
@@ -4704,6 +4792,7 @@ function App() {
           {displayedView === "players" && <Players {...viewProps} />}
           {displayedView === "playerProfile" && <PlayerProfile {...viewProps} />}
           {displayedView === "attendance" && <Attendance {...viewProps} />}
+          {displayedView === "evaluations" && <PlayerEvaluations {...viewProps} />}
           {displayedView === "reports" && <Reports {...viewProps} />}
           {displayedView === "accountProfile" && <AccountProfile {...viewProps} />}
           {displayedView === "gamification" && <Gamification {...viewProps} />}
@@ -8630,6 +8719,459 @@ function Attendance({ data, helpers, recordAttendance, addPayment }) {
           );
         })}
       </section>
+    </section>
+  );
+}
+
+function PlayerEvaluations({
+  data,
+  helpers,
+  selectedPlayerId,
+  setSelectedPlayerId,
+  addPlayerEvaluation,
+  deletePlayerEvaluation,
+  setActiveView,
+}) {
+  const players = data.players || [];
+  const allRecords = data.playerEvaluations || [];
+  const [activePlayerId, setActivePlayerId] = useState(selectedPlayerId || players[0]?.id || "");
+  const [playerSearch, setPlayerSearch] = useState("");
+  const [recordFilter, setRecordFilter] = useState("all");
+  const [recordType, setRecordType] = useState("positive");
+  const [recordDate, setRecordDate] = useState(today);
+  const [recordTitle, setRecordTitle] = useState("");
+  const [recordNote, setRecordNote] = useState("");
+  const [recordScore, setRecordScore] = useState(85);
+  const [selectedTags, setSelectedTags] = useState([]);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    if (!players.length) {
+      setActivePlayerId("");
+      return;
+    }
+
+    if (selectedPlayerId && players.some((player) => player.id === selectedPlayerId)) {
+      setActivePlayerId(selectedPlayerId);
+      return;
+    }
+
+    if (!players.some((player) => player.id === activePlayerId)) {
+      setActivePlayerId(players[0].id);
+    }
+  }, [activePlayerId, players, selectedPlayerId]);
+
+  const choosePlayer = (playerId) => {
+    setActivePlayerId(playerId);
+    setSelectedPlayerId?.(playerId);
+    setMessage("");
+  };
+
+  const selectedPlayer = helpers.playerById[activePlayerId] || players[0];
+  const selectedTeam = helpers.teamById[selectedPlayer?.teamId];
+  const selectedGroup = helpers.groupById[selectedTeam?.ageGroupId];
+  const visiblePlayers = players
+    .filter((player) => {
+      const team = helpers.teamById[player.teamId];
+      const searchTarget = `${player.name || ""} ${team?.name || ""} ${player.position || ""} ${player.guardianPhone || ""}`;
+      return searchTarget.toLowerCase().includes(playerSearch.toLowerCase());
+    })
+    .sort((firstPlayer, secondPlayer) => String(firstPlayer.name || "").localeCompare(String(secondPlayer.name || ""), "ar"));
+  const selectedRecords = allRecords
+    .filter((record) => record.playerId === selectedPlayer?.id)
+    .sort((firstRecord, secondRecord) => String(secondRecord.date || "").localeCompare(String(firstRecord.date || "")));
+  const visibleRecords = selectedRecords.filter((record) => recordFilter === "all" || record.type === recordFilter);
+  const positiveCount = selectedRecords.filter((record) => record.type === "positive").length;
+  const negativeCount = selectedRecords.filter((record) => record.type === "negative").length;
+  const violationCount = selectedRecords.filter((record) => record.type === "violation").length;
+  const averageScore = Math.round(
+    selectedRecords.reduce((sum, record) => sum + Number(record.score || 0), 0) / Math.max(selectedRecords.length, 1),
+  );
+  const tagOptions = recordType === "positive" ? positiveEvaluationTags : disciplineEvaluationTags;
+
+  const toggleTag = (tag) => {
+    setSelectedTags((current) => (current.includes(tag) ? current.filter((item) => item !== tag) : [...current, tag]));
+  };
+
+  const handleSubmit = (event) => {
+    event.preventDefault();
+    const result = addPlayerEvaluation?.({
+      playerId: activePlayerId,
+      type: recordType,
+      date: recordDate,
+      title: recordTitle,
+      note: recordNote,
+      score: recordScore,
+      tags: selectedTags,
+    });
+    setMessage(result?.message || "تم حفظ السجل.");
+    if (result?.ok !== false) {
+      setRecordTitle("");
+      setRecordNote("");
+      setSelectedTags([]);
+      setRecordScore(recordType === "positive" ? 90 : 60);
+    }
+  };
+
+  const deleteRecord = (recordId) => {
+    if (!window.confirm("هل تريد حذف هذا السجل؟")) return;
+    deletePlayerEvaluation?.(recordId);
+    setMessage("تم حذف السجل من النسخة المحلية.");
+  };
+
+  const playerReportHeader = (player, records) => {
+    const team = helpers.teamById[player?.teamId];
+    const group = helpers.groupById[team?.ageGroupId];
+    const positives = records.filter((record) => record.type === "positive").length;
+    const negatives = records.filter((record) => record.type === "negative").length;
+    const violations = records.filter((record) => record.type === "violation").length;
+    const avgScore = Math.round(records.reduce((sum, record) => sum + Number(record.score || 0), 0) / Math.max(records.length, 1));
+    const avatar = player?.photo
+      ? `<img src="${escapeHtml(player.photo)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:18px;" />`
+      : `<strong style="font-size:32px;color:#ffd75f;">${escapeHtml(String(player?.name || "؟").slice(0, 1))}</strong>`;
+
+    return `
+      <section class="report-section">
+        <div style="display:grid;grid-template-columns:92px minmax(0,1fr);gap:14px;align-items:center;">
+          <div style="width:92px;height:92px;border-radius:20px;background:#101947;display:grid;place-items:center;overflow:hidden;border:3px solid #e2b43b;">${avatar}</div>
+          <div>
+            <p style="margin:0 0 5px;color:#6b7280;font-weight:800;">بطاقة متابعة لاعب</p>
+            <h2 style="margin:0 0 8px;color:#101947;font-size:24px;">${escapeHtml(player?.name || "لاعب")}</h2>
+            <div style="display:flex;flex-wrap:wrap;gap:7px;">
+              <span style="border:1px solid #e5e7eb;border-radius:999px;padding:6px 10px;font-weight:800;">الفريق: ${escapeHtml(team?.name || "بدون فريق")}</span>
+              <span style="border:1px solid #e5e7eb;border-radius:999px;padding:6px 10px;font-weight:800;">الفئة: ${escapeHtml(group?.name || "-")}</span>
+              <span style="border:1px solid #e5e7eb;border-radius:999px;padding:6px 10px;font-weight:800;">المركز: ${escapeHtml(player?.position || "-")}</span>
+              <span style="border:1px solid #e5e7eb;border-radius:999px;padding:6px 10px;font-weight:800;">الرقم: ${escapeHtml(player?.playerNumber || "-")}</span>
+            </div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:14px;">
+          <div style="border-radius:14px;background:#e8f7ef;color:#157347;padding:10px;text-align:center;font-weight:900;"><b style="display:block;font-size:20px;">${positives}</b>إيجابيات</div>
+          <div style="border-radius:14px;background:#fff4d8;color:#946500;padding:10px;text-align:center;font-weight:900;"><b style="display:block;font-size:20px;">${negatives}</b>ملاحظات</div>
+          <div style="border-radius:14px;background:#ffe7e5;color:#a43d36;padding:10px;text-align:center;font-weight:900;"><b style="display:block;font-size:20px;">${violations}</b>مخالفات</div>
+          <div style="border-radius:14px;background:#eef1ff;color:#17207c;padding:10px;text-align:center;font-weight:900;"><b style="display:block;font-size:20px;">${avgScore}%</b>متوسط</div>
+        </div>
+      </section>
+    `;
+  };
+
+  const printEvaluationReport = (scope = "player") => {
+    const scopedRecords = scope === "all" ? allRecords : selectedRecords;
+    const playersWithRecords = players.filter((player) => scopedRecords.some((record) => record.playerId === player.id));
+    const reportPlayers = scope === "all"
+      ? playersWithRecords.length ? playersWithRecords : selectedPlayer ? [selectedPlayer] : []
+      : selectedPlayer ? [selectedPlayer] : [];
+    if (!reportPlayers.length) {
+      setMessage("أضف لاعبًا أولًا حتى يمكن إنشاء التقرير.");
+      return;
+    }
+
+    const positives = scopedRecords.filter((record) => record.type === "positive").length;
+    const negatives = scopedRecords.filter((record) => record.type === "negative").length;
+    const violations = scopedRecords.filter((record) => record.type === "violation").length;
+    const avgScore = Math.round(scopedRecords.reduce((sum, record) => sum + Number(record.score || 0), 0) / Math.max(scopedRecords.length, 1));
+    const playerCountBars = Object.values(scopedRecords.reduce((map, record) => {
+      const player = helpers.playerById[record.playerId];
+      const key = record.playerId || "unknown";
+      map[key] = map[key] || { label: player?.name || "لاعب غير معروف", value: 0, color: "#17207c" };
+      map[key].value += 1;
+      return map;
+    }, {})).sort((first, second) => second.value - first.value).slice(0, 8);
+
+    const sections = reportPlayers.flatMap((player) => {
+      const playerRecords = scopedRecords
+        .filter((record) => record.playerId === player.id)
+        .sort((firstRecord, secondRecord) => String(secondRecord.date || "").localeCompare(String(firstRecord.date || "")));
+      const rows = playerRecords.map((record) => [
+        readableDate(record.date),
+        evaluationTypeLabel(record.type),
+        record.title || "-",
+        `${Number(record.score || 0)}%`,
+        (record.tags || []).join("، ") || "-",
+        record.note || "-",
+      ]);
+      return [
+        playerReportHeader(player, playerRecords),
+        reportTable(
+          `تفاصيل السجلات - ${player.name || "لاعب"}`,
+          ["التاريخ", "النوع", "العنوان", "الدرجة", "الرموز", "التفاصيل"],
+          rows,
+          "لا توجد سجلات محفوظة لهذا اللاعب.",
+        ),
+      ];
+    });
+
+    const ok = printReportHtml(buildPrintReportHtml({
+      title: scope === "all" ? "تقرير تقييم اللاعبين والمخالفات" : `تقرير ${selectedPlayer?.name || "اللاعب"}`,
+      subtitle: scope === "all" ? "كل السجلات المحلية المحفوظة على الهاتف" : "الإيجابيات والملاحظات والمخالفات",
+      academyName: data.academy.name,
+      logo: data.academy.logo,
+      cards: [
+        { label: "إجمالي السجلات", value: scopedRecords.length },
+        { label: "الإيجابيات", value: positives },
+        { label: "الملاحظات السلبية", value: negatives },
+        { label: "المخالفات", value: violations },
+        { label: "متوسط التقييم", value: `${avgScore}%` },
+      ],
+      charts: [
+        reportSplitChart("توزيع السجلات", [
+          { label: "إيجابيات", value: positives, color: "#157347" },
+          { label: "ملاحظات سلبية", value: negatives, color: "#bd8b04" },
+          { label: "مخالفات", value: violations, color: "#b94a48" },
+        ]),
+        reportProgressChart("متوسط التقييم", avgScore, "متوسط درجات السجلات المختارة", `${scopedRecords.length} سجل`),
+        reportBarChart("الأكثر تسجيلًا", playerCountBars, "لا توجد سجلات بعد."),
+      ],
+      sections,
+      note: "تقييمات اللاعبين والمخالفات محفوظة محليًا على الهاتف وتدخل في النسخة الاحتياطية المشفرة.",
+    }), "QZ Academy Player Evaluations");
+    setMessage(ok ? "تم فتح تقرير التقييمات للطباعة أو حفظ PDF." : "تعذر فتح التقرير الآن.");
+  };
+
+  if (!players.length) {
+    return (
+      <section className="evaluation-screen">
+        <header className="evaluation-hero">
+          <div>
+            <span>التقييم والمخالفات</span>
+            <h1>أضف اللاعبين أولًا</h1>
+            <p>بعد إضافة اللاعبين ستظهر هنا صفحة متابعة السلوك والأداء.</p>
+          </div>
+          <Star size={31} />
+        </header>
+        <div className="evaluation-empty-state">
+          <Users size={32} />
+          <strong>لا توجد أسماء لاعبين بعد</strong>
+          <span>انتقل لإدارة اللاعبين وأضف أول لاعب، ثم ارجع لتسجيل التقييمات والمخالفات.</span>
+          <button type="button" onClick={() => setActiveView?.("players")}>
+            <Plus size={17} />
+            إضافة لاعب
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="evaluation-screen">
+      <header className="evaluation-hero">
+        <div>
+          <span>تقييم اللاعبين</span>
+          <h1>الإيجابيات والمخالفات</h1>
+          <p>كل السجلات محفوظة محليًا على الهاتف وتدخل في النسخة الاحتياطية.</p>
+        </div>
+        <Star size={31} />
+      </header>
+
+      <section className="evaluation-player-picker">
+        <div className="evaluation-section-head">
+          <div>
+            <span>اختيار اللاعب</span>
+            <strong>{visiblePlayers.length} لاعب</strong>
+          </div>
+          <button type="button" onClick={() => setActiveView?.("playerProfile")}>
+            <UserCircle size={16} />
+            ملف اللاعب
+          </button>
+        </div>
+        <label className="evaluation-search">
+          <Search size={16} />
+          <input value={playerSearch} onChange={(event) => setPlayerSearch(event.target.value)} placeholder="بحث باسم اللاعب أو الفريق" />
+        </label>
+        <select value={activePlayerId} onChange={(event) => choosePlayer(event.target.value)}>
+          {visiblePlayers.map((player) => (
+            <option key={player.id} value={player.id}>{player.name}</option>
+          ))}
+        </select>
+        <div className="evaluation-player-chips">
+          {visiblePlayers.map((player) => (
+            <button
+              className={activePlayerId === player.id ? "active" : ""}
+              key={player.id}
+              type="button"
+              onClick={() => choosePlayer(player.id)}
+            >
+              {player.photo ? <img src={player.photo} alt="" loading="lazy" decoding="async" /> : <span>{String(player.name || "؟").slice(0, 1)}</span>}
+              <b>{player.name}</b>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {message && <p className={message.startsWith("تم") ? "evaluation-message success" : "evaluation-message"}>{message}</p>}
+
+      <section className="evaluation-stat-grid">
+        <article>
+          <BadgeCheck size={18} />
+          <span>إيجابيات</span>
+          <strong>{positiveCount}</strong>
+        </article>
+        <article>
+          <Bell size={18} />
+          <span>ملاحظات</span>
+          <strong>{negativeCount}</strong>
+        </article>
+        <article>
+          <FileCheck2 size={18} />
+          <span>مخالفات</span>
+          <strong>{violationCount}</strong>
+        </article>
+        <article>
+          <Medal size={18} />
+          <span>المتوسط</span>
+          <strong>{averageScore}%</strong>
+        </article>
+      </section>
+
+      <div className="evaluation-layout">
+        <form className="evaluation-form-card" onSubmit={handleSubmit}>
+          <FormTitle icon={Star} title="تسجيل متابعة جديدة" />
+          <div className="evaluation-type-selector" role="radiogroup" aria-label="نوع السجل">
+            {evaluationTypeOptions.map((option) => {
+              const Icon = option.value === "positive" ? BadgeCheck : option.value === "negative" ? Bell : FileCheck2;
+              return (
+                <button
+                  className={`${recordType === option.value ? "active" : ""} ${option.tone}`}
+                  key={option.value}
+                  type="button"
+                  onClick={() => {
+                    setRecordType(option.value);
+                    setSelectedTags([]);
+                    setRecordScore(option.value === "positive" ? 90 : 60);
+                  }}
+                >
+                  <Icon size={17} />
+                  <span>{option.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="two-cols">
+            <label>
+              <span>التاريخ</span>
+              <input type="date" value={recordDate} onChange={(event) => setRecordDate(event.target.value)} required />
+            </label>
+            <label>
+              <span>عنوان مختصر</span>
+              <input value={recordTitle} onChange={(event) => setRecordTitle(event.target.value)} placeholder="مثال: التزام ممتاز" />
+            </label>
+          </div>
+
+          <div className="evaluation-score-box">
+            <div>
+              <span>درجة السلوك أو الأداء</span>
+              <strong>{recordScore}%</strong>
+            </div>
+            <input type="range" min="0" max="100" value={recordScore} onChange={(event) => setRecordScore(Number(event.target.value))} />
+            <div className="evaluation-score-scale">
+              <span>ضعيف</span>
+              <span>متوسط</span>
+              <span>ممتاز</span>
+            </div>
+          </div>
+
+          <div className="evaluation-tags">
+            <span>رموز سريعة</span>
+            <div>
+              {tagOptions.map((tag) => (
+                <button className={selectedTags.includes(tag) ? "active" : ""} key={tag} type="button" onClick={() => toggleTag(tag)}>
+                  {tag}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <label>
+            <span>التفاصيل</span>
+            <textarea value={recordNote} onChange={(event) => setRecordNote(event.target.value)} placeholder="اكتب تفاصيل قصيرة تساعد في التقرير" />
+          </label>
+
+          <button className="primary-button" type="submit">
+            <CheckCircle2 size={18} />
+            حفظ محليًا
+          </button>
+        </form>
+
+        <section className="evaluation-records-panel">
+          <article className="evaluation-player-profile">
+            <div className="evaluation-player-photo">
+              {selectedPlayer?.photo ? <img src={selectedPlayer.photo} alt={selectedPlayer.name} loading="lazy" decoding="async" /> : <UserCircle size={76} />}
+            </div>
+            <div>
+              <span>اللاعب المحدد</span>
+              <strong>{selectedPlayer?.name || "لاعب"}</strong>
+              <small>{selectedTeam?.name || "بدون فريق"} - {selectedGroup?.name || "بدون فئة"}</small>
+            </div>
+            <div className="evaluation-player-facts">
+              <span>المركز <b>{selectedPlayer?.position || "-"}</b></span>
+              <span>العمر <b>{selectedPlayer?.ageText || exactAgeFromDate(selectedPlayer?.birthDate) || "-"}</b></span>
+              <span>الرقم <b>{selectedPlayer?.playerNumber || "-"}</b></span>
+              <span>الجوال <b>{selectedPlayer?.guardianPhone || "-"}</b></span>
+            </div>
+          </article>
+
+          <div className="evaluation-report-actions">
+            <button type="button" onClick={() => printEvaluationReport("player")}>
+              <Download size={16} />
+              تقرير اللاعب
+            </button>
+            <button type="button" onClick={() => printEvaluationReport("all")} disabled={!allRecords.length}>
+              <ClipboardList size={16} />
+              تقرير كامل
+            </button>
+          </div>
+
+          <div className="evaluation-filter-row">
+            {["all", ...evaluationTypeOptions.map((option) => option.value)].map((filter) => (
+              <button
+                className={recordFilter === filter ? "active" : ""}
+                key={filter}
+                type="button"
+                onClick={() => setRecordFilter(filter)}
+              >
+                {filter === "all" ? "الكل" : evaluationTypeLabel(filter)}
+              </button>
+            ))}
+          </div>
+
+          <div className="evaluation-record-list">
+            {visibleRecords.length === 0 && (
+              <div className="evaluation-empty-state compact">
+                <Star size={24} />
+                <strong>لا توجد سجلات مطابقة</strong>
+                <span>سجل إيجابية أو ملاحظة أو مخالفة لتظهر هنا.</span>
+              </div>
+            )}
+            {visibleRecords.map((record) => {
+              const tone = evaluationTone(record.type);
+              return (
+                <article className={`evaluation-record-card ${tone}`} key={record.id}>
+                  <div className="evaluation-record-icon">
+                    {record.type === "positive" ? <BadgeCheck size={18} /> : record.type === "negative" ? <Bell size={18} /> : <FileCheck2 size={18} />}
+                  </div>
+                  <div>
+                    <div className="evaluation-record-head">
+                      <strong>{record.title || evaluationTypeLabel(record.type)}</strong>
+                      <span>{Number(record.score || 0)}%</span>
+                    </div>
+                    <small>{readableDate(record.date)} - {evaluationTypeLabel(record.type)}</small>
+                    {record.note && <p>{record.note}</p>}
+                    {(record.tags || []).length > 0 && (
+                      <div className="evaluation-record-tags">
+                        {record.tags.map((tag) => <b key={tag}>{tag}</b>)}
+                      </div>
+                    )}
+                  </div>
+                  <button className="evaluation-delete-button" type="button" onClick={() => deleteRecord(record.id)} aria-label="حذف السجل">
+                    <Trash2 size={15} />
+                  </button>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      </div>
     </section>
   );
 }
