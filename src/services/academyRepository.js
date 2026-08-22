@@ -276,6 +276,29 @@ function mapPasswordResetRequest(row) {
   };
 }
 
+function mapPublicMatchRequest(row) {
+  return {
+    id: row.id,
+    academyId: row.academy_id || "",
+    academyName: row.academy_name || "",
+    captainName: row.captain_name || "",
+    venue: row.venue || "",
+    locationUrl: row.location_url || "",
+    categoryIds: Array.isArray(row.category_ids) ? row.category_ids : [],
+    categoryNames: Array.isArray(row.category_names) ? row.category_names : [],
+    matchDate: row.match_date || "",
+    startTime: row.start_time || "",
+    endTime: row.end_time || "",
+    status: row.status || "open",
+    acceptedByAcademyId: row.accepted_by_academy_id || "",
+    acceptedByAcademyName: row.accepted_by_academy_name || "",
+    acceptedByCaptainName: row.accepted_by_captain_name || "",
+    acceptedAt: row.accepted_at || "",
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || "",
+  };
+}
+
 function mapAcademyCloudData(row) {
   return {
     academyId: row.academy_id,
@@ -311,6 +334,93 @@ function platformAccountPayload(account) {
     status: normalizePlatformStatus(account.status),
     updated_at: new Date().toISOString(),
   };
+}
+
+function publicMatchRequestPayload(match = {}) {
+  return {
+    id: match.id,
+    academy_id: match.academyId,
+    academy_name: match.academyName,
+    captain_name: match.captainName,
+    venue: match.venue,
+    location_url: match.locationUrl || "",
+    category_ids: Array.isArray(match.categoryIds) ? match.categoryIds : [],
+    category_names: Array.isArray(match.categoryNames) ? match.categoryNames : [],
+    match_date: match.matchDate,
+    start_time: match.startTime,
+    end_time: match.endTime,
+    status: match.status || "open",
+    accepted_by_academy_id: match.acceptedByAcademyId || null,
+    accepted_by_academy_name: match.acceptedByAcademyName || null,
+    accepted_by_captain_name: match.acceptedByCaptainName || null,
+    accepted_at: match.acceptedAt || null,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export async function listPublicMatchRequests() {
+  if (!isSupabaseConfigured) return [];
+
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("public_match_requests")
+      .select("*")
+      .order("created_at", { ascending: false }),
+  );
+
+  if (error) {
+    if (error.code === "42P01" || String(error.message || "").includes("public_match_requests")) return [];
+    throw error;
+  }
+
+  return data.map(mapPublicMatchRequest);
+}
+
+export async function createPublicMatchRequest(match) {
+  if (!isSupabaseConfigured || !match?.id) return null;
+
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("public_match_requests")
+      .upsert(publicMatchRequestPayload(match), { onConflict: "id" })
+      .select()
+      .single(),
+  );
+
+  if (error) {
+    if (error.code === "42P01" || String(error.message || "").includes("public_match_requests")) return null;
+    throw error;
+  }
+
+  return mapPublicMatchRequest(data);
+}
+
+export async function acceptPublicMatchRequest(matchId, acceptance) {
+  if (!isSupabaseConfigured || !matchId) return null;
+
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("public_match_requests")
+      .update({
+        status: "accepted",
+        accepted_by_academy_id: acceptance.acceptedByAcademyId,
+        accepted_by_academy_name: acceptance.acceptedByAcademyName,
+        accepted_by_captain_name: acceptance.acceptedByCaptainName,
+        accepted_at: acceptance.acceptedAt,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", matchId)
+      .eq("status", "open")
+      .select()
+      .single(),
+  );
+
+  if (error) {
+    if (error.code === "42P01" || String(error.message || "").includes("public_match_requests")) return null;
+    throw error;
+  }
+
+  return mapPublicMatchRequest(data);
 }
 
 export async function getRemoteAcademyData(academyId) {

@@ -51,11 +51,14 @@ import { registerServiceWorker } from "./registerServiceWorker";
 import { readLocalData, writeLocalData } from "./services/localRepository";
 import { setQzSessionToken } from "./services/supabaseClient";
 import {
+  acceptPublicMatchRequest,
+  createPublicMatchRequest,
   createRegistrationRequest,
   deleteRemoteAcademyData,
   deleteRemotePlatformAccount,
   authenticateRemoteAccount,
   getRemoteAcademyData,
+  listPublicMatchRequests,
   getRemotePlatformAccountByPhone,
   listPasswordResetRequests,
   listRemoteAcademyData,
@@ -97,12 +100,13 @@ const PERMISSION_ATTENDANCE_PLAYERS = "الحضور واللاعبين";
 const PERMISSION_TEAM_FOLLOW = "متابعة فريق محدد";
 const PERMISSION_READ_ONLY = "قراءة فقط";
 const MAX_ACADEMY_ACCOUNTS = 3;
-const LOCAL_ONLY_ACADEMY_KEYS = ["players", "attendance", "payments", "expenses", "matches", "badges"];
+const LOCAL_ONLY_ACADEMY_KEYS = ["players", "attendance", "payments", "expenses", "badges"];
 const DEFAULT_ATTENDANCE_PAYMENT = 500;
 const RENEWAL_PERIOD_DAYS = 29;
 const PLATFORM_RENEWAL_DAYS = RENEWAL_PERIOD_DAYS;
 const APP_RELEASE_VERSION = "QZ Academy Release 8";
-const APP_GUIDE_VERSION = 1;
+const APP_GUIDE_VERSION = 2;
+const INTERACTIVE_GUIDE_VERSION = 1;
 const BACKUP_FORMAT_VERSION = 8;
 const BACKUP_KDF_ITERATIONS = 250000;
 const SUPPORT_WHATSAPP_PHONE = normalizePhone(import.meta.env.VITE_SUPPORT_WHATSAPP_PHONE || "+967772227092");
@@ -697,6 +701,59 @@ function mergeAcademyLocalAndRemote(localValue = {}, remoteValue = {}, account =
   return normalizeAcademyData(merged, account);
 }
 
+function normalizeMatchRequest(match = {}, fallback = {}) {
+  const categoryNames = Array.isArray(match.categoryNames)
+    ? match.categoryNames
+    : String(match.categoryNames || "")
+      .split("،")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  const categoryIds = Array.isArray(match.categoryIds) ? match.categoryIds : [];
+
+  return {
+    ...match,
+    id: match.id || `${match.academyId || fallback.academyId || "academy"}-${match.createdAt || match.matchDate || match.date || ""}`,
+    academyId: match.academyId || match.createdByAcademyId || fallback.academyId || "",
+    academyName: match.academyName || match.createdByAcademyName || fallback.academyName || "",
+    captainName: match.captainName || match.createdByCaptainName || fallback.captainName || "",
+    venue: match.venue || match.place || "ملعب غير محدد",
+    locationUrl: match.locationUrl || match.location || "",
+    categoryIds,
+    categoryNames,
+    matchDate: match.matchDate || match.date || today,
+    startTime: match.startTime || match.startsAt || "",
+    endTime: match.endTime || match.endsAt || "",
+    status: match.status || (match.teamAId ? "recorded" : "open"),
+    acceptedByAcademyId: match.acceptedByAcademyId || "",
+    acceptedByAcademyName: match.acceptedByAcademyName || "",
+    acceptedByCaptainName: match.acceptedByCaptainName || "",
+    acceptedAt: match.acceptedAt || "",
+    createdAt: match.createdAt || match.date || new Date().toISOString(),
+    updatedAt: match.updatedAt || match.createdAt || "",
+  };
+}
+
+function mergeMatchRequests(...lists) {
+  const merged = new Map();
+  lists.flat().filter(Boolean).forEach((match) => {
+    const normalized = normalizeMatchRequest(match);
+    const key = normalized.id;
+    merged.set(key, { ...(merged.get(key) || {}), ...normalized });
+  });
+
+  return [...merged.values()].sort((first, second) => {
+    const firstTime = new Date(first.updatedAt || first.createdAt || first.matchDate || 0).getTime();
+    const secondTime = new Date(second.updatedAt || second.createdAt || second.matchDate || 0).getTime();
+    return secondTime - firstTime;
+  });
+}
+
+function matchStatusLabel(status) {
+  if (status === "accepted") return "مباراة مؤكدة";
+  if (status === "recorded") return "نتيجة محفوظة";
+  return "بانتظار قبول";
+}
+
 function hasAcademyContent(value = {}) {
   return Boolean(
     value.coach?.name ||
@@ -737,9 +794,9 @@ function canAccessView(viewId, session) {
   const permission = getUserPermission(session);
   if (permission === PERMISSION_FULL) return true;
 
-  const attendanceAndPlayers = new Set(["home", "players", "playerProfile", "attendance", "teamProfile", "reports"]);
-  const teamFollow = new Set(["home", "teamProfile", "players", "playerProfile", "attendance", "reports"]);
-  const readOnly = new Set(["home", "teamProfile", "playerProfile", "reports"]);
+  const attendanceAndPlayers = new Set(["home", "players", "playerProfile", "attendance", "teamProfile", "reports", "matches"]);
+  const teamFollow = new Set(["home", "teamProfile", "players", "playerProfile", "attendance", "reports", "matches"]);
+  const readOnly = new Set(["home", "teamProfile", "playerProfile", "reports", "matches"]);
 
   if (permission === PERMISSION_ATTENDANCE_PLAYERS) return attendanceAndPlayers.has(viewId);
   if (permission === PERMISSION_TEAM_FOLLOW) return teamFollow.has(viewId);
@@ -762,6 +819,7 @@ const navItems = [
   { id: "playerProfile", label: "ملف اللاعب", icon: UserCircle },
   { id: "teamProfile", label: "ملف الفريق", icon: Trophy },
   { id: "reports", label: "التقارير المالية", icon: Wallet },
+  { id: "matches", label: "المباريات", icon: Swords },
   { id: "accountProfile", label: "الملف الشخصي", icon: UserCircle },
   { id: "notifications", label: "التنبيهات", icon: Bell },
 ];
@@ -876,6 +934,14 @@ const pageGuides = {
     secondaryView: "players",
     secondaryLabel: "اللاعبون",
   },
+  matches: {
+    title: "المباريات",
+    text: "أنشئ تحدي مباراة، حدد المكان والفئات والوقت، وتابع قبول الأكاديميات الأخرى للطلبات العامة.",
+    primaryView: "teams",
+    primaryLabel: "الفرق",
+    secondaryView: "settings",
+    secondaryLabel: "الإعدادات",
+  },
   notifications: {
     title: "التنبيهات",
     text: "تابع الحالات التي تحتاج إجراء، ثم ارجع للصفحة المناسبة للمعالجة.",
@@ -909,7 +975,7 @@ const appGuideSections = [
       "زر التحديث يعيد تحميل الصفحة الحالية عند الحاجة.",
       "زر الشمس أو القمر يبدل بين الوضع النهاري والليلي.",
       "زر البروفايل يفتح الملف الشخصي والإعدادات وتسجيل الخروج.",
-      "القائمة السفلية تنقلك بين الرئيسية، اللاعبين، التحضير، التقارير، والتنبيهات.",
+      "القائمة السفلية تنقلك بين الرئيسية، اللاعبين، التحضير، التقارير، المباريات، والتنبيهات.",
     ],
   },
   {
@@ -953,6 +1019,16 @@ const appGuideSections = [
     ],
   },
   {
+    title: "المباريات والتحديات",
+    icon: Swords,
+    text: "واجهة المباريات تعمل عند وجود الإنترنت لعرض طلبات الأكاديميات العامة.",
+    items: [
+      "إنشاء تحدي: يحدد الأكاديمية والكابتن والمكان والفئات والوقت.",
+      "قبول التحدي: يحول الطلب إلى بطاقة مباراة مؤكدة تظهر للجميع.",
+      "إذا لم توجد مباريات تظهر دعوة واضحة لإنشاء تحدي جديد.",
+    ],
+  },
+  {
     title: "المزامنة والعمل بدون إنترنت",
     icon: RefreshCw,
     text: "التطبيق يعمل بدون إنترنت ويحفظ بيانات اللاعبين محليًا على الهاتف.",
@@ -971,6 +1047,63 @@ const appGuideSections = [
       "عند انتهاء المدة تظهر شاشة التجديد بدل صفحات التطبيق.",
       `زر التجديد يضيف ${RENEWAL_PERIOD_DAYS} يومًا جديدًا للحساب.`,
     ],
+  },
+];
+
+const interactiveGuideSteps = [
+  {
+    targetId: "theme",
+    title: "الوضع الليلي والنهاري",
+    text: "اضغط زر الشمس أو القمر لتغيير ألوان التطبيق حسب راحة العين.",
+    actionLabel: "اضغط زر الثيم أعلى الشاشة",
+  },
+  {
+    targetId: "profile",
+    title: "قائمة البروفايل",
+    text: "من هنا تصل للملف الشخصي، الإعدادات، والعودة للرئيسية أو تسجيل الخروج.",
+    actionLabel: "اضغط زر البروفايل",
+  },
+  {
+    targetId: "nav-home",
+    viewId: "home",
+    title: "الرئيسية",
+    text: "الرئيسية تعرض ملخص الأكاديمية والحالة العامة بسرعة.",
+    actionLabel: "اضغط تبويب الرئيسية",
+  },
+  {
+    targetId: "nav-players",
+    viewId: "players",
+    title: "إدارة اللاعبين",
+    text: "من هنا تضيف اللاعبين وتفتح ملفاتهم وتعدل بياناتهم.",
+    actionLabel: "اضغط تبويب اللاعبين",
+  },
+  {
+    targetId: "nav-attendance",
+    viewId: "attendance",
+    title: "التحضير",
+    text: "هذه الصفحة للحضور، التأخير، الغياب، ودفع مبلغ التحضير أو الحوالة.",
+    actionLabel: "اضغط تبويب التحضير",
+  },
+  {
+    targetId: "nav-reports",
+    viewId: "reports",
+    title: "التقارير",
+    text: "التقارير تجمع التحصيل والمدفوعات والمصروفات وتدعم الطباعة.",
+    actionLabel: "اضغط تبويب التقارير",
+  },
+  {
+    targetId: "nav-matches",
+    viewId: "matches",
+    requiresOnline: true,
+    title: "المباريات",
+    text: "واجهة المباريات لا تظهر إلا عند وجود الإنترنت، وفيها طلبات التحدي والقبول.",
+    actionLabel: "اضغط تبويب المباريات",
+  },
+  {
+    targetId: "refresh",
+    title: "تحديث الصفحة",
+    text: "استخدم هذا الزر عند الحاجة لإعادة تحميل التطبيق بعد تحديث أو رجوع اتصال.",
+    actionLabel: "اضغط زر التحديث",
   },
 ];
 
@@ -1974,9 +2107,11 @@ function App() {
   const [onboardingState, setOnboardingState] = useLocalState("acdme-onboarding-v4", {});
   const [platformData, setPlatformData] = useLocalState("acdme-platform-data-v1", platformSeedData);
   const [passwordResetRequests, setPasswordResetRequests] = useLocalState("qz-password-reset-requests-v1", []);
+  const [publicMatchRequests, setPublicMatchRequests] = useLocalState("qz-public-match-requests-v1", []);
   const [academyDataById, setAcademyDataById] = useLocalState("acdme-academy-data-by-id-v1", {});
   const [renewalTimers, setRenewalTimers] = useLocalState("acdme-renewal-timers-v1", {});
   const [appGuideState, setAppGuideState] = useLocalState("acdme-app-guide-v1", { version: APP_GUIDE_VERSION, seenBy: {} });
+  const [interactiveGuideState, setInteractiveGuideState] = useLocalState("acdme-interactive-guide-v1", { version: INTERACTIVE_GUIDE_VERSION, seenBy: {} });
   const [themeMode, setThemeMode] = useLocalState("acdme-theme-v1", "light");
   const [cloudSyncState, setCloudSyncState] = useState({ academyId: "", loaded: false, saving: false, error: "", syncedAt: "" });
   const lastCloudPayloadRef = useRef("");
@@ -1989,6 +2124,8 @@ function App() {
   const [renewalClockTick, setRenewalClockTick] = useState(() => Date.now());
   const [lastView, setLastView] = useState("");
   const [isAppGuideOpen, setIsAppGuideOpen] = useState(false);
+  const [isInteractiveGuideActive, setIsInteractiveGuideActive] = useState(false);
+  const [interactiveGuideIndex, setInteractiveGuideIndex] = useState(0);
   const qzSessionToken = session?.verified ? session.accessToken || "" : "";
 
   setQzSessionToken(qzSessionToken);
@@ -2236,6 +2373,22 @@ function App() {
     }
 
     return passwordResetRequests || [];
+  };
+
+  const refreshPublicMatchRequests = async () => {
+    if (!isOnline) return publicMatchRequests || [];
+
+    try {
+      const matches = await listPublicMatchRequests();
+      if (Array.isArray(matches)) {
+        setPublicMatchRequests((prev) => mergeMatchRequests(prev || [], matches));
+        return matches;
+      }
+    } catch (error) {
+      logDeveloperError("refresh-public-match-requests", error);
+    }
+
+    return publicMatchRequests || [];
   };
 
   const syncAcademyPlatformAccounts = async (usersToSync = [], academySnapshot = data) => {
@@ -2488,6 +2641,27 @@ function App() {
       isMounted = false;
     };
   }, [isOnline, onlineSyncTick, isSuperAdmin, qzSessionToken]);
+
+  useEffect(() => {
+    let isMounted = true;
+    if (!session?.verified || !isOnline) return () => {
+      isMounted = false;
+    };
+
+    listPublicMatchRequests()
+      .then((matches) => {
+        if (isMounted && Array.isArray(matches)) {
+          setPublicMatchRequests((prev) => mergeMatchRequests(prev || [], matches));
+        }
+      })
+      .catch((error) => {
+        logDeveloperError("background-public-match-requests", error);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [session?.verified, isOnline, onlineSyncTick, qzSessionToken]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -3200,21 +3374,86 @@ function App() {
     }));
   };
 
-  const addMatch = (event) => {
+  const addMatch = async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    const selectedCategoryIds = form.getAll("categoryIds");
+    const selectedGroups = data.ageGroups.filter((group) => selectedCategoryIds.includes(group.id));
+    if (!selectedCategoryIds.length) {
+      return { ok: false, message: "اختر فئة مشاركة واحدة على الأقل." };
+    }
+
     const match = {
       id: crypto.randomUUID(),
-      teamAId: form.get("teamAId"),
-      teamBId: form.get("teamBId"),
-      date: form.get("date"),
-      scoreA: Number(form.get("scoreA")),
-      scoreB: Number(form.get("scoreB")),
-      mvpId: form.get("mvpId"),
-      evaluation: form.get("evaluation"),
+      academyId: currentAcademyId,
+      academyName: data.academy?.name || session?.academyName || "أكاديمية",
+      captainName: data.coach?.name || session?.name || "الكابتن",
+      venue: form.get("venue"),
+      locationUrl: form.get("locationUrl"),
+      categoryIds: selectedCategoryIds,
+      categoryNames: selectedGroups.map((group) => group.name),
+      matchDate: form.get("matchDate"),
+      startTime: form.get("startTime"),
+      endTime: form.get("endTime"),
+      status: "open",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
-    setData((prev) => ({ ...prev, matches: [match, ...prev.matches] }));
+
+    setData((prev) => ({ ...prev, matches: mergeMatchRequests(prev.matches || [], [match]) }));
+    setPublicMatchRequests((prev) => mergeMatchRequests(prev || [], [match]));
     event.currentTarget.reset();
+
+    if (!isOnline) {
+      return { ok: false, message: "تم حفظ الطلب داخل التطبيق، وسيظهر للعامة عند توفر الإنترنت والمزامنة." };
+    }
+
+    try {
+      const remoteMatch = await createPublicMatchRequest(match);
+      if (remoteMatch) {
+        setPublicMatchRequests((prev) => mergeMatchRequests(prev || [], [remoteMatch]));
+      }
+      return { ok: true, message: "تم إنشاء طلب المباراة ورفعه للعامة." };
+    } catch (error) {
+      logDeveloperError("create-match-request", error);
+      return { ok: false, message: "تم حفظ الطلب داخل التطبيق، وتعذر رفعه الآن. سيتم المحاولة مع المزامنة." };
+    }
+  };
+
+  const acceptMatchRequest = async (match) => {
+    if (!match?.id) return { ok: false, message: "لم يتم تحديد طلب المباراة." };
+    if (!currentAcademyId || isSuperAdmin) return { ok: false, message: "قبول المباريات متاح من حساب أكاديمية فقط." };
+    if (match.academyId === currentAcademyId) return { ok: false, message: "لا يمكن قبول طلب صادر من نفس الأكاديمية." };
+    if (!isOnline) return { ok: false, message: "قبول المباريات يحتاج اتصال إنترنت." };
+
+    const acceptedAt = new Date().toISOString();
+    const acceptance = {
+      acceptedByAcademyId: currentAcademyId,
+      acceptedByAcademyName: data.academy?.name || session?.academyName || "أكاديمية",
+      acceptedByCaptainName: data.coach?.name || session?.name || "الكابتن",
+      acceptedAt,
+    };
+    const acceptedMatch = normalizeMatchRequest({
+      ...match,
+      ...acceptance,
+      status: "accepted",
+      updatedAt: acceptedAt,
+    });
+
+    setPublicMatchRequests((prev) => mergeMatchRequests(prev || [], [acceptedMatch]));
+    setData((prev) => ({ ...prev, matches: mergeMatchRequests(prev.matches || [], [acceptedMatch]) }));
+
+    try {
+      const remoteMatch = await acceptPublicMatchRequest(match.id, acceptance);
+      if (remoteMatch) {
+        setPublicMatchRequests((prev) => mergeMatchRequests(prev || [], [remoteMatch]));
+        setData((prev) => ({ ...prev, matches: mergeMatchRequests(prev.matches || [], [remoteMatch]) }));
+      }
+      return { ok: true, message: "تم قبول التحدي وتحويله إلى بطاقة مباراة عامة." };
+    } catch (error) {
+      logDeveloperError("accept-match-request", error);
+      return { ok: false, message: "تعذر قبول الطلب الآن. تأكد من الإنترنت ثم حاول مرة أخرى." };
+    }
   };
 
   const addBadge = (event) => {
@@ -4006,6 +4245,7 @@ function App() {
     platformUsers,
     registrationRequests,
     passwordResetRequests,
+    publicMatchRequests,
     setActiveView: navigateToView,
     selectedPlayerId,
     setSelectedPlayerId,
@@ -4024,6 +4264,7 @@ function App() {
     addExpense,
     deleteExpense,
     addMatch,
+    acceptMatchRequest,
     addBadge,
     addNotification,
     addPost,
@@ -4037,6 +4278,7 @@ function App() {
     refreshPlatformUsers,
     refreshRegistrationRequests,
     refreshPasswordResetRequests,
+    refreshPublicMatchRequests,
     addPlatformUserFromDashboard,
     renewAcademyAccess,
     renewAcademyFromPlatform,
@@ -4057,17 +4299,27 @@ function App() {
   const fallbackView = isSuperAdmin ? "platformDashboard" : onboardingView || "home";
   const renewalInfo = academyRenewalInfo(data.academy, renewalTimers[currentAcademyId]);
   const isRenewalExpired = !isSuperAdmin && session?.verified && !session?.isFirstLogin && renewalInfo.isExpired;
-  const visibleNavItems = isSuperAdmin
+  const allowedNavItems = isSuperAdmin
     ? navItems
     : navItems.filter((item) => canAccessView(item.id, session));
+  const visibleNavItems = allowedNavItems.filter((item) => item.id !== "matches" || isOnline);
   const bottomNavItems = visibleNavItems.filter((item) => !setupNavIds.has(item.id));
   const displayedView = onboardingView || (visibleNavItems.some((item) => item.id === activeView) ? activeView : fallbackView);
-  const customScreenViews = new Set(["home", "coachSetup", "coaches", "settings", "ageGroups", "attendance", "reports", "accountProfile"]);
+  const customScreenViews = new Set(["home", "coachSetup", "coaches", "settings", "ageGroups", "attendance", "reports", "matches", "accountProfile"]);
   const showGlobalHeader = !customScreenViews.has(displayedView);
   const showScreenTitle = !customScreenViews.has(displayedView);
   const showBottomNav = !session?.isFirstLogin && !setupNavIds.has(displayedView);
   const currentPageGuide = pageGuides[displayedView];
   const appGuideAccountKey = session?.userId || normalizePhone(session?.phone) || "guest";
+  const availableInteractiveGuideSteps = interactiveGuideSteps.filter((step) => {
+    if (step.requiresOnline && !isOnline) return false;
+    if (!step.viewId) return true;
+    return visibleNavItems.some((item) => item.id === step.viewId);
+  });
+  const currentInteractiveGuideStep = isInteractiveGuideActive
+    ? availableInteractiveGuideSteps[Math.min(interactiveGuideIndex, Math.max(availableInteractiveGuideSteps.length - 1, 0))]
+    : null;
+  const activeGuideTargetId = currentInteractiveGuideStep?.targetId || "";
   const canGoBack = Boolean(lastView && visibleNavItems.some((item) => item.id === lastView));
   const goBackToPreviousView = () => {
     navigateToView(canGoBack ? lastView : fallbackView, { replace: true });
@@ -4080,6 +4332,36 @@ function App() {
       setIsAppGuideOpen(true);
     }
   }, [appGuideAccountKey, appGuideState, isRenewalExpired, session?.verified]);
+
+  useEffect(() => {
+    if (
+      !session?.verified ||
+      session?.isFirstLogin ||
+      isRenewalExpired ||
+      isAppGuideOpen ||
+      !availableInteractiveGuideSteps.length
+    ) {
+      return;
+    }
+
+    const hasSeenInteractiveGuide =
+      interactiveGuideState?.version === INTERACTIVE_GUIDE_VERSION &&
+      Boolean(interactiveGuideState?.seenBy?.[appGuideAccountKey]);
+
+    if (!hasSeenInteractiveGuide && !isInteractiveGuideActive) {
+      setInteractiveGuideIndex(0);
+      setIsInteractiveGuideActive(true);
+    }
+  }, [
+    appGuideAccountKey,
+    availableInteractiveGuideSteps.length,
+    interactiveGuideState,
+    isAppGuideOpen,
+    isInteractiveGuideActive,
+    isRenewalExpired,
+    session?.isFirstLogin,
+    session?.verified,
+  ]);
 
   useEffect(() => {
     if (!showBottomNav) return;
@@ -4141,9 +4423,47 @@ function App() {
     }));
     setIsAppGuideOpen(false);
   };
+  const completeInteractiveGuide = () => {
+    setInteractiveGuideState((prev) => ({
+      ...prev,
+      version: INTERACTIVE_GUIDE_VERSION,
+      seenBy: {
+        ...(prev?.seenBy || {}),
+        [appGuideAccountKey]: new Date().toISOString(),
+      },
+    }));
+    setIsInteractiveGuideActive(false);
+    setInteractiveGuideIndex(0);
+  };
+  const moveInteractiveGuideNext = () => {
+    if (interactiveGuideIndex >= availableInteractiveGuideSteps.length - 1) {
+      completeInteractiveGuide();
+      return;
+    }
+
+    setInteractiveGuideIndex((index) => index + 1);
+  };
+  const handleGuidedClick = (targetId) => {
+    if (!isInteractiveGuideActive || activeGuideTargetId !== targetId) return false;
+    moveInteractiveGuideNext();
+    return true;
+  };
   const openAppGuide = () => {
     setIsProfileMenuOpen(false);
     setIsAppGuideOpen(true);
+  };
+  const startInteractiveGuide = () => {
+    setAppGuideState((prev) => ({
+      ...prev,
+      version: APP_GUIDE_VERSION,
+      seenBy: {
+        ...(prev?.seenBy || {}),
+        [appGuideAccountKey]: new Date().toISOString(),
+      },
+    }));
+    setInteractiveGuideIndex(0);
+    setIsInteractiveGuideActive(true);
+    setIsAppGuideOpen(false);
   };
 
   if (!session?.verified) {
@@ -4196,10 +4516,26 @@ function App() {
       displayedView === "home" ? "home-view" : "",
       displayedView === "ageGroups" ? "age-groups-view" : "",
     ].filter(Boolean).join(" ")}>
-      <button className="global-refresh-button" type="button" onClick={handlePageRefresh} aria-label="تحديث الصفحة">
+      <button
+        className={["global-refresh-button", activeGuideTargetId === "refresh" ? "guide-target-active" : ""].filter(Boolean).join(" ")}
+        type="button"
+        onClick={() => {
+          if (handleGuidedClick("refresh")) return;
+          handlePageRefresh();
+        }}
+        aria-label="تحديث الصفحة"
+      >
         <RefreshCw size={18} />
       </button>
-      <button className="theme-toggle-button" type="button" onClick={toggleThemeMode} aria-label={themeMode === "dark" ? "تفعيل الوضع النهاري" : "تفعيل الوضع الليلي"}>
+      <button
+        className={["theme-toggle-button", activeGuideTargetId === "theme" ? "guide-target-active" : ""].filter(Boolean).join(" ")}
+        type="button"
+        onClick={() => {
+          handleGuidedClick("theme");
+          toggleThemeMode();
+        }}
+        aria-label={themeMode === "dark" ? "تفعيل الوضع النهاري" : "تفعيل الوضع الليلي"}
+      >
         {themeMode === "dark" ? <Sun size={18} /> : <Moon size={18} />}
       </button>
       <button className="guide-toggle-button" type="button" onClick={openAppGuide} aria-label="فتح دليل استخدام التطبيق">
@@ -4214,11 +4550,14 @@ function App() {
 
       <div className="profile-menu-shell">
         <button
-          className="profile-menu-button"
+          className={["profile-menu-button", activeGuideTargetId === "profile" ? "guide-target-active" : ""].filter(Boolean).join(" ")}
           type="button"
           aria-label="قائمة البروفايل"
           aria-expanded={isProfileMenuOpen}
-          onClick={() => setIsProfileMenuOpen((value) => !value)}
+          onClick={() => {
+            handleGuidedClick("profile");
+            setIsProfileMenuOpen((value) => !value);
+          }}
         >
           {profileImage ? <img src={profileImage} alt="صورة البروفايل" decoding="async" /> : <UserRound size={22} />}
         </button>
@@ -4319,7 +4658,14 @@ function App() {
         </div>
       </main>
 
-      <AppGuideModal open={isAppGuideOpen} onClose={markAppGuideSeen} />
+      <AppGuideModal open={isAppGuideOpen} onClose={markAppGuideSeen} onStartInteractiveGuide={startInteractiveGuide} />
+
+      <InteractiveGuideCoachmark
+        step={currentInteractiveGuideStep}
+        stepNumber={availableInteractiveGuideSteps.findIndex((step) => step.targetId === activeGuideTargetId) + 1}
+        totalSteps={availableInteractiveGuideSteps.length}
+        onSkip={completeInteractiveGuide}
+      />
 
       {showBottomNav && <nav className="bottom-nav" aria-label="التنقل السفلي">
         <div className="bottom-nav-track" ref={bottomNavRef}>
@@ -4327,9 +4673,16 @@ function App() {
             const Icon = item.icon;
             return (
               <button
-                className={displayedView === item.id ? "bottom-nav-item active" : "bottom-nav-item"}
+                className={[
+                  "bottom-nav-item",
+                  displayedView === item.id ? "active" : "",
+                  activeGuideTargetId === `nav-${item.id}` ? "guide-target-active" : "",
+                ].filter(Boolean).join(" ")}
                 key={item.id}
-                onClick={() => navigateToView(item.id)}
+                onClick={() => {
+                  handleGuidedClick(`nav-${item.id}`);
+                  navigateToView(item.id);
+                }}
                 title={item.label}
               >
                 <Icon size={20} />
@@ -4377,7 +4730,7 @@ function PageContextBar({ guide, canGoBack, canAccessView, onBack, onNavigate })
   );
 }
 
-function AppGuideModal({ open, onClose }) {
+function AppGuideModal({ open, onClose, onStartInteractiveGuide }) {
   if (!open) return null;
 
   return (
@@ -4425,6 +4778,9 @@ function AppGuideModal({ open, onClose }) {
         </div>
 
         <footer className="app-guide-footer">
+          <button className="outline-gold-button" type="button" onClick={onStartInteractiveGuide}>
+            بدء تدريب بالضغط على الأزرار
+          </button>
           <button className="primary-button" type="button" onClick={onClose}>
             فهمت - متابعة استخدام التطبيق
           </button>
@@ -4432,6 +4788,24 @@ function AppGuideModal({ open, onClose }) {
         </footer>
       </section>
     </div>
+  );
+}
+
+function InteractiveGuideCoachmark({ step, stepNumber, totalSteps, onSkip }) {
+  if (!step) return null;
+
+  return (
+    <section className="interactive-guide-coachmark" role="status" aria-live="polite">
+      <div>
+        <span>{stepNumber} / {totalSteps}</span>
+        <strong>{step.title}</strong>
+        <p>{step.text}</p>
+        <b>{step.actionLabel}</b>
+      </div>
+      <button type="button" onClick={onSkip}>
+        إنهاء الشرح
+      </button>
+    </section>
   );
 }
 
@@ -9570,46 +9944,230 @@ function Gamification({ data, addBadge }) {
   );
 }
 
-function Matches({ data, helpers, addMatch }) {
-  return (
-    <section className="view-grid">
-      <form className="panel form-panel" onSubmit={addMatch}>
-        <FormTitle icon={Swords} title="تسجيل نتيجة مباراة" />
-        <select name="teamAId" required>
-          {data.teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
-        </select>
-        <select name="teamBId" required>
-          {data.teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
-        </select>
-        <input name="date" type="date" defaultValue={today} required />
-        <div className="two-cols">
-          <input name="scoreA" type="number" min="0" placeholder="أهداف الأول" required />
-          <input name="scoreB" type="number" min="0" placeholder="أهداف الثاني" required />
+function Matches({
+  data,
+  academyDataById,
+  publicMatchRequests,
+  addMatch,
+  acceptMatchRequest,
+  refreshPublicMatchRequests,
+  session,
+  isOnline,
+}) {
+  const [message, setMessage] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [acceptingMatchId, setAcceptingMatchId] = useState("");
+  const currentAcademyId = session?.academyId || "";
+  const currentAcademyName = data.academy?.name || session?.academyName || "أكاديمية";
+  const currentCaptainName = data.coach?.name || session?.name || "الكابتن";
+  const cloudMatches = Object.values(academyDataById || {}).flatMap((value) => normalizeAcademyData(value).matches || []);
+  const allMatches = mergeMatchRequests(cloudMatches, data.matches || [], publicMatchRequests || []);
+  const confirmedMatches = allMatches.filter((match) => match.status === "accepted");
+  const openMatches = allMatches.filter((match) => match.status !== "accepted" && match.status !== "recorded");
+
+  const handleCreateMatch = async (event) => {
+    setMessage("");
+    setIsSubmitting(true);
+    const result = await addMatch(event);
+    setMessage(result?.message || "تم حفظ طلب المباراة.");
+    setIsSubmitting(false);
+  };
+
+  const handleAcceptMatch = async (match) => {
+    setMessage("");
+    setAcceptingMatchId(match.id);
+    const result = await acceptMatchRequest(match);
+    setMessage(result?.message || "تم تحديث طلب المباراة.");
+    setAcceptingMatchId("");
+  };
+
+  const handleRefresh = async () => {
+    setMessage("");
+    const matches = await refreshPublicMatchRequests?.();
+    setMessage(Array.isArray(matches) ? "تم تحديث طلبات المباريات." : "تعذر تحديث الطلبات الآن.");
+  };
+
+  if (!isOnline) {
+    return (
+      <section className="matches-screen">
+        <div className="matches-offline-card">
+          <Swords size={34} />
+          <h2>واجهة المباريات تحتاج إنترنت</h2>
+          <p>طلبات المباريات عامة بين الأكاديميات، لذلك لا تظهر هذه الصفحة إلا عند توفر اتصال.</p>
         </div>
-        <select name="mvpId" required>
-          {data.players.map((player) => <option key={player.id} value={player.id}>{player.name}</option>)}
-        </select>
-        <textarea name="evaluation" placeholder="تقييم اللاعب أو المباراة" />
-        <button className="primary-button" type="submit">
-          <Plus size={18} />
-          حفظ النتيجة
-        </button>
-      </form>
-      <section className="panel table-panel">
-        <PanelHead title="سجل المباريات" text="النتائج و MVP والتقييم." icon={Swords} />
-        <SimpleTable
-          headers={["التاريخ", "الفريق الأول", "الفريق الثاني", "النتيجة", "MVP", "التقييم"]}
-          rows={data.matches.map((match) => [
-            match.date,
-            helpers.teamById[match.teamAId]?.name,
-            helpers.teamById[match.teamBId]?.name,
-            `${match.scoreA} - ${match.scoreB}`,
-            helpers.playerById[match.mvpId]?.name,
-            match.evaluation || "-",
-          ])}
-        />
       </section>
+    );
+  }
+
+  return (
+    <section className="matches-screen">
+      <header className="matches-hero">
+        <div>
+          <span>تحديات الأكاديميات</span>
+          <h1>المباريات</h1>
+          <p>أنشئ طلب مباراة، وحدد المكان والفئات والوقت. عند قبول أكاديمية أخرى يتحول الطلب إلى بطاقة مباراة مؤكدة تظهر للجميع.</p>
+        </div>
+        <button className="matches-refresh-button" type="button" onClick={handleRefresh}>
+          <RefreshCw size={17} />
+          تحديث
+        </button>
+      </header>
+
+      <div className="matches-layout">
+        <form className="matches-request-form" onSubmit={handleCreateMatch}>
+          <FormTitle icon={Swords} title="إنشاء تحدي جديد" />
+          <div className="match-owner-card">
+            <strong>{currentAcademyName}</strong>
+            <span>{currentCaptainName}</span>
+          </div>
+          <label>
+            المكان
+            <input name="venue" placeholder="اسم الملعب أو المكان" required />
+          </label>
+          <label>
+            موقع الملعب
+            <input name="locationUrl" placeholder="رابط الموقع أو وصف مختصر" />
+          </label>
+          <div className="two-cols">
+            <label>
+              بداية المباراة
+              <input name="startTime" type="time" required />
+            </label>
+            <label>
+              نهاية المباراة
+              <input name="endTime" type="time" required />
+            </label>
+          </div>
+          <label>
+            تاريخ المباراة
+            <input name="matchDate" type="date" defaultValue={today} required />
+          </label>
+          <div className="match-category-box">
+            <span>الفئات المشاركة</span>
+            {data.ageGroups.length ? (
+              <div className="match-category-grid">
+                {data.ageGroups.map((group) => (
+                  <label key={group.id}>
+                    <input name="categoryIds" type="checkbox" value={group.id} />
+                    <span>{group.name}</span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <p>أضف الفئات العمرية أولًا من الإعدادات حتى تظهر هنا.</p>
+            )}
+          </div>
+          <button className="primary-button" type="submit" disabled={isSubmitting}>
+            <Plus size={18} />
+            {isSubmitting ? "جار إنشاء الطلب..." : "إنشاء تحدي الآن"}
+          </button>
+          {message && <p className="match-form-message">{message}</p>}
+        </form>
+
+        <div className="matches-board">
+          {allMatches.length === 0 && (
+            <article className="matches-empty-state">
+              <Swords size={32} />
+              <h2>لا توجد مباريات حاليًا</h2>
+              <p>أنشئ تحديك الآن ليظهر للأكاديميات عند وجود الإنترنت.</p>
+            </article>
+          )}
+
+          {confirmedMatches.length > 0 && (
+            <section className="matches-section">
+              <div className="matches-section-head">
+                <strong>مباريات مؤكدة</strong>
+                <span>{confirmedMatches.length}</span>
+              </div>
+              <div className="match-card-grid">
+                {confirmedMatches.map((match) => (
+                  <MatchRequestCard
+                    key={match.id}
+                    match={match}
+                    currentAcademyId={currentAcademyId}
+                    isAccepting={acceptingMatchId === match.id}
+                    onAccept={handleAcceptMatch}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          <section className="matches-section">
+            <div className="matches-section-head">
+              <strong>طلبات تنتظر القبول</strong>
+              <span>{openMatches.length}</span>
+            </div>
+            {openMatches.length ? (
+              <div className="match-card-grid">
+                {openMatches.map((match) => (
+                  <MatchRequestCard
+                    key={match.id}
+                    match={match}
+                    currentAcademyId={currentAcademyId}
+                    isAccepting={acceptingMatchId === match.id}
+                    onAccept={handleAcceptMatch}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="matches-inline-empty">لا يوجد طلب مفتوح الآن. أنشئ تحديك الان.</div>
+            )}
+          </section>
+        </div>
+      </div>
     </section>
+  );
+}
+
+function MatchRequestCard({ match, currentAcademyId, isAccepting, onAccept }) {
+  const isOwnMatch = match.academyId === currentAcademyId;
+  const isAccepted = match.status === "accepted";
+  const categories = match.categoryNames?.length ? match.categoryNames.join("، ") : "كل الفئات المناسبة";
+  const hasLocationLink = /^https?:\/\//i.test(match.locationUrl || "");
+
+  return (
+    <article className={`match-request-card ${isAccepted ? "accepted" : ""}`}>
+      <div className="match-card-top">
+        <span>{matchStatusLabel(match.status)}</span>
+        <Swords size={18} />
+      </div>
+      <div className="match-academy-block">
+        <strong>{match.academyName || "أكاديمية"}</strong>
+        <small>{match.captainName || "الكابتن"}</small>
+      </div>
+      {isAccepted && (
+        <div className="match-versus-block">
+          <b>ضد</b>
+          <strong>{match.acceptedByAcademyName}</strong>
+          <small>{match.acceptedByCaptainName}</small>
+        </div>
+      )}
+      <div className="match-detail-list">
+        <span><MapPin size={15} /> {match.venue}</span>
+        {match.locationUrl && hasLocationLink && (
+          <a href={match.locationUrl} target="_blank" rel="noreferrer">
+            <MapPin size={15} />
+            موقع الملعب
+          </a>
+        )}
+        {match.locationUrl && !hasLocationLink && <span><MapPin size={15} /> {match.locationUrl}</span>}
+        <span><Layers size={15} /> {categories}</span>
+        <span><CalendarCheck size={15} /> {readableDate(match.matchDate)}</span>
+        <span><Clock size={15} /> {match.startTime} - {match.endTime}</span>
+      </div>
+      {!isAccepted && (
+        <button
+          className="match-accept-button"
+          type="button"
+          onClick={() => onAccept(match)}
+          disabled={isOwnMatch || isAccepting}
+        >
+          <CheckCircle2 size={17} />
+          {isOwnMatch ? "طلبك بانتظار قبول أكاديمية أخرى" : isAccepting ? "جار القبول..." : "قبول التحدي"}
+        </button>
+      )}
+    </article>
   );
 }
 
