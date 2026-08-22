@@ -1821,6 +1821,50 @@ html[data-theme="dark"] .interactive-guide-coachmark button {
   background: rgba(226, 180, 59, 0.12);
 }
 
+.match-result-board,
+.match-result-form {
+  border: 1px solid rgba(17, 26, 121, 0.09);
+  border-radius: 14px;
+  padding: 10px;
+  background: rgba(17, 26, 121, 0.045);
+  display: grid;
+  gap: 9px;
+}
+
+.match-result-board span {
+  color: var(--amber);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.match-result-board strong {
+  color: var(--primary-dark);
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.match-result-board small,
+.match-result-board p,
+.match-result-form label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.6;
+}
+
+.match-result-board p {
+  margin: 0;
+}
+
+.match-result-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.match-result-form textarea {
+  min-height: 58px;
+}
+
 .match-detail-list {
   display: grid;
   gap: 8px;
@@ -1892,6 +1936,8 @@ html[data-theme="dark"] .match-category-grid label {
 
 html[data-theme="dark"] .match-owner-card,
 html[data-theme="dark"] .match-versus-block,
+html[data-theme="dark"] .match-result-board,
+html[data-theme="dark"] .match-result-form,
 html[data-theme="dark"] .match-form-message {
   background: rgba(226, 180, 59, 0.1);
 }
@@ -1901,6 +1947,7 @@ html[data-theme="dark"] .match-category-box > span,
 html[data-theme="dark"] .matches-section-head,
 html[data-theme="dark"] .match-academy-block strong,
 html[data-theme="dark"] .match-versus-block strong,
+html[data-theme="dark"] .match-result-board strong,
 html[data-theme="dark"] .matches-empty-state h2,
 html[data-theme="dark"] .match-category-grid label {
   color: var(--ink);

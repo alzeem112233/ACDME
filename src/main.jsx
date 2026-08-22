@@ -64,6 +64,7 @@ import {
   listRemoteAcademyData,
   listPlatformAccounts,
   listRegistrationRequests,
+  recordPublicMatchResult,
   requestPasswordResetOtp,
   updatePasswordResetRequest,
   updateRemotePlatformAccountPassword,
@@ -105,7 +106,7 @@ const DEFAULT_ATTENDANCE_PAYMENT = 500;
 const RENEWAL_PERIOD_DAYS = 29;
 const PLATFORM_RENEWAL_DAYS = RENEWAL_PERIOD_DAYS;
 const APP_RELEASE_VERSION = "QZ Academy Release 8";
-const APP_GUIDE_VERSION = 2;
+const APP_GUIDE_VERSION = 3;
 const INTERACTIVE_GUIDE_VERSION = 1;
 const BACKUP_FORMAT_VERSION = 8;
 const BACKUP_KDF_ITERATIONS = 250000;
@@ -728,6 +729,12 @@ function normalizeMatchRequest(match = {}, fallback = {}) {
     acceptedByAcademyName: match.acceptedByAcademyName || "",
     acceptedByCaptainName: match.acceptedByCaptainName || "",
     acceptedAt: match.acceptedAt || "",
+    scoreA: match.scoreA === undefined || match.scoreA === null ? "" : match.scoreA,
+    scoreB: match.scoreB === undefined || match.scoreB === null ? "" : match.scoreB,
+    resultNote: match.resultNote || "",
+    resultRecordedByAcademyId: match.resultRecordedByAcademyId || "",
+    resultRecordedByAcademyName: match.resultRecordedByAcademyName || "",
+    resultRecordedAt: match.resultRecordedAt || "",
     createdAt: match.createdAt || match.date || new Date().toISOString(),
     updatedAt: match.updatedAt || match.createdAt || "",
   };
@@ -936,7 +943,7 @@ const pageGuides = {
   },
   matches: {
     title: "المباريات",
-    text: "أنشئ تحدي مباراة، حدد المكان والفئات والوقت، وتابع قبول الأكاديميات الأخرى للطلبات العامة.",
+    text: "أنشئ تحدي مباراة، حدد المكان والفئات والوقت، ثم احفظ النتيجة في البطاقة العامة بعد القبول.",
     primaryView: "teams",
     primaryLabel: "الفرق",
     secondaryView: "settings",
@@ -1025,6 +1032,7 @@ const appGuideSections = [
     items: [
       "إنشاء تحدي: يحدد الأكاديمية والكابتن والمكان والفئات والوقت.",
       "قبول التحدي: يحول الطلب إلى بطاقة مباراة مؤكدة تظهر للجميع.",
+      "حفظ النتيجة: يظهر في البطاقة العامة بعد قبول المباراة.",
       "إذا لم توجد مباريات تظهر دعوة واضحة لإنشاء تحدي جديد.",
     ],
   },
@@ -3456,6 +3464,52 @@ function App() {
     }
   };
 
+  const recordMatchResult = async (match, resultInput) => {
+    if (!match?.id) return { ok: false, message: "لم يتم تحديد المباراة." };
+    if (!currentAcademyId || isSuperAdmin) return { ok: false, message: "حفظ النتيجة متاح من حساب أكاديمية فقط." };
+    if (match.status !== "accepted") return { ok: false, message: "لا يمكن حفظ النتيجة قبل قبول التحدي." };
+    if (match.academyId !== currentAcademyId && match.acceptedByAcademyId !== currentAcademyId) {
+      return { ok: false, message: "حفظ النتيجة متاح للأكاديميتين المشاركتين فقط." };
+    }
+    if (!isOnline) return { ok: false, message: "حفظ نتيجة عامة يحتاج اتصال إنترنت." };
+
+    const scoreA = Number(resultInput.scoreA);
+    const scoreB = Number(resultInput.scoreB);
+    if (!Number.isFinite(scoreA) || !Number.isFinite(scoreB) || scoreA < 0 || scoreB < 0) {
+      return { ok: false, message: "أدخل نتيجة صحيحة لكل فريق." };
+    }
+
+    const resultRecordedAt = new Date().toISOString();
+    const result = {
+      scoreA,
+      scoreB,
+      resultNote: resultInput.resultNote || "",
+      resultRecordedByAcademyId: currentAcademyId,
+      resultRecordedByAcademyName: data.academy?.name || session?.academyName || "أكاديمية",
+      resultRecordedAt,
+    };
+    const resultMatch = normalizeMatchRequest({
+      ...match,
+      ...result,
+      updatedAt: resultRecordedAt,
+    });
+
+    setPublicMatchRequests((prev) => mergeMatchRequests(prev || [], [resultMatch]));
+    setData((prev) => ({ ...prev, matches: mergeMatchRequests(prev.matches || [], [resultMatch]) }));
+
+    try {
+      const remoteMatch = await recordPublicMatchResult(match.id, result);
+      if (remoteMatch) {
+        setPublicMatchRequests((prev) => mergeMatchRequests(prev || [], [remoteMatch]));
+        setData((prev) => ({ ...prev, matches: mergeMatchRequests(prev.matches || [], [remoteMatch]) }));
+      }
+      return { ok: true, message: "تم حفظ نتيجة المباراة وظهورها للعامة." };
+    } catch (error) {
+      logDeveloperError("record-match-result", error);
+      return { ok: false, message: "تعذر حفظ النتيجة الآن. تأكد من الإنترنت ثم حاول مرة أخرى." };
+    }
+  };
+
   const addBadge = (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -4265,6 +4319,7 @@ function App() {
     deleteExpense,
     addMatch,
     acceptMatchRequest,
+    recordMatchResult,
     addBadge,
     addNotification,
     addPost,
@@ -9950,6 +10005,7 @@ function Matches({
   publicMatchRequests,
   addMatch,
   acceptMatchRequest,
+  recordMatchResult,
   refreshPublicMatchRequests,
   session,
   isOnline,
@@ -9957,6 +10013,7 @@ function Matches({
   const [message, setMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [acceptingMatchId, setAcceptingMatchId] = useState("");
+  const [recordingResultMatchId, setRecordingResultMatchId] = useState("");
   const currentAcademyId = session?.academyId || "";
   const currentAcademyName = data.academy?.name || session?.academyName || "أكاديمية";
   const currentCaptainName = data.coach?.name || session?.name || "الكابتن";
@@ -9979,6 +10036,14 @@ function Matches({
     const result = await acceptMatchRequest(match);
     setMessage(result?.message || "تم تحديث طلب المباراة.");
     setAcceptingMatchId("");
+  };
+
+  const handleRecordResult = async (match, resultInput) => {
+    setMessage("");
+    setRecordingResultMatchId(match.id);
+    const result = await recordMatchResult(match, resultInput);
+    setMessage(result?.message || "تم تحديث نتيجة المباراة.");
+    setRecordingResultMatchId("");
   };
 
   const handleRefresh = async () => {
@@ -10086,7 +10151,9 @@ function Matches({
                     match={match}
                     currentAcademyId={currentAcademyId}
                     isAccepting={acceptingMatchId === match.id}
+                    isRecordingResult={recordingResultMatchId === match.id}
                     onAccept={handleAcceptMatch}
+                    onRecordResult={handleRecordResult}
                   />
                 ))}
               </div>
@@ -10106,7 +10173,9 @@ function Matches({
                     match={match}
                     currentAcademyId={currentAcademyId}
                     isAccepting={acceptingMatchId === match.id}
+                    isRecordingResult={recordingResultMatchId === match.id}
                     onAccept={handleAcceptMatch}
+                    onRecordResult={handleRecordResult}
                   />
                 ))}
               </div>
@@ -10120,11 +10189,29 @@ function Matches({
   );
 }
 
-function MatchRequestCard({ match, currentAcademyId, isAccepting, onAccept }) {
+function MatchRequestCard({ match, currentAcademyId, isAccepting, isRecordingResult, onAccept, onRecordResult }) {
   const isOwnMatch = match.academyId === currentAcademyId;
   const isAccepted = match.status === "accepted";
   const categories = match.categoryNames?.length ? match.categoryNames.join("، ") : "كل الفئات المناسبة";
   const hasLocationLink = /^https?:\/\//i.test(match.locationUrl || "");
+  const canRecordResult = isAccepted && (match.academyId === currentAcademyId || match.acceptedByAcademyId === currentAcademyId);
+  const hasResult =
+    match.scoreA !== "" &&
+    match.scoreA !== undefined &&
+    match.scoreA !== null &&
+    match.scoreB !== "" &&
+    match.scoreB !== undefined &&
+    match.scoreB !== null;
+
+  const handleSubmitResult = (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    onRecordResult(match, {
+      scoreA: form.get("scoreA"),
+      scoreB: form.get("scoreB"),
+      resultNote: form.get("resultNote"),
+    });
+  };
 
   return (
     <article className={`match-request-card ${isAccepted ? "accepted" : ""}`}>
@@ -10156,6 +10243,44 @@ function MatchRequestCard({ match, currentAcademyId, isAccepting, onAccept }) {
         <span><CalendarCheck size={15} /> {readableDate(match.matchDate)}</span>
         <span><Clock size={15} /> {match.startTime} - {match.endTime}</span>
       </div>
+      {isAccepted && (
+        <div className="match-result-board">
+          <span>النتيجة العامة</span>
+          {hasResult ? (
+            <>
+              <strong>
+                {match.academyName || "الأكاديمية الأولى"} {match.scoreA} - {match.scoreB} {match.acceptedByAcademyName || "الأكاديمية الثانية"}
+              </strong>
+              <small>
+                {match.resultRecordedAt ? `تم حفظها ${readableDate(match.resultRecordedAt.slice(0, 10))}` : "تم حفظ النتيجة"}
+                {match.resultRecordedByAcademyName ? ` بواسطة ${match.resultRecordedByAcademyName}` : ""}
+              </small>
+              {match.resultNote && <p>{match.resultNote}</p>}
+            </>
+          ) : (
+            <small>لم يتم تسجيل النتيجة بعد.</small>
+          )}
+        </div>
+      )}
+      {canRecordResult && (
+        <form className="match-result-form" onSubmit={handleSubmitResult}>
+          <div className="two-cols">
+            <label>
+              نتيجة {match.academyName || "الأولى"}
+              <input name="scoreA" type="number" min="0" defaultValue={hasResult ? match.scoreA : ""} placeholder="0" required />
+            </label>
+            <label>
+              نتيجة {match.acceptedByAcademyName || "الثانية"}
+              <input name="scoreB" type="number" min="0" defaultValue={hasResult ? match.scoreB : ""} placeholder="0" required />
+            </label>
+          </div>
+          <textarea name="resultNote" defaultValue={match.resultNote || ""} placeholder="ملاحظة اختيارية عن المباراة" />
+          <button className="match-accept-button" type="submit" disabled={isRecordingResult}>
+            <FileCheck2 size={17} />
+            {isRecordingResult ? "جار حفظ النتيجة..." : hasResult ? "تحديث النتيجة للعامة" : "حفظ النتيجة للعامة"}
+          </button>
+        </form>
+      )}
       {!isAccepted && (
         <button
           className="match-accept-button"

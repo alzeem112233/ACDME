@@ -294,6 +294,12 @@ function mapPublicMatchRequest(row) {
     acceptedByAcademyName: row.accepted_by_academy_name || "",
     acceptedByCaptainName: row.accepted_by_captain_name || "",
     acceptedAt: row.accepted_at || "",
+    scoreA: row.score_a === null || row.score_a === undefined ? "" : Number(row.score_a),
+    scoreB: row.score_b === null || row.score_b === undefined ? "" : Number(row.score_b),
+    resultNote: row.result_note || "",
+    resultRecordedByAcademyId: row.result_recorded_by_academy_id || "",
+    resultRecordedByAcademyName: row.result_recorded_by_academy_name || "",
+    resultRecordedAt: row.result_recorded_at || "",
     createdAt: row.created_at || "",
     updatedAt: row.updated_at || "",
   };
@@ -354,6 +360,12 @@ function publicMatchRequestPayload(match = {}) {
     accepted_by_academy_name: match.acceptedByAcademyName || null,
     accepted_by_captain_name: match.acceptedByCaptainName || null,
     accepted_at: match.acceptedAt || null,
+    score_a: match.scoreA === "" || match.scoreA === undefined ? null : Number(match.scoreA),
+    score_b: match.scoreB === "" || match.scoreB === undefined ? null : Number(match.scoreB),
+    result_note: match.resultNote || null,
+    result_recorded_by_academy_id: match.resultRecordedByAcademyId || null,
+    result_recorded_by_academy_name: match.resultRecordedByAcademyName || null,
+    result_recorded_at: match.resultRecordedAt || null,
     updated_at: new Date().toISOString(),
   };
 }
@@ -417,6 +429,35 @@ export async function acceptPublicMatchRequest(matchId, acceptance) {
 
   if (error) {
     if (error.code === "42P01" || String(error.message || "").includes("public_match_requests")) return null;
+    throw error;
+  }
+
+  return mapPublicMatchRequest(data);
+}
+
+export async function recordPublicMatchResult(matchId, result) {
+  if (!isSupabaseConfigured || !matchId) return null;
+
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("public_match_requests")
+      .update({
+        score_a: Number(result.scoreA),
+        score_b: Number(result.scoreB),
+        result_note: result.resultNote || null,
+        result_recorded_by_academy_id: result.resultRecordedByAcademyId,
+        result_recorded_by_academy_name: result.resultRecordedByAcademyName,
+        result_recorded_at: result.resultRecordedAt,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", matchId)
+      .eq("status", "accepted")
+      .select()
+      .single(),
+  );
+
+  if (error) {
+    if (error.code === "42P01" || error.code === "42703" || String(error.message || "").includes("public_match_requests")) return null;
     throw error;
   }
 
