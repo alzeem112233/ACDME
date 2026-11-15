@@ -357,30 +357,18 @@ drop policy if exists notifications_rbac_delete on public.notifications;
 create policy notifications_rbac_select
   on public.notifications
   for select
-  using (
-    public.qz_is_super_admin()
-    or public.qz_can_access_academy(coalesce(school_id::text, null))
-    or user_id::text = (select account_id from public.qz_session() limit 1)
-  );
+  using (public.qz_can_access_academy(academy_id::text));
 
 create policy notifications_rbac_insert
   on public.notifications
   for insert
-  with check (public.qz_is_super_admin() or public.qz_can_access_academy(school_id::text));
+  with check (public.qz_can_access_academy(academy_id::text));
 
 create policy notifications_rbac_update
   on public.notifications
   for update
-  using (
-    public.qz_is_super_admin()
-    or public.qz_can_access_academy(coalesce(school_id::text, null))
-    or user_id::text = (select account_id from public.qz_session() limit 1)
-  )
-  with check (
-    public.qz_is_super_admin()
-    or public.qz_can_access_academy(coalesce(school_id::text, null))
-    or user_id::text = (select account_id from public.qz_session() limit 1)
-  );
+  using (public.qz_can_access_academy(academy_id::text))
+  with check (public.qz_can_access_academy(academy_id::text));
 
 create policy notifications_rbac_delete
   on public.notifications

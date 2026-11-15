@@ -11,6 +11,8 @@ coverage/
 supabase/.temp/
 
 .vercel
+.codex-qa/
+.codex-remote-attachments/
 
 # Android release signing secrets
 android/keystore.properties

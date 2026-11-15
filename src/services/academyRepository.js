@@ -313,6 +313,29 @@ function mapAcademyCloudData(row) {
   };
 }
 
+function mapParentPlayerLink(row) {
+  return {
+    id: row.id,
+    academyId: row.academy_id,
+    parentAccountId: row.parent_account_id,
+    parentPhone: normalizePhoneForRemote(row.parent_phone_e164),
+    playerId: row.player_id,
+    relation: row.relation || "ولي أمر",
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || "",
+  };
+}
+
+function mapParentPlayerSnapshot(row) {
+  return {
+    id: row.id,
+    academyId: row.academy_id,
+    playerId: row.player_id,
+    data: row.payload || {},
+    updatedAt: row.updated_at || "",
+  };
+}
+
 function stripFrontendSecrets(value) {
   if (!value || typeof value !== "object") return value;
   return JSON.parse(JSON.stringify(value, (key, fieldValue) => {
@@ -586,6 +609,85 @@ export async function upsertRemoteAcademyData(academyId, academyData) {
   return mapAcademyCloudData(data);
 }
 
+export async function listParentPlayerLinks(academyId = "") {
+  if (!isSupabaseConfigured) return [];
+
+  let query = supabase
+    .from("parent_player_links")
+    .select("id,academy_id,parent_account_id,parent_phone_e164,player_id,relation,created_at,updated_at")
+    .order("created_at", { ascending: true });
+
+  if (academyId) query = query.eq("academy_id", academyId);
+  const { data, error } = await withWeakNetworkRetry(() => query);
+
+  if (error) {
+    if (error.code === "42P01" || String(error.message || "").includes("parent_player_links")) return [];
+    throw error;
+  }
+
+  return (data || []).map(mapParentPlayerLink);
+}
+
+export async function upsertParentPlayerLinks(links = []) {
+  if (!isSupabaseConfigured || !Array.isArray(links) || !links.length) return [];
+
+  const payload = links.map((link) => ({
+    academy_id: link.academyId,
+    parent_account_id: link.parentAccountId,
+    parent_phone_e164: normalizePhoneForRemote(link.parentPhone),
+    player_id: String(link.playerId || ""),
+    relation: link.relation || "ولي أمر",
+    updated_at: new Date().toISOString(),
+  }));
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("parent_player_links")
+      .upsert(payload, { onConflict: "parent_account_id,player_id" })
+      .select("id,academy_id,parent_account_id,parent_phone_e164,player_id,relation,created_at,updated_at"),
+  );
+
+  if (error) throw error;
+  return (data || []).map(mapParentPlayerLink);
+}
+
+export async function upsertParentPlayerSnapshots(academyId, snapshots = []) {
+  if (!isSupabaseConfigured || !academyId || !Array.isArray(snapshots) || !snapshots.length) return [];
+
+  const payload = snapshots.map((snapshot) => ({
+    academy_id: academyId,
+    player_id: String(snapshot.playerId || ""),
+    payload: snapshot.data || {},
+    updated_at: new Date().toISOString(),
+  }));
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("parent_player_snapshots")
+      .upsert(payload, { onConflict: "academy_id,player_id" })
+      .select("id,academy_id,player_id,payload,updated_at"),
+  );
+
+  if (error) throw error;
+  return (data || []).map(mapParentPlayerSnapshot);
+}
+
+export async function listParentPlayerSnapshots() {
+  if (!isSupabaseConfigured) return [];
+
+  const { data, error } = await withWeakNetworkRetry(() =>
+    supabase
+      .from("parent_player_snapshots")
+      .select("id,academy_id,player_id,payload,updated_at")
+      .order("updated_at", { ascending: false }),
+  );
+
+  if (error) {
+    if (error.code === "42P01" || String(error.message || "").includes("parent_player_snapshots")) return [];
+    throw error;
+  }
+
+  return (data || []).map(mapParentPlayerSnapshot);
+}
+
 export async function deleteRemoteAcademyData(academyId) {
   if (!isSupabaseConfigured || !academyId) return null;
 
@@ -750,6 +852,29 @@ export async function upsertPlatformAccount(account) {
 
   if (error) throw error;
   return mapPlatformAccount(data);
+}
+
+export async function createRemotePlatformAccount(account, password) {
+  if (!isSupabaseConfigured) return null;
+
+  const data = await invokeQzAuth({
+    action: "create-platform-account",
+    id: account.id,
+    name: account.name,
+    accountPhone: normalizePhoneForRemote(account.phone),
+    password,
+    roleKey: account.roleKey,
+    academyId: account.academyId,
+    academyName: account.academyName,
+    permissions: account.permissions,
+    permissionsJson: account.permissionsJson || {},
+  });
+
+  if (!data?.ok || !data.account) {
+    throw new Error(data?.message || "تعذر إنشاء الحساب في الخادم.");
+  }
+
+  return mapPlatformAccount(data.account);
 }
 
 export async function deleteRemotePlatformAccount(phone) {

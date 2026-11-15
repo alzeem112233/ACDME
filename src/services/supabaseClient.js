@@ -1,7 +1,15 @@
 import { createClient } from "@supabase/supabase-js";
 
-export const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-export const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const canonicalSupabaseUrl = "https://vfvsexrikwokuenopwmi.supabase.co";
+const canonicalSupabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZmdnNleHJpa3dva3Vlbm9wd21pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM3Mzg2NjYsImV4cCI6MjA5OTMxNDY2Nn0.H2i2yGdEl_WLu2Gu1wKcSbmO4xFRzJZLpZ21K7zlqHM";
+const configuredSupabaseUrl = String(import.meta.env.VITE_SUPABASE_URL || "").trim();
+const configuredSupabaseAnonKey = String(import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim();
+const shouldUseCanonicalProject = !configuredSupabaseUrl || configuredSupabaseUrl.includes("xxnizgstlkmjfrzfqfvh");
+
+export const supabaseUrl = shouldUseCanonicalProject ? canonicalSupabaseUrl : configuredSupabaseUrl;
+export const supabaseAnonKey = shouldUseCanonicalProject || !configuredSupabaseAnonKey
+  ? canonicalSupabaseAnonKey
+  : configuredSupabaseAnonKey;
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
 

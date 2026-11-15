@@ -54,6 +54,7 @@ import {
   acceptPublicMatchRequest,
   createPublicMatchRequest,
   createRegistrationRequest,
+  createRemotePlatformAccount,
   deleteRemoteAcademyData,
   deleteRemotePlatformAccount,
   authenticateRemoteAccount,
@@ -61,6 +62,7 @@ import {
   listPublicMatchRequests,
   getRemotePlatformAccountByPhone,
   listPasswordResetRequests,
+  listParentPlayerSnapshots,
   listRemoteAcademyData,
   listPlatformAccounts,
   listRegistrationRequests,
@@ -71,6 +73,8 @@ import {
   updateRemotePlatformAccountStatus,
   updateRemoteRegistrationPassword,
   updateRemoteRegistrationRequest,
+  upsertParentPlayerLinks,
+  upsertParentPlayerSnapshots,
   upsertRemoteAcademyData,
   upsertPlatformAccount,
 } from "./services/academyRepository";
@@ -96,6 +100,7 @@ const ROLE_SUPER_ADMIN = "سوبر أدمين";
 const ROLE_OWNER = "مالك أكاديمية";
 const ROLE_ADMIN = "Admin";
 const ROLE_COACH = "مدرب";
+const ROLE_PARENT = "ولي أمر";
 const PERMISSION_FULL = "إدارة كاملة";
 const PERMISSION_ATTENDANCE_PLAYERS = "الحضور واللاعبين";
 const PERMISSION_TEAM_FOLLOW = "متابعة فريق محدد";
@@ -106,7 +111,7 @@ const DEFAULT_ATTENDANCE_PAYMENT = 500;
 const RENEWAL_PERIOD_DAYS = 29;
 const PLATFORM_RENEWAL_DAYS = RENEWAL_PERIOD_DAYS;
 const APP_RELEASE_VERSION = "QZ Academy Release 8";
-const APP_GUIDE_VERSION = 4;
+const APP_GUIDE_VERSION = 5;
 const INTERACTIVE_GUIDE_VERSION = 1;
 const BACKUP_FORMAT_VERSION = 8;
 const BACKUP_KDF_ITERATIONS = 250000;
@@ -190,16 +195,23 @@ function isSuperAdminSession(session) {
   );
 }
 
+function isParentSession(session) {
+  return session?.role === ROLE_PARENT || session?.roleKey === "parent" || session?.permissionsJson?.parent === true;
+}
+
 function displayRoleFromRoleKey(roleKey = "", fallback = "") {
   if (roleKey === "super_admin") return ROLE_SUPER_ADMIN;
   if (roleKey === "academy_owner") return ROLE_OWNER;
   if (roleKey === "admin") return ROLE_ADMIN;
   if (roleKey === "coach") return ROLE_COACH;
+  if (roleKey === "parent") return ROLE_PARENT;
   return fallback || ROLE_OWNER;
 }
 
 function accountCountForAcademy(users = [], academyId = "") {
-  return users.filter((user) => user.academyId === academyId && user.status !== "معطل").length;
+  return users.filter(
+    (user) => user.academyId === academyId && user.status !== "معطل" && user.roleKey !== "parent" && user.role !== ROLE_PARENT,
+  ).length;
 }
 
 async function hashPassword(password) {
@@ -400,6 +412,7 @@ const seedData = {
     renewalExpiresAtIso: addDaysIso(new Date(), RENEWAL_PERIOD_DAYS),
   },
   users: [],
+  guardians: [],
   ageGroups: [],
   teams: [],
   players: [],
@@ -561,6 +574,7 @@ function normalizeAcademyData(value = {}, account = {}) {
     },
     coaches: Array.isArray(value.coaches) ? value.coaches : [],
     users: Array.isArray(value.users) ? value.users : [],
+    guardians: Array.isArray(value.guardians) ? value.guardians : [],
     ageGroups: Array.isArray(value.ageGroups) ? value.ageGroups : [],
     teams: Array.isArray(value.teams) ? value.teams : [],
     players: Array.isArray(value.players) ? value.players : [],
@@ -686,6 +700,122 @@ function toCloudAcademyData(value = {}, account = {}) {
   return cloudData;
 }
 
+function buildParentPlayerSnapshots(value = {}, account = {}) {
+  const data = normalizeAcademyData(value, account);
+  const activeGuardians = (data.guardians || []).filter((guardian) => guardian.status !== "معطل");
+  const linkedPlayerIds = new Set(activeGuardians.flatMap((guardian) => guardian.playerIds || []));
+  const teamById = Object.fromEntries(data.teams.map((team) => [team.id, team]));
+  const groupById = Object.fromEntries(data.ageGroups.map((group) => [group.id, group]));
+
+  return data.players
+    .filter((player) => linkedPlayerIds.has(player.id))
+    .map((player) => {
+      const team = teamById[player.teamId] || {};
+      const group = groupById[team.ageGroupId] || {};
+      const attendance = data.attendance
+        .filter((row) => row.playerId === player.id)
+        .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
+        .slice(0, 120);
+      const allPlayerPayments = data.payments
+        .filter((row) => row.playerId === player.id)
+        .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+      const totalPaid = allPlayerPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+      const payments = allPlayerPayments
+        .slice(0, 36)
+        .map((payment) => ({
+          id: payment.id,
+          date: payment.date || "",
+          amount: Number(payment.amount || 0),
+          method: paymentMethodLabel(payment),
+          receiptNumber: receiptNumberForPayment(payment, data.payments),
+          status: payment.status || "مدفوع",
+        }));
+      const subscriptionTotal = Math.max(
+        Number(player.monthlyFee || 0) - Number(player.discountAmount || 0) - Number(player.grantAmount || 0),
+        0,
+      );
+      const remaining = player.subscriptionPaidFull ? 0 : Math.max(subscriptionTotal - totalPaid, 0);
+      const positiveEvaluations = (data.playerEvaluations || [])
+        .filter((evaluation) => evaluation.playerId === player.id && evaluation.type === "positive")
+        .sort((a, b) => String(b.createdAt || b.date || "").localeCompare(String(a.createdAt || a.date || "")))
+        .slice(0, 16)
+        .map((evaluation) => ({
+          id: evaluation.id,
+          title: evaluation.title || "إشادة من الأكاديمية",
+          note: evaluation.note || "",
+          date: evaluation.date || "",
+          score: Number(evaluation.score || 0),
+          tags: evaluation.tags || [],
+        }));
+      const visibleNotifications = (data.notifications || [])
+        .filter((notification) => {
+          const target = normalizeText(notification.target);
+          return !target || ["الكل", "الجميع", "عام"].includes(target) || target.includes(normalizeText(player.name));
+        })
+        .slice(0, 30)
+        .map((notification) => ({
+          id: notification.id,
+          type: notification.type || "إشعار",
+          target: notification.target || "الجميع",
+          date: notification.date || "",
+          status: notification.status || "جديد",
+        }));
+      const posts = (data.posts || []).slice(0, 30).map((post) => ({
+        id: post.id,
+        title: post.title || "إعلان الأكاديمية",
+        content: post.content || "",
+        type: post.type || "إعلان",
+        pinned: Boolean(post.pinned),
+        createdAt: post.createdAt || "",
+      }));
+
+      return {
+        playerId: player.id,
+        data: {
+          academy: {
+            id: account.academyId || "",
+            name: data.academy.name || account.academyName || "الأكاديمية",
+            logo: /^https?:\/\//i.test(data.academy.logo || "") ? data.academy.logo : "",
+          },
+          player: {
+            id: player.id,
+            name: player.name,
+            photo: /^https?:\/\//i.test(player.photo || "") ? player.photo : "",
+            birthDate: player.birthDate || "",
+            ageText: player.ageText || exactAgeFromDate(player.birthDate) || ageFromDate(player.birthDate),
+            position: player.position || "",
+            playerNumber: player.playerNumber || player.jersey || "",
+            teamName: team.name || "غير محدد",
+            ageGroupName: group.name || "غير محدد",
+            status: player.status || "نشط",
+          },
+          attendance: {
+            records: attendance,
+            present: attendance.filter((row) => row.status === "حاضر").length,
+            late: attendance.filter((row) => row.status === "متأخر").length,
+            absent: attendance.filter((row) => row.status === "غائب").length,
+          },
+          finance: {
+            subscriptionTotal,
+            totalPaid,
+            remaining,
+            subscriptionPaidFull: Boolean(player.subscriptionPaidFull),
+            kitFee: Number(player.kitFee || 0),
+            kitPaid: Boolean(player.kitPaid),
+            payments,
+          },
+          honors: {
+            badges: Array.isArray(player.badges) ? player.badges : [],
+            positiveEvaluations,
+          },
+          notifications: visibleNotifications,
+          posts,
+          updatedAt: new Date().toISOString(),
+        },
+      };
+    });
+}
+
 function mergeAcademyLocalAndRemote(localValue = {}, remoteValue = {}, account = {}) {
   const localData = normalizeAcademyData(localValue, account);
   const remoteData = normalizeAcademyData(remoteValue, account);
@@ -804,6 +934,7 @@ function getUserPermission(session) {
 function canAccessView(viewId, session) {
   if (!session?.verified) return false;
   if (isSuperAdminSession(session)) return true;
+  if (isParentSession(session)) return viewId === "parentPortal";
   if (viewId === "accountProfile") return true;
   if (viewId === "platformDashboard" || viewId === "platformReports") return false;
 
@@ -831,6 +962,7 @@ const navItems = [
   { id: "ageGroups", label: "إدارة الفئات العمرية", icon: Layers },
   { id: "teams", label: "إدارة الفرق", icon: ShieldCheck },
   { id: "players", label: "إدارة اللاعبين", icon: Users },
+  { id: "parents", label: "أولياء الأمور", icon: UserRound },
   { id: "attendance", label: "التحضير", icon: CalendarCheck },
   { id: "evaluations", label: "تقييم اللاعبين", icon: Star },
   { id: "playerProfile", label: "ملف اللاعب", icon: UserCircle },
@@ -839,6 +971,7 @@ const navItems = [
   { id: "matches", label: "المباريات", icon: Swords },
   { id: "accountProfile", label: "الملف الشخصي", icon: UserCircle },
   { id: "notifications", label: "التنبيهات", icon: Bell },
+  { id: "parentPortal", label: "متابعة الأبناء", icon: UserCircle },
 ];
 const setupNavIds = new Set(["coachSetup", "coaches", "settings", "ageGroups", "teams", "accountProfile"]);
 const onboardingSteps = ["accountProfile", "coachSetup", "settings", "ageGroups", "teams"];
@@ -921,6 +1054,14 @@ const pageGuides = {
     secondaryView: "playerProfile",
     secondaryLabel: "ملف اللاعب",
   },
+  parents: {
+    title: "أولياء الأمور",
+    text: "أنشئ حساب ولي الأمر واربطه بلاعب أو أكثر، ثم ارفع آخر بيانات الطفل لبوابة المتابعة.",
+    primaryView: "players",
+    primaryLabel: "اللاعبون",
+    secondaryView: "notifications",
+    secondaryLabel: "الإشعارات",
+  },
   attendance: {
     title: "التحضير",
     text: "اختر التاريخ والفئة. الحضور أو التأخر يفتح الدفع، وزر الحوالة يحسب المبلغ كتحويل.",
@@ -973,6 +1114,12 @@ const pageGuides = {
     primaryView: "reports",
     primaryLabel: "التقارير",
   },
+  parentPortal: {
+    title: "متابعة الأبناء",
+    text: "تابع الحضور والغياب والحساب المالي والتكريمات وإعلانات الأكاديمية من مكان واحد.",
+    primaryView: "accountProfile",
+    primaryLabel: "حسابي",
+  },
   accountProfile: {
     title: "الملف الشخصي",
     text: "حدّث صورتك واسمك وكلمة السر، ثم ارجع للقائمة الرئيسية.",
@@ -982,6 +1129,16 @@ const pageGuides = {
 };
 
 const appGuideSections = [
+  {
+    title: "بوابة ولي الأمر",
+    icon: UserRound,
+    text: "ولي الأمر يدخل برقم الهاتف وكلمة السر التي تنشئها الأكاديمية.",
+    items: [
+      "يشاهد فقط الأطفال المرتبطين بحسابه.",
+      "يعرض الحضور والغياب والمدفوع والمتبقي والتكريمات.",
+      "تظهر له منشورات وإشعارات إدارة الأكاديمية بعد المزامنة.",
+    ],
+  },
   {
     title: "الدخول والحسابات",
     icon: LockKeyhole,
@@ -2170,6 +2327,7 @@ function App() {
   const [interactiveGuideState, setInteractiveGuideState] = useLocalState("acdme-interactive-guide-v1", { version: INTERACTIVE_GUIDE_VERSION, seenBy: {} });
   const [themeMode, setThemeMode] = useLocalState("acdme-theme-v1", "light");
   const [cloudSyncState, setCloudSyncState] = useState({ academyId: "", loaded: false, saving: false, error: "", syncedAt: "" });
+  const [parentPortalState, setParentPortalState] = useState({ loading: false, error: "", snapshots: [], loadedAt: "" });
   const lastCloudPayloadRef = useRef("");
   const autoSyncedOnOpenRef = useRef("");
   const bottomNavRef = useRef(null);
@@ -2190,13 +2348,14 @@ function App() {
     setQzSessionToken(qzSessionToken);
   }, [qzSessionToken]);
   const isSuperAdmin = isSuperAdminSession(session);
+  const isParent = isParentSession(session);
   const currentAcademyId = session?.academyId || "";
   const data = useMemo(() => {
-    if (!session?.verified || isSuperAdmin || !currentAcademyId) return seedData;
+    if (!session?.verified || isSuperAdmin || isParent || !currentAcademyId) return seedData;
     return normalizeAcademyData(academyDataById[currentAcademyId], session);
-  }, [academyDataById, currentAcademyId, isSuperAdmin, session]);
+  }, [academyDataById, currentAcademyId, isParent, isSuperAdmin, session]);
   const setData = (nextValue) => {
-    if (!currentAcademyId || isSuperAdmin) return;
+    if (!currentAcademyId || isSuperAdmin || isParent) return;
 
     setAcademyDataById((prev) => {
       const currentData = normalizeAcademyData(prev[currentAcademyId], session);
@@ -2307,7 +2466,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!session?.verified || isSuperAdmin || !currentAcademyId) return;
+    if (!session?.verified || isSuperAdmin || isParent || !currentAcademyId) return;
 
     const localTimer = renewalTimers[currentAcademyId];
     if (localTimer?.renewalExpiresAt) return;
@@ -2344,7 +2503,7 @@ function App() {
         };
       });
     }
-  }, [academyDataById, currentAcademyId, isSuperAdmin, renewalTimers, session?.verified]);
+  }, [academyDataById, currentAcademyId, isParent, isSuperAdmin, renewalTimers, session?.verified]);
 
   useEffect(() => {
     const updateConnectionState = () => {
@@ -2448,7 +2607,7 @@ function App() {
   };
 
   const syncAcademyPlatformAccounts = async (usersToSync = [], academySnapshot = data) => {
-    if (!isOnline || !currentAcademyId || isSuperAdmin) return [];
+    if (!isOnline || !currentAcademyId || isSuperAdmin || isParent) return [];
 
     const academy = academySnapshot?.academy || data.academy || {};
     const accounts = (usersToSync || [])
@@ -2474,8 +2633,15 @@ function App() {
     return syncedAccounts;
   };
 
+  const syncParentPortalSnapshots = async (academySnapshot = data) => {
+    if (!isOnline || !currentAcademyId || isSuperAdmin || isParent) return [];
+    const snapshots = buildParentPlayerSnapshots(academySnapshot, session);
+    if (!snapshots.length) return [];
+    return upsertParentPlayerSnapshots(currentAcademyId, snapshots);
+  };
+
   const syncCurrentAcademyNow = async () => {
-    if (!currentAcademyId || isSuperAdmin) {
+    if (!currentAcademyId || isSuperAdmin || isParent) {
       return { ok: false, message: "المزامنة متاحة داخل حساب الأكاديمية فقط." };
     }
 
@@ -2505,6 +2671,7 @@ function App() {
         throw new Error("تمت محاولة الرفع، لكن لم يتم تأكيد وجود بيانات الأكاديمية في السحابة.");
       }
       const syncedAccounts = await syncAcademyPlatformAccounts(platformData.users || [], academyData);
+      await syncParentPortalSnapshots(academyData);
       if (syncedAccounts.length) {
         setPlatformData((prev) => ({
           ...prev,
@@ -2720,12 +2887,66 @@ function App() {
   }, [session?.verified, isOnline, onlineSyncTick, qzSessionToken]);
 
   useEffect(() => {
+    let isMounted = true;
+
+    if (!session?.verified || !isParent) {
+      setParentPortalState({ loading: false, error: "", snapshots: [], loadedAt: "" });
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    if (!isOnline) {
+      setParentPortalState((prev) => ({
+        ...prev,
+        loading: false,
+        error: "تحتاج بوابة ولي الأمر إلى الإنترنت لعرض آخر بيانات الطفل.",
+      }));
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    setParentPortalState((prev) => ({ ...prev, loading: true, error: "" }));
+    listParentPlayerSnapshots()
+      .then((snapshots) => {
+        if (!isMounted) return;
+        setParentPortalState({
+          loading: false,
+          error: "",
+          snapshots: Array.isArray(snapshots) ? snapshots : [],
+          loadedAt: new Date().toISOString(),
+        });
+      })
+      .catch((error) => {
+        if (!isMounted) return;
+        logDeveloperError("load-parent-portal", error);
+        setParentPortalState((prev) => ({
+          ...prev,
+          loading: false,
+          error: safeUserMessage(error, "تعذر تحميل بيانات الأبناء الآن. حاول التحديث بعد قليل."),
+        }));
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [session?.verified, isParent, isOnline, onlineSyncTick, qzSessionToken]);
+
+  useEffect(() => {
     let isCancelled = false;
 
     if (!session?.verified) {
       lastCloudPayloadRef.current = "";
       autoSyncedOnOpenRef.current = "";
       setCloudSyncState({ academyId: "", loaded: false, saving: false, error: "", syncedAt: "" });
+      return () => {
+        isCancelled = true;
+      };
+    }
+
+    if (isParent) {
+      setCloudSyncState({ academyId: currentAcademyId, loaded: true, saving: false, error: "", syncedAt: "" });
       return () => {
         isCancelled = true;
       };
@@ -2825,12 +3046,13 @@ function App() {
     return () => {
       isCancelled = true;
     };
-  }, [session?.verified, currentAcademyId, isSuperAdmin, isOnline, onlineSyncTick]);
+  }, [session?.verified, currentAcademyId, isParent, isSuperAdmin, isOnline, onlineSyncTick]);
 
   useEffect(() => {
     if (
       !session?.verified ||
       isSuperAdmin ||
+      isParent ||
       !currentAcademyId ||
       !cloudSyncState.loaded ||
       cloudSyncState.academyId !== currentAcademyId
@@ -2855,6 +3077,7 @@ function App() {
       upsertRemoteAcademyData(currentAcademyId, academyPayload)
         .then(async () => {
           const syncedAccounts = await syncAcademyPlatformAccounts(platformData.users || [], academyDataById[currentAcademyId]);
+          await syncParentPortalSnapshots(academyDataById[currentAcademyId]);
           if (syncedAccounts.length) {
             setPlatformData((prev) => ({
               ...prev,
@@ -2872,7 +3095,7 @@ function App() {
     }, 900);
 
     return () => window.clearTimeout(saveTimer);
-  }, [academyDataById, currentAcademyId, session, isSuperAdmin, cloudSyncState.loaded, cloudSyncState.academyId, isOnline, onlineSyncTick, platformData.users]);
+  }, [academyDataById, currentAcademyId, session, isParent, isSuperAdmin, cloudSyncState.loaded, cloudSyncState.academyId, isOnline, onlineSyncTick, platformData.users]);
 
   const addAgeGroup = (event) => {
     event.preventDefault();
@@ -2966,7 +3189,7 @@ function App() {
     const academyAccountPhones = new Set(
       [
         ...currentPlatformUsers
-          .filter((user) => user.academyId === session.academyId && user.status !== "معطل")
+          .filter((user) => user.academyId === session.academyId && user.status !== "معطل" && user.roleKey !== "parent" && user.role !== ROLE_PARENT)
           .map((user) => normalizePhone(user.phone)),
         normalizePhone(data.coach?.phone || session.phone),
         ...(data.coaches || [])
@@ -3061,6 +3284,124 @@ function App() {
     }
 
     return { ok: true, message: "تم إنشاء حساب المستخدم مباشرة وربطه بالأكاديمية. يمكنه الدخول برقم الهاتف وكلمة السر المؤقتة." };
+  };
+
+  const addAcademyParent = async (parentInput) => {
+    const normalizedPhone = normalizePhone(parentInput.phone);
+    const playerIds = Array.from(new Set((parentInput.playerIds || []).filter((playerId) => data.players.some((player) => player.id === playerId))));
+
+    if (!session?.academyId || isParent) {
+      return { ok: false, message: "لا يمكن إنشاء حساب ولي الأمر قبل الدخول بحساب إدارة الأكاديمية." };
+    }
+    if (!normalizedPhone || normalizedPhone.length < 8) {
+      return { ok: false, message: "أدخل رقم هاتف صحيح لولي الأمر." };
+    }
+    if (!String(parentInput.name || "").trim()) {
+      return { ok: false, message: "أدخل اسم ولي الأمر." };
+    }
+    if (!playerIds.length) {
+      return { ok: false, message: "اختر لاعبًا واحدًا على الأقل لربطه بولي الأمر." };
+    }
+    if (!passwordPolicy(parentInput.password).isValid) {
+      return { ok: false, message: "كلمة السر المؤقتة يجب أن تحتوي على 6 أرقام على الأقل." };
+    }
+
+    const latestUsers = await refreshPlatformUsers();
+    const existingAccount = mergePlatformUsers(latestUsers || [], platformUsers || []).find(
+      (user) => normalizePhone(user.phone) === normalizedPhone,
+    );
+    if (existingAccount) {
+      return { ok: false, message: "رقم الهاتف مستخدم في حساب آخر. استخدم رقمًا مختلفًا أو عطّل الحساب السابق." };
+    }
+
+    const parentAccountId = `parent-user-${session.academyId}-${normalizedPhone.replace(/\D/g, "")}`;
+    const relation = String(parentInput.relation || ROLE_PARENT).trim() || ROLE_PARENT;
+    const parentAccount = {
+      id: parentAccountId,
+      name: String(parentInput.name || "").trim(),
+      phone: normalizedPhone,
+      role: ROLE_PARENT,
+      roleKey: "parent",
+      academyId: session.academyId,
+      academyName: data.academy.name || session.academyName || "الأكاديمية",
+      academyNameEn: data.academy.nameEn || session.academyNameEn || "",
+      academyLogo: data.academy.logo || session.academyLogo || "",
+      permissions: "متابعة الأبناء",
+      permissionsJson: { parent: true, children: true, readOnly: true },
+      passwordStatus: "مشفرة",
+      passwordUpdatedAt: today,
+      status: "نشط",
+    };
+    const guardian = {
+      id: parentAccountId,
+      parentAccountId,
+      name: parentAccount.name,
+      phone: normalizedPhone,
+      relation,
+      playerIds,
+      status: "نشط",
+      createdAt: new Date().toISOString(),
+    };
+    const nextAcademyData = normalizeAcademyData({
+      ...data,
+      guardians: [guardian, ...(data.guardians || []).filter((item) => normalizePhone(item.phone) !== normalizedPhone)],
+      users: [parentAccount, ...(data.users || []).filter((user) => normalizePhone(user.phone) !== normalizedPhone)],
+    }, session);
+
+    try {
+      const syncedAccount = await createRemotePlatformAccount(parentAccount, parentInput.password);
+      if (!syncedAccount?.id) throw new Error("تعذر تأكيد إنشاء حساب ولي الأمر.");
+
+      await upsertParentPlayerLinks(playerIds.map((playerId) => ({
+        academyId: session.academyId,
+        parentAccountId: syncedAccount.id,
+        parentPhone: normalizedPhone,
+        playerId,
+        relation,
+      })));
+      await upsertParentPlayerSnapshots(session.academyId, buildParentPlayerSnapshots(nextAcademyData, session));
+
+      setData(nextAcademyData);
+      setPlatformData((prev) => ({
+        ...prev,
+        users: mergePlatformUsers([syncedAccount], prev.users || []),
+      }));
+      upsertRemoteAcademyData(session.academyId, toCloudAcademyData(nextAcademyData, session)).catch((error) => {
+        logDeveloperError("sync-parent-metadata", error);
+      });
+
+      return {
+        ok: true,
+        message: `تم إنشاء حساب ولي الأمر وربطه بـ ${playerIds.length} من الأبناء. اسم المستخدم هو ${normalizedPhone}.`,
+      };
+    } catch (error) {
+      logDeveloperError("create-parent-account", error);
+      return { ok: false, message: safeUserMessage(error, "تعذر إنشاء حساب ولي الأمر الآن. تحقق من الإنترنت ثم أعد المحاولة.") };
+    }
+  };
+
+  const toggleAcademyParentStatus = async (guardianId) => {
+    const guardian = (data.guardians || []).find((item) => item.id === guardianId);
+    if (!guardian) return { ok: false, message: "تعذر العثور على حساب ولي الأمر." };
+
+    const nextStatus = guardian.status === "معطل" ? "نشط" : "معطل";
+    setData((prev) => ({
+      ...prev,
+      guardians: (prev.guardians || []).map((item) => item.id === guardianId ? { ...item, status: nextStatus } : item),
+      users: (prev.users || []).map((user) => user.id === guardian.parentAccountId ? { ...user, status: nextStatus } : user),
+    }));
+    setPlatformData((prev) => ({
+      ...prev,
+      users: (prev.users || []).map((user) => user.id === guardian.parentAccountId ? { ...user, status: nextStatus } : user),
+    }));
+
+    try {
+      await updateRemotePlatformAccountStatus(guardian.phone, nextStatus);
+      return { ok: true, message: nextStatus === "نشط" ? "تم تفعيل حساب ولي الأمر." : "تم تعطيل حساب ولي الأمر." };
+    } catch (error) {
+      logDeveloperError("toggle-parent-account", error);
+      return { ok: false, message: safeUserMessage(error, "تم تحديث الحالة على الجهاز وتعذر رفعها الآن.") };
+    }
   };
 
   const toggleAcademyCoachStatus = (coachId) => {
@@ -3633,6 +3974,7 @@ function App() {
       type: form.get("type"),
       pinned: form.get("pinned") === "on",
       likes: 0,
+      createdAt: new Date().toISOString(),
     };
     setData((prev) => ({ ...prev, posts: [post, ...prev.posts] }));
     event.currentTarget.reset();
@@ -4378,6 +4720,8 @@ function App() {
     data,
     academyDataById,
     cloudSyncState,
+    parentPortalState,
+    refreshParentPortal: () => setOnlineSyncTick((value) => value + 1),
     isOnline,
     stats,
     helpers,
@@ -4396,6 +4740,8 @@ function App() {
     removeAgeGroup,
     finishOnboarding,
     addAcademyCoach,
+    addAcademyParent,
+    toggleAcademyParentStatus,
     toggleAcademyCoachStatus,
     addPlayer,
     addTeam,
@@ -4439,16 +4785,16 @@ function App() {
   };
 
   const onboardingView = session?.isFirstLogin ? activeOnboardingStep(session) : "";
-  const fallbackView = isSuperAdmin ? "platformDashboard" : onboardingView || "home";
+  const fallbackView = isSuperAdmin ? "platformDashboard" : isParent ? "parentPortal" : onboardingView || "home";
   const renewalInfo = academyRenewalInfo(data.academy, renewalTimers[currentAcademyId]);
-  const isRenewalExpired = !isSuperAdmin && session?.verified && !session?.isFirstLogin && renewalInfo.isExpired;
+  const isRenewalExpired = !isSuperAdmin && !isParent && session?.verified && !session?.isFirstLogin && renewalInfo.isExpired;
   const allowedNavItems = isSuperAdmin
     ? navItems
     : navItems.filter((item) => canAccessView(item.id, session));
   const visibleNavItems = allowedNavItems.filter((item) => item.id !== "matches" || isOnline);
   const bottomNavItems = visibleNavItems.filter((item) => !setupNavIds.has(item.id));
   const displayedView = onboardingView || (visibleNavItems.some((item) => item.id === activeView) ? activeView : fallbackView);
-  const customScreenViews = new Set(["home", "coachSetup", "coaches", "settings", "ageGroups", "attendance", "evaluations", "reports", "matches", "accountProfile"]);
+  const customScreenViews = new Set(["home", "coachSetup", "coaches", "parents", "parentPortal", "settings", "ageGroups", "attendance", "evaluations", "reports", "matches", "accountProfile"]);
   const showGlobalHeader = !customScreenViews.has(displayedView);
   const showScreenTitle = !customScreenViews.has(displayedView);
   const showBottomNav = !session?.isFirstLogin && !setupNavIds.has(displayedView);
@@ -4541,6 +4887,7 @@ function App() {
     { id: "accountProfile", label: "الملف الشخصي", icon: UserCircle },
     { id: "coachSetup", label: "إعدادات المدرب", icon: UserRound },
     { id: "coaches", label: "إدارة المدربين", icon: Users },
+    { id: "parents", label: "أولياء الأمور", icon: UserRound },
     { id: "settings", label: "إعدادات الأكاديمية", icon: Settings },
     { id: "ageGroups", label: "إعدادات الفئات", icon: Layers },
     { id: "teams", label: "إدارة الفرق", icon: ShieldCheck },
@@ -4552,7 +4899,7 @@ function App() {
     setActiveView("platformDashboard");
   };
   const handleProfileHome = () => {
-    navigateToView(isSuperAdmin ? "platformDashboard" : "home");
+    navigateToView(isSuperAdmin ? "platformDashboard" : isParent ? "parentPortal" : "home");
     setIsProfileMenuOpen(false);
   };
   const markAppGuideSeen = () => {
@@ -4622,11 +4969,12 @@ function App() {
           const onboardingKey = nextSession.academyId || normalizePhone(nextSession.phone);
           const hasCompletedOnboarding = Boolean(onboardingState[onboardingKey]?.completed);
           const nextIsSuperAdmin = isSuperAdminSession(nextSession);
-          const shouldCompleteSetup = !nextIsSuperAdmin && nextSession.role === ROLE_OWNER && !hasCompletedOnboarding;
+          const nextIsParent = isParentSession(nextSession);
+          const shouldCompleteSetup = !nextIsSuperAdmin && !nextIsParent && nextSession.role === ROLE_OWNER && !hasCompletedOnboarding;
           const nextOnboardingStep = shouldCompleteSetup ? "accountProfile" : "";
-          const nextView = nextIsSuperAdmin ? "platformDashboard" : shouldCompleteSetup ? nextOnboardingStep : "home";
+          const nextView = nextIsSuperAdmin ? "platformDashboard" : nextIsParent ? "parentPortal" : shouldCompleteSetup ? nextOnboardingStep : "home";
 
-          if (!nextIsSuperAdmin && nextSession.academyId) {
+          if (!nextIsSuperAdmin && !nextIsParent && nextSession.academyId) {
             setAcademyDataById((prev) => ({
               ...prev,
               [nextSession.academyId]: normalizeAcademyData(prev[nextSession.academyId], nextSession),
@@ -4658,6 +5006,7 @@ function App() {
       showBottomNav ? "app-shell" : "app-shell setup-mode",
       displayedView === "home" ? "home-view" : "",
       displayedView === "ageGroups" ? "age-groups-view" : "",
+      displayedView === "parentPortal" ? "parent-portal-view" : "",
     ].filter(Boolean).join(" ")}>
       <button
         className={["global-refresh-button", activeGuideTargetId === "refresh" ? "guide-target-active" : ""].filter(Boolean).join(" ")}
@@ -4783,6 +5132,8 @@ function App() {
           {displayedView === "home" && <Dashboard {...viewProps} />}
           {displayedView === "coachSetup" && <CoachSetup {...viewProps} />}
           {displayedView === "coaches" && <CoachesSettings {...viewProps} />}
+          {displayedView === "parents" && <ParentManagement {...viewProps} />}
+          {displayedView === "parentPortal" && <ParentPortal {...viewProps} />}
           {displayedView === "platformDashboard" && <PlatformDashboard {...viewProps} />}
           {displayedView === "platformReports" && <PlatformReports {...viewProps} />}
           {displayedView === "settings" && <AcademySettings {...viewProps} />}
@@ -6011,7 +6362,7 @@ function PlatformReports({ academyDataById, platformUsers, registrationRequests 
         }, 0)
       : Number(summary.remainingRevenue || 0);
     const storedCoaches = academyData.coaches || [];
-    const accountCoaches = linkedAccounts.filter((user) => user.role !== ROLE_OWNER);
+    const accountCoaches = linkedAccounts.filter((user) => user.role !== ROLE_OWNER && user.role !== ROLE_PARENT && user.roleKey !== "parent");
     const primaryCoach = academyData.coach?.name
       ? [{ name: academyData.coach.name, phone: academyData.coach.phone, role: "مدرب رئيسي", permissions: PERMISSION_FULL, status: "نشط" }]
       : [];
@@ -6552,17 +6903,16 @@ function LoginPassword({
 
         <div className="login-copy">
           <p className="eyebrow">Phone & Password</p>
-          <h1>ادخل إلى مساحة الأكاديمية الخاصة بك</h1>
+          <h1>ادخل إلى حسابك في الأكاديمية</h1>
           <p>
-            كل أكاديمية تدخل برقم الهاتف وكلمة السر بعد اعتمادها من إدارة المنصة، ثم تظهر لها أدوات الإدارة الخاصة
-            باللاعبين والفرق والحضور والمدفوعات.
+            تدخل الإدارة والمدرب وولي الأمر برقم الهاتف وكلمة السر. تظهر لكل حساب الأدوات والبيانات المسموح بها فقط.
           </p>
         </div>
 
         <div className="login-stats">
           <StatusPill label="أكاديميات" value="متعددة" />
           <StatusPill label="الدخول" value="كلمة سر" />
-          <StatusPill label="الموافقة" value="إلزامية" />
+          <StatusPill label="ولي الأمر" value="متابعة الأبناء" />
         </div>
       </section>
 
@@ -7082,6 +7432,436 @@ function CoachesSettings({ data, addAcademyCoach, toggleAcademyCoachStatus }) {
           </div>
         )}
       </section>
+    </section>
+  );
+}
+
+function ParentManagement({ data, addAcademyParent, toggleAcademyParentStatus, syncCurrentAcademyNow, addPost, cloudSyncState, isOnline }) {
+  const [selectedPlayerIds, setSelectedPlayerIds] = useState([]);
+  const [temporaryPassword, setTemporaryPassword] = useState("");
+  const [message, setMessage] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const guardians = data.guardians || [];
+
+  const togglePlayer = (playerId) => {
+    setSelectedPlayerIds((current) => current.includes(playerId)
+      ? current.filter((id) => id !== playerId)
+      : [...current, playerId]);
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    setMessage("");
+    setIsSaving(true);
+    const form = new FormData(event.currentTarget);
+    const result = await addAcademyParent({
+      name: form.get("parentName"),
+      phone: form.get("phone"),
+      password: temporaryPassword,
+      relation: form.get("relation"),
+      playerIds: selectedPlayerIds,
+    });
+    setMessage(result.message);
+    setIsSaving(false);
+    if (result.ok) {
+      event.currentTarget.reset();
+      setTemporaryPassword("");
+      setSelectedPlayerIds([]);
+    }
+  };
+
+  const handleSync = async () => {
+    setIsSyncing(true);
+    const result = await syncCurrentAcademyNow();
+    setMessage(result.message);
+    setIsSyncing(false);
+  };
+
+  return (
+    <section className="parent-management-screen">
+      <header className="parent-management-hero">
+        <div>
+          <span>بوابة التواصل الأسري</span>
+          <h1>حسابات أولياء الأمور</h1>
+          <p>أنشئ حساب قراءة آمن، ثم اربطه بطفل أو أكثر ليشاهد الحضور والمالية والتكريمات وإعلانات الأكاديمية.</p>
+        </div>
+        <UserRound size={34} />
+      </header>
+
+      <div className="parent-management-layout">
+        <form className="parent-account-form" onSubmit={handleSubmit}>
+          <FormTitle icon={Plus} title="إضافة ولي أمر" />
+          <label>
+            <span>اسم ولي الأمر *</span>
+            <input name="parentName" placeholder="الاسم الكامل" required />
+          </label>
+          <label>
+            <span>اسم المستخدم (رقم الهاتف) *</span>
+            <input name="phone" inputMode="tel" placeholder="+9677XXXXXXXX" required />
+          </label>
+          <label>
+            <span>صلة القرابة</span>
+            <select name="relation" defaultValue="ولي أمر">
+              <option>ولي أمر</option>
+              <option>الأب</option>
+              <option>الأم</option>
+              <option>الأخ</option>
+              <option>الوصي</option>
+            </select>
+          </label>
+          <label>
+            <span>كلمة السر المؤقتة *</span>
+            <PasswordField
+              value={temporaryPassword}
+              onChange={(event) => setTemporaryPassword(event.target.value)}
+              placeholder="6 أرقام على الأقل"
+              minLength="6"
+              autoComplete="new-password"
+              required
+            />
+          </label>
+          {temporaryPassword && <PasswordStrengthIndicator password={temporaryPassword} />}
+          <button
+            className="parent-generate-password"
+            type="button"
+            onClick={() => setTemporaryPassword(generateTemporaryPassword())}
+          >
+            <KeyRound size={16} />
+            إنشاء كلمة سر مؤقتة
+          </button>
+
+          <fieldset className="parent-player-picker">
+            <legend>اختر الأبناء *</legend>
+            {data.players.map((player) => (
+              <label key={player.id} className={selectedPlayerIds.includes(player.id) ? "selected" : ""}>
+                <input
+                  type="checkbox"
+                  checked={selectedPlayerIds.includes(player.id)}
+                  onChange={() => togglePlayer(player.id)}
+                />
+                <span className="parent-player-avatar">
+                  {player.photo ? <img src={player.photo} alt="" /> : player.name?.slice(0, 1)}
+                </span>
+                <span>
+                  <strong>{player.name}</strong>
+                  <small>{player.playerNumber ? `رقم ${player.playerNumber}` : "لا يوجد رقم لاعب"}</small>
+                </span>
+                <CheckCircle2 size={17} />
+              </label>
+            ))}
+            {data.players.length === 0 && <p>أضف اللاعبين أولًا قبل إنشاء حساب ولي الأمر.</p>}
+          </fieldset>
+
+          <button className="gold-button" type="submit" disabled={isSaving || data.players.length === 0}>
+            {isSaving ? "جاري إنشاء الحساب..." : "إنشاء الحساب وربط الأبناء"}
+          </button>
+        </form>
+
+        <section className="parent-account-list">
+          <div className="parent-account-list-head">
+            <div>
+              <span>{guardians.length} حساب</span>
+              <h2>الحسابات المرتبطة</h2>
+            </div>
+            <button type="button" onClick={handleSync} disabled={isSyncing || !isOnline}>
+              <RefreshCw size={16} />
+              {isSyncing ? "جاري الرفع..." : "مزامنة بيانات الأبناء"}
+            </button>
+          </div>
+          <p className="parent-sync-status">
+            {!isOnline
+              ? "لا يوجد إنترنت. سيتم الرفع عند عودة الاتصال."
+              : cloudSyncState?.syncedAt
+                ? `آخر مزامنة: ${readableDateTime(cloudSyncState.syncedAt)}`
+                : "المزامنة التلقائية جاهزة."}
+          </p>
+
+          {guardians.map((guardian) => {
+            const linkedPlayers = data.players.filter((player) => (guardian.playerIds || []).includes(player.id));
+            const isDisabled = guardian.status === "معطل";
+            return (
+              <article className={isDisabled ? "parent-account-card disabled" : "parent-account-card"} key={guardian.id}>
+                <div className="parent-account-card-head">
+                  <span><UserRound size={20} /></span>
+                  <div>
+                    <strong>{guardian.name}</strong>
+                    <small>{guardian.phone} - {guardian.relation}</small>
+                  </div>
+                  <b>{guardian.status}</b>
+                </div>
+                <div className="parent-linked-children">
+                  {linkedPlayers.map((player) => <span key={player.id}>{player.name}</span>)}
+                </div>
+                <button type="button" onClick={async () => {
+                  const result = await toggleAcademyParentStatus(guardian.id);
+                  setMessage(result.message);
+                }}>
+                  {isDisabled ? "تفعيل الحساب" : "تعطيل الحساب"}
+                </button>
+              </article>
+            );
+          })}
+          {guardians.length === 0 && (
+            <div className="parent-management-empty">
+              <UserRound size={30} />
+              <strong>لا توجد حسابات أولياء أمور بعد</strong>
+              <span>استخدم النموذج لإنشاء أول حساب وربطه بالطفل.</span>
+            </div>
+          )}
+        </section>
+      </div>
+
+      {message && <p className={message.startsWith("تم") ? "parent-action-message success" : "parent-action-message"}>{message}</p>}
+
+      <form className="parent-announcement-form" onSubmit={(event) => {
+        addPost(event);
+        setMessage("تم حفظ المنشور وسيظهر لأولياء الأمور بعد المزامنة.");
+      }}>
+        <div>
+          <Bell size={20} />
+          <div>
+            <strong>منشور لأولياء الأمور</strong>
+            <span>اكتب إعلانًا أو موعدًا أو تكريمًا ليظهر في بوابة ولي الأمر.</span>
+          </div>
+        </div>
+        <input name="title" placeholder="عنوان المنشور" required />
+        <textarea name="content" placeholder="تفاصيل الرسالة" required />
+        <div className="parent-announcement-actions">
+          <select name="type" defaultValue="إعلان">
+            <option>إعلان</option>
+            <option>موعد تدريب</option>
+            <option>مباراة</option>
+            <option>تكريم</option>
+          </select>
+          <label><input name="pinned" type="checkbox" /> تثبيت المنشور</label>
+          <button type="submit"><Send size={17} /> نشر</button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+function ParentPortal({ parentPortalState, session, refreshParentPortal, isOnline }) {
+  const snapshots = parentPortalState?.snapshots || [];
+  const [selectedPlayerId, setSelectedPlayerId] = useState(snapshots[0]?.playerId || "");
+  const [activeTab, setActiveTab] = useState("summary");
+
+  useEffect(() => {
+    if (!snapshots.some((snapshot) => snapshot.playerId === selectedPlayerId)) {
+      setSelectedPlayerId(snapshots[0]?.playerId || "");
+    }
+  }, [snapshots, selectedPlayerId]);
+
+  if (parentPortalState?.loading) {
+    return (
+      <section className="parent-portal-state">
+        <RefreshCw className="spin" size={28} />
+        <strong>جاري تحميل بيانات الأبناء...</strong>
+      </section>
+    );
+  }
+
+  if (!isOnline && snapshots.length === 0) {
+    return (
+      <section className="parent-portal-state">
+        <Bell size={30} />
+        <strong>بوابة ولي الأمر تحتاج اتصالًا بالإنترنت</strong>
+        <span>اتصل بالإنترنت ثم اضغط تحديث لعرض آخر بيانات الطفل.</span>
+      </section>
+    );
+  }
+
+  if (parentPortalState?.error && snapshots.length === 0) {
+    return (
+      <section className="parent-portal-state error">
+        <X size={30} />
+        <strong>{parentPortalState.error}</strong>
+        <button type="button" onClick={refreshParentPortal}><RefreshCw size={16} /> إعادة المحاولة</button>
+      </section>
+    );
+  }
+
+  if (snapshots.length === 0) {
+    return (
+      <section className="parent-portal-state">
+        <UserCircle size={34} />
+        <strong>لم يتم ربط طفل بهذا الحساب بعد</strong>
+        <span>اطلب من إدارة الأكاديمية ربط حسابك بملف اللاعب ثم مزامنة البيانات.</span>
+        <button type="button" onClick={refreshParentPortal}><RefreshCw size={16} /> تحديث</button>
+      </section>
+    );
+  }
+
+  const selectedSnapshot = snapshots.find((snapshot) => snapshot.playerId === selectedPlayerId) || snapshots[0];
+  const portal = selectedSnapshot.data || {};
+  const player = portal.player || {};
+  const attendance = portal.attendance || { records: [], present: 0, late: 0, absent: 0 };
+  const finance = portal.finance || { payments: [], subscriptionTotal: 0, totalPaid: 0, remaining: 0 };
+  const honors = portal.honors || { badges: [], positiveEvaluations: [] };
+  const totalAttendance = Number(attendance.present || 0) + Number(attendance.late || 0) + Number(attendance.absent || 0);
+  const attendanceRate = Math.round(((Number(attendance.present || 0) + Number(attendance.late || 0)) / Math.max(totalAttendance, 1)) * 100);
+  const messages = [
+    ...(portal.posts || []).map((post) => ({ ...post, kind: "post", date: post.createdAt })),
+    ...(portal.notifications || []).map((notification) => ({ ...notification, kind: "notification", title: notification.type, content: notification.target })),
+  ].sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+  const tabs = [
+    { id: "summary", label: "الملخص", icon: Activity },
+    { id: "attendance", label: "الحضور", icon: CalendarCheck },
+    { id: "finance", label: "المالية", icon: Wallet },
+    { id: "honors", label: "التكريم", icon: Medal },
+    { id: "messages", label: "الإعلانات", icon: Bell },
+  ];
+
+  return (
+    <section className="parent-portal-screen">
+      <header className="parent-portal-hero">
+        <div className="parent-portal-brand">
+          <span>{portal.academy?.logo ? <img src={portal.academy.logo} alt="" /> : <ShieldCheck size={24} />}</span>
+          <div>
+            <small>مرحبًا {session?.name || "بولي الأمر"}</small>
+            <strong>{portal.academy?.name || session?.academyName || "الأكاديمية"}</strong>
+          </div>
+        </div>
+        <button type="button" onClick={refreshParentPortal} aria-label="تحديث بيانات الأبناء">
+          <RefreshCw size={18} />
+        </button>
+      </header>
+
+      {snapshots.length > 1 && (
+        <div className="parent-child-switcher">
+          {snapshots.map((snapshot) => (
+            <button
+              className={snapshot.playerId === selectedSnapshot.playerId ? "active" : ""}
+              type="button"
+              key={snapshot.playerId}
+              onClick={() => {
+                setSelectedPlayerId(snapshot.playerId);
+                setActiveTab("summary");
+              }}
+            >
+              {snapshot.data?.player?.name || "لاعب"}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <section className="parent-child-card">
+        <div className="parent-child-avatar">
+          {player.photo ? <img src={player.photo} alt={player.name} /> : (player.name || "ط").slice(0, 1)}
+        </div>
+        <div>
+          <span>{player.teamName || "الفريق"}</span>
+          <h1>{player.name || "اسم اللاعب"}</h1>
+          <p>{player.ageGroupName || "الفئة"} {player.position ? `- ${player.position}` : ""}</p>
+        </div>
+        <b>{player.status || "نشط"}</b>
+      </section>
+
+      <nav className="parent-portal-tabs" aria-label="أقسام متابعة الطفل">
+        {tabs.map((tab) => {
+          const Icon = tab.icon;
+          return (
+            <button className={activeTab === tab.id ? "active" : ""} type="button" key={tab.id} onClick={() => setActiveTab(tab.id)}>
+              <Icon size={18} />
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+
+      {activeTab === "summary" && (
+        <div className="parent-summary-grid">
+          <article><CalendarCheck size={20} /><span>نسبة الالتزام</span><strong>{attendanceRate}%</strong></article>
+          <article><CheckCircle2 size={20} /><span>أيام الحضور</span><strong>{attendance.present || 0}</strong></article>
+          <article><Wallet size={20} /><span>المدفوع</span><strong>{currency(finance.totalPaid)}</strong></article>
+          <article><CircleDollarSign size={20} /><span>المتبقي</span><strong>{currency(finance.remaining)}</strong></article>
+          <article className="wide">
+            <Medal size={21} />
+            <div><span>آخر تكريم</span><strong>{honors.badges?.[0] || honors.positiveEvaluations?.[0]?.title || "لا يوجد تكريم مسجل بعد"}</strong></div>
+          </article>
+          <article className="wide">
+            <Bell size={21} />
+            <div><span>آخر إعلان</span><strong>{messages[0]?.title || "لا توجد إعلانات جديدة"}</strong></div>
+          </article>
+        </div>
+      )}
+
+      {activeTab === "attendance" && (
+        <section className="parent-portal-section">
+          <div className="parent-attendance-kpis">
+            <span><b>{attendance.present || 0}</b> حاضر</span>
+            <span><b>{attendance.late || 0}</b> متأخر</span>
+            <span><b>{attendance.absent || 0}</b> غائب</span>
+          </div>
+          <div className="parent-record-list">
+            {(attendance.records || []).map((row) => (
+              <article key={row.id || `${row.date}-${row.status}`}>
+                <span className={`attendance-dot status-${row.status}`} />
+                <div><strong>{row.status}</strong><small>{row.note || "بدون ملاحظة"}</small></div>
+                <time>{row.date || "-"}</time>
+              </article>
+            ))}
+            {(attendance.records || []).length === 0 && <p>لا توجد سجلات حضور حتى الآن.</p>}
+          </div>
+        </section>
+      )}
+
+      {activeTab === "finance" && (
+        <section className="parent-portal-section">
+          <div className="parent-finance-summary">
+            <div><span>إجمالي الاشتراك</span><strong>{currency(finance.subscriptionTotal)}</strong></div>
+            <div><span>المدفوع</span><strong>{currency(finance.totalPaid)}</strong></div>
+            <div><span>المتبقي</span><strong>{currency(finance.remaining)}</strong></div>
+            <div><span>الطقم الرياضي</span><strong>{finance.kitPaid ? "مدفوع" : currency(finance.kitFee)}</strong></div>
+          </div>
+          <div className="parent-record-list payments">
+            {(finance.payments || []).map((payment) => (
+              <article key={payment.id || payment.receiptNumber}>
+                <span className="payment-icon"><Wallet size={17} /></span>
+                <div><strong>{currency(payment.amount)}</strong><small>{payment.method} - {payment.receiptNumber}</small></div>
+                <time>{payment.date || "-"}</time>
+              </article>
+            ))}
+            {(finance.payments || []).length === 0 && <p>لا توجد دفعات مسجلة حتى الآن.</p>}
+          </div>
+        </section>
+      )}
+
+      {activeTab === "honors" && (
+        <section className="parent-portal-section">
+          <div className="parent-badge-list">
+            {(honors.badges || []).map((badge) => <span key={badge}><Medal size={16} /> {badge}</span>)}
+          </div>
+          <div className="parent-honor-list">
+            {(honors.positiveEvaluations || []).map((evaluation) => (
+              <article key={evaluation.id}>
+                <Star size={20} />
+                <div><strong>{evaluation.title}</strong><p>{evaluation.note || (evaluation.tags || []).join("، ")}</p></div>
+                <time>{evaluation.date || "-"}</time>
+              </article>
+            ))}
+            {(honors.badges || []).length === 0 && (honors.positiveEvaluations || []).length === 0 && <p>لا توجد تكريمات مسجلة حتى الآن.</p>}
+          </div>
+        </section>
+      )}
+
+      {activeTab === "messages" && (
+        <section className="parent-portal-section parent-message-list">
+          {messages.map((message) => (
+            <article className={message.pinned ? "pinned" : ""} key={`${message.kind}-${message.id}`}>
+              <span>{message.kind === "post" ? <MessageSquare size={19} /> : <Bell size={19} />}</span>
+              <div><strong>{message.title}</strong><p>{message.content || "إشعار من إدارة الأكاديمية"}</p><small>{message.type || "إشعار"}</small></div>
+              <time>{message.date ? readableDateTime(message.date) : ""}</time>
+            </article>
+          ))}
+          {messages.length === 0 && <p>لا توجد منشورات أو إشعارات جديدة.</p>}
+        </section>
+      )}
+
+      <footer className="parent-portal-footer">
+        آخر تحديث: {portal.updatedAt ? readableDateTime(portal.updatedAt) : readableDateTime(parentPortalState.loadedAt)}
+      </footer>
     </section>
   );
 }

@@ -9,7 +9,7 @@ https://qz-academy.vercel.app
 قاعدة البيانات الحالية على Supabase:
 
 ```text
-https://xxnizgstlkmjfrzfqfvh.supabase.co
+https://vfvsexrikwokuenopwmi.supabase.co
 ```
 
 ## البناء المحلي

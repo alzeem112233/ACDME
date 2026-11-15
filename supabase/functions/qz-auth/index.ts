@@ -72,12 +72,13 @@ function randomToken() {
 
 function roleKey(row: Record<string, any>, fallback = "coach") {
   const key = String(row.role_key || row.roleKey || "").trim();
-  if (["super_admin", "academy_owner", "admin", "coach"].includes(key)) return key;
+  if (["super_admin", "academy_owner", "admin", "coach", "parent"].includes(key)) return key;
 
   const role = String(row.role || fallback).trim().toLowerCase();
   if (role.includes("super") || row.role === "سوبر أدمين") return "super_admin";
   if (role.includes("owner") || row.role === "مالك أكاديمية") return "academy_owner";
   if (role.includes("admin")) return "admin";
+  if (role.includes("parent") || ["ولي أمر", "ولي الامر", "ولي الأمر"].includes(String(row.role || ""))) return "parent";
   return fallback;
 }
 
@@ -87,6 +88,7 @@ function permissionsJson(row: Record<string, any>, key = roleKey(row)) {
   if (key === "super_admin") return { all: true };
   if (key === "academy_owner") return { academy: true, accounts: true, players: true, finance: true, reports: true };
   if (key === "admin") return { players: true, attendance: true, finance: true, reports: true };
+  if (key === "parent") return { parent: true, children: true, readOnly: true };
   return { players: true, attendance: true };
 }
 
@@ -423,7 +425,7 @@ Deno.serve(async (request) => {
   try {
     const body = await request.json();
     const action = String(body.action || "login");
-    if (!["login", "register", "list-registration-requests", "review-registration-request", "request-password-otp", "request-password-reset"].includes(action)) {
+    if (!["login", "register", "create-platform-account", "list-registration-requests", "review-registration-request", "request-password-otp", "request-password-reset"].includes(action)) {
       return jsonResponse({ ok: false, message: "الإجراء غير مدعوم." });
     }
 
@@ -540,6 +542,89 @@ Deno.serve(async (request) => {
         request: publicRequest,
         account: approvedAccount,
       });
+    }
+
+    if (action === "create-platform-account") {
+      const sessionToken = request.headers.get("x-qz-session") || String(body.qzSessionToken || body.sessionToken || "");
+      const qzSession = await findActiveSession(supabase, sessionToken, { renewExpiredSuperAdmin: true });
+      if (!qzSession) {
+        return jsonResponse({ ok: false, message: "انتهت جلسة الدخول. سجل الدخول مجددًا." }, 401);
+      }
+
+      const requestedRoleKey = String(body.roleKey || body.role_key || "coach").trim();
+      const allowedRoleKeys = new Set(["academy_owner", "admin", "coach", "parent"]);
+      const requestedAcademyId = String(body.academyId || body.academy_id || "").trim();
+      const sessionAcademyId = String(qzSession.academy_id || "").trim();
+      const sessionPermissions = qzSession.permissions && typeof qzSession.permissions === "object"
+        ? qzSession.permissions
+        : {};
+      const canManageAccounts = qzSession.role_key === "super_admin"
+        || (
+          requestedAcademyId
+          && requestedAcademyId === sessionAcademyId
+          && (
+            qzSession.role_key === "academy_owner"
+            || (qzSession.role_key === "admin" && sessionPermissions.accounts === true)
+          )
+        );
+
+      if (!canManageAccounts || !allowedRoleKeys.has(requestedRoleKey)) {
+        return jsonResponse({ ok: false, message: "ليست لديك صلاحية إنشاء هذا الحساب." }, 403);
+      }
+
+      const accountPhone = normalizePhone(body.accountPhone || body.phone || "");
+      const accountPassword = normalizeDigits(String(body.password || "")).trim();
+      const accountName = String(body.name || "").trim();
+      if (accountPhone.length < 8 || !accountName || !requestedAcademyId || !/^\d{6,}$/.test(accountPassword)) {
+        return jsonResponse({ ok: false, message: "تحقق من الاسم ورقم الهاتف وكلمة السر المكونة من 6 أرقام على الأقل." }, 400);
+      }
+
+      const roleLabels: Record<string, string> = {
+        academy_owner: "مالك أكاديمية",
+        admin: "إداري",
+        coach: "مدرب",
+        parent: "ولي أمر",
+      };
+      const defaultPermissions: Record<string, Record<string, boolean>> = {
+        academy_owner: { academy: true, accounts: true, players: true, finance: true, reports: true },
+        admin: { players: true, attendance: true, finance: true, reports: true },
+        coach: { players: true, attendance: true },
+        parent: { parent: true, children: true, readOnly: true },
+      };
+      const accountId = String(body.id || `account-${requestedRoleKey}-${requestedAcademyId}-${accountPhone.replace(/\D/g, "")}`).trim();
+      const accountPayload = {
+        id: accountId,
+        name: accountName,
+        phone: accountPhone,
+        phone_e164: accountPhone,
+        role: roleLabels[requestedRoleKey],
+        role_key: requestedRoleKey,
+        academy_id: requestedAcademyId,
+        academy_name: String(body.academyName || body.academy_name || "").trim(),
+        permissions: String(body.permissions || "").trim(),
+        permissions_json: body.permissionsJson && typeof body.permissionsJson === "object"
+          ? body.permissionsJson
+          : defaultPermissions[requestedRoleKey],
+        auth_provider: "qz_auth",
+        password_hash: await sha256Hex(accountPassword),
+        password_status: "مشفرة",
+        password_updated_at: new Date().toISOString().slice(0, 10),
+        status: "نشط",
+        updated_at: new Date().toISOString(),
+      };
+
+      const { data: account, error: accountError } = await supabase
+        .from("platform_accounts")
+        .insert(accountPayload)
+        .select("id,name,phone,phone_e164,role,role_key,auth_provider,academy_id,academy_name,permissions,permissions_json,password_status,password_updated_at,status,created_at,updated_at")
+        .single();
+
+      if (accountError?.code === "23505") {
+        return jsonResponse({ ok: false, message: "رقم الهاتف مستخدم في حساب آخر." }, 409);
+      }
+      if (accountError) throw accountError;
+
+      return jsonResponse({ ok: true, account });
     }
 
     if (action === "register") {

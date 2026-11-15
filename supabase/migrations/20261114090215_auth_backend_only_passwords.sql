@@ -1,0 +1,2 @@
+-- Applied to acadme through the Supabase management API before CLI linking.
+-- Kept as a local history marker so future database pushes stay in sync.
