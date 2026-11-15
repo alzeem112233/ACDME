@@ -3,7 +3,7 @@
 ## رابط الإنتاج الحالي
 
 ```text
-https://qz-academy.vercel.app
+https://al-qaisar-dashboard.vercel.app
 ```
 
 قاعدة البيانات الحالية على Supabase:
